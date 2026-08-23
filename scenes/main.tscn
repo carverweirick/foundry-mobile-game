@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://cl8s1moqrvqxy"]
+
+[ext_resource type="Script" uid="uid://dy315sqjox5g" path="res://scenes/main.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://scenes/menu_overlay.tscn" id="2_menu_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/station_detail_menu.tscn" id="3_station_detail_menu"]
+[ext_resource type="PackedScene" path="res://scenes/shop_overlay.tscn" id="4_shop_overlay"]
+
+[node name="Main" type="Node2D" unique_id=1774776552]
+script = ExtResource("1_script")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=1406116151]
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="CurrencyLabel" type="Label" parent="HUD"]
+offset_left = 8.0
+offset_top = 6.0
+offset_right = 160.0
+offset_bottom = 26.0
+text = "Currency: 500g"
+
+[node name="ReputationLabel" type="Label" parent="HUD"]
+offset_left = 8.0
+offset_top = 26.0
+offset_right = 160.0
+offset_bottom = 46.0
+text = "Reputation: 0"
+
+[node name="FloorLabels" type="CanvasLayer" parent="."]
+
+[node name="MenuOverlay" parent="." instance=ExtResource("2_menu_overlay")]
+
+[node name="StationDetailMenu" parent="." instance=ExtResource("3_station_detail_menu")]
+
+[node name="ShopOverlay" parent="." instance=ExtResource("4_shop_overlay")]

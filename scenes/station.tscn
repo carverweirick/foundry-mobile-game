@@ -1,0 +1,62 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scenes/station.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/sprites/printing_station_L1.png" id="2_tier1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/printing_station_L2.png" id="3_tier2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/printing_station_L3.png" id="4_tier3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/printing_station_L4.png" id="5_tier4"]
+[ext_resource type="Texture2D" path="res://assets/sprites/printing_station_L5.png" id="6_tier5"]
+
+[node name="Station" type="Node2D"]
+script = ExtResource("1_script")
+station_name = "Printing"
+station_type = 0
+current_tier = 1
+timer_duration = 5.0
+batch_cap = 1
+tier_sprites = [ExtResource("2_tier1"), ExtResource("3_tier2"), ExtResource("4_tier3"), ExtResource("5_tier4"), ExtResource("6_tier5")]
+
+[node name="StationSprite" type="Sprite2D" parent="."]
+position = Vector2(32, 32)
+scale = Vector2(0.18, 0.18)
+
+[node name="NameLabel" type="Label" parent="."]
+texture_filter = 3
+mouse_filter = 2
+offset_left = -20.0
+offset_top = 66.0
+offset_right = 130.0
+offset_bottom = 96.0
+text = "Station"
+autowrap_mode = 2
+vertical_alignment = 0
+
+[node name="StatusLabel" type="Label" parent="."]
+texture_filter = 3
+mouse_filter = 2
+offset_left = -20.0
+offset_top = 98.0
+offset_right = 130.0
+offset_bottom = 128.0
+text = "Idle"
+autowrap_mode = 2
+vertical_alignment = 0
+
+[node name="TimerBar" type="ProgressBar" parent="."]
+mouse_filter = 2
+offset_left = -20.0
+offset_top = 130.0
+offset_right = 130.0
+offset_bottom = 150.0
+show_percentage = false
+
+[node name="TimerBarLabel" type="Label" parent="TimerBar"]
+texture_filter = 3
+mouse_filter = 2
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="StationTimer" type="Timer" parent="."]

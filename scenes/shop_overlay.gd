@@ -1,0 +1,482 @@
+extends CanvasLayer
+class_name ShopOverlay
+
+## Emitted when this overlay opens - main.gd listens on all three overlays'
+## own opened() signal to close the other two, so only one is ever visible
+## at once (bug fix, this session: nothing previously enforced that, which
+## let a background overlay's persistent toggle button/backdrop collide
+## visually with whichever popped open on top of it).
+signal opened()
+
+## The Shop button's overlay (design doc Section 6) - deliberately a
+## separate button and panel from the Menu button/MenuOverlay, dedicated to
+## spending currency rather than checking status. Hiring a technician no
+## longer happens at an individual station; it happens here, and assigning
+## them to a station (or several) is a separate step done from the same
+## roster row. Only the Technicians tab exists so far; built to hold future
+## Shop tabs (station upgrades, alloy stock, per Section 11) later.
+
+const REFRESH_INTERVAL: float = 0.25
+
+## Persistent per-technician roster row (mirrors StationDetailMenu's
+## persistent rack-slot Buttons) - built once per technician and updated in
+## place from then on rather than torn down and rebuilt every refresh (see
+## _create_roster_row()/_update_roster_row() for why that used to matter).
+## Technicians are never un-hired in this game, so a row only ever needs to
+## be added, never removed.
+class RosterRow:
+	var container: VBoxContainer
+	var header: Label
+	var carrying_label: Label
+	var strategy_option: OptionButton
+	var station_toggles: GridContainer
+	var station_checks: Dictionary = {} # station_id -> CheckBox
+
+@onready var toggle_button: Button = %ToggleButton
+@onready var backdrop: Control = %Backdrop
+@onready var panel: Panel = %Panel
+@onready var hire_list: VBoxContainer = %HireList
+@onready var roster_list: VBoxContainer = %RosterList
+@onready var specialist_list: VBoxContainer = %SpecialistList
+@onready var printer_status_label: Label = %PrinterStatusLabel
+@onready var buy_printer_button: Button = %BuyPrinterButton
+
+## Set by main.gd right after all Station nodes are spawned, same as
+## MenuOverlay - needed to list which stations a technician can be assigned
+## to and to read/write their live assigned_technicians state.
+var station_by_id: Dictionary = {}
+
+var _refresh_elapsed: float = 0.0
+var _roster_rows: Dictionary = {} # Technician -> RosterRow
+var _roster_empty_label: Label = null
+
+
+func _ready() -> void:
+	toggle_button.pressed.connect(_on_toggle_pressed)
+	backdrop.gui_input.connect(_on_backdrop_gui_input)
+	buy_printer_button.pressed.connect(_on_buy_printer_pressed)
+	# Deferred, not direct: technician_updated can fire from inside a
+	# checkbox's own toggled handler (assign_technician() emits it
+	# synchronously), and _refresh_live_only() tears down/rebuilds every
+	# checkbox, including the one still mid-click. Freeing a Control while
+	# Godot is still processing its own input event confuses subsequent
+	# clicks on the rebuilt nodes - call_deferred lets this frame's input
+	# finish first. technician_updated specifically routes to
+	# _refresh_live_only() (Roster only), not the full _refresh() - it fires
+	# routinely (every ~8-10s per technician just from normal movement) and
+	# has nothing to do with Hire/Specialists, so routing it through the full
+	# rebuild would reintroduce the exact same-timer click race on those
+	# sections that _refresh_live_only() exists to avoid.
+	GameData.currency_changed.connect(func(_c): _refresh.call_deferred())
+	GameData.technician_updated.connect(func(_t): _refresh_live_only.call_deferred())
+
+
+func _process(delta: float) -> void:
+	if not panel.visible:
+		return
+	_refresh_elapsed += delta
+	if _refresh_elapsed < REFRESH_INTERVAL:
+		return
+	_refresh_elapsed = 0.0
+	_refresh_live_only()
+
+
+func _on_toggle_pressed() -> void:
+	_set_open(not panel.visible)
+
+
+func _on_backdrop_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_set_open(false)
+
+
+## Public - called by main.gd when Escape is pressed, so any open overlay
+## closes no matter which one it is (design request, this session).
+func close() -> void:
+	_set_open(false)
+
+
+func _set_open(open: bool) -> void:
+	panel.visible = open
+	backdrop.visible = open
+	if open:
+		_refresh_elapsed = 0.0
+		_refresh()
+		opened.emit()
+
+
+## Full rebuild, including the Hire and Specialists sections - only called on
+## open and from the reactive currency_changed/technician_updated handlers
+## below, NOT from the unconditional 0.25s poll (see _refresh_live_only()).
+func _refresh() -> void:
+	if _any_strategy_popup_open() or _click_in_progress():
+		return
+	_refresh_hire_list()
+	_refresh_specialist_list()
+	_refresh_printer_section()
+	_refresh_live_only()
+
+
+## Whether the mouse/touch button is currently held down anywhere - see
+## StationDetailMenu._click_in_progress()'s comment for the full rationale.
+## Generalizes _any_strategy_popup_open()'s same idea (don't rebuild out from
+## under an in-progress interaction) to every button in every list here, not
+## just the routing-strategy dropdown.
+func _click_in_progress() -> bool:
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+
+## Design doc Section 21.2: printers are purchased individually, capped by
+## factory level. This is a simple standing status + one buy button, same
+## spirit as the Specialists tab, not a per-printer roster - individual
+## printer tiers are managed from each printer's own Station Detail Menu
+## (they're just ordinary Stations once spawned) exactly like every other
+## station's Upgrade/Upgrade Rack buttons, not from here.
+func _refresh_printer_section() -> void:
+	var cap := GameData.printer_cap()
+	printer_status_label.text = "%d/%d printers owned (Factory Level %d)" % [
+		GameData.owned_printer_count, cap, GameData.factory_level
+	]
+	if GameData.can_buy_printer():
+		var cost := GameData.printer_purchase_cost()
+		buy_printer_button.text = "Buy Printer (%dg)" % cost
+		buy_printer_button.disabled = not GameData.can_afford(cost)
+	else:
+		buy_printer_button.text = "Factory level cap reached"
+		buy_printer_button.disabled = true
+
+
+func _on_buy_printer_pressed() -> void:
+	GameData.buy_printer()
+	_refresh.call_deferred()
+
+
+## A strategy OptionButton is a two-step interaction (open the dropdown,
+## then click an item), unlike a single-click checkbox or button - there's a
+## real time gap where the popup just sits open waiting on the user. The
+## regular 0.25s poll (or a technician_updated firing from some OTHER
+## technician's own movement, unrelated to what the user's doing here) would
+## otherwise tear down and rebuild the whole roster mid-gap, destroying the
+## very OptionButton whose popup is still open - so a click on an item in
+## that now-orphaned popup silently does nothing. Skip refreshing entirely
+## while any strategy dropdown is open; the deferred refresh from
+## _on_strategy_selected() picks it up correctly once the popup closes.
+##
+## Rebuilds only the Roster section - the one part of this panel that
+## legitimately changes on its own over time (a technician's position/status
+## as they walk and work). The Hire and Specialists sections deliberately do
+## NOT rebuild here: they only ever change in response to a specific hire
+## action (which already triggers a reactive _refresh() via currency_changed),
+## so tearing their buttons down and recreating them on this same blind timer
+## served no purpose except occasionally eating a click - a rebuild landing
+## between a click's press and release (a real, human-timescale race distinct
+## from the same-frame handler-safety call_deferred already used elsewhere)
+## silently discarded that click; a second click then worked because it
+## happened to land between rebuilds instead. This was reported as "the hire
+## button doesn't work on the first click."
+func _refresh_live_only() -> void:
+	if _any_strategy_popup_open() or _click_in_progress():
+		return
+	_refresh_roster_list()
+
+
+func _any_strategy_popup_open() -> bool:
+	for option: OptionButton in roster_list.find_children("*", "OptionButton", true, false):
+		if option.get_popup().visible:
+			return true
+	return false
+
+
+func _refresh_hire_list() -> void:
+	_clear_list(hire_list)
+	for tier in Technician.SkillTier.values():
+		var row := HBoxContainer.new()
+		var label := Label.new()
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.custom_minimum_size = Vector2(180.0, 0.0)
+		label.text = "%s (%dg)" % [Technician.TIER_LABEL[tier], Technician.TIER_HIRE_COST[tier]]
+		row.add_child(label)
+
+		var hire_button := Button.new()
+		hire_button.text = "Hire"
+		hire_button.disabled = not GameData.can_afford(Technician.TIER_HIRE_COST[tier])
+		hire_button.pressed.connect(_on_hire_pressed.bind(tier))
+		row.add_child(hire_button)
+
+		hire_list.add_child(row)
+
+
+func _on_hire_pressed(tier: Technician.SkillTier) -> void:
+	GameData.hire_technician(tier)
+	_refresh.call_deferred()
+
+
+## Bug fix (this session): the roster used to be torn down and rebuilt from
+## scratch every 0.25s poll, same as every other list here - fine for
+## avoiding the click-eating race once guarded, but a freshly created Control
+## needs at least one layout pass to reach its final size, so destroying and
+## recreating everything every 250ms caused a visible "pop"/reflow every
+## single poll even when nothing had actually changed. Reported as the roster
+## "jump[ing] around during background activity." Now each technician gets a
+## persistent RosterRow, built once (_create_roster_row()) and updated in
+## place from then on (_update_roster_row()) - text/visibility/checkbox state
+## changes, no destroying and recreating Controls on a blind timer.
+func _refresh_roster_list() -> void:
+	if GameData.technicians.is_empty():
+		if _roster_empty_label == null:
+			_roster_empty_label = Label.new()
+			_roster_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_roster_empty_label.text = "No technicians hired yet."
+			roster_list.add_child(_roster_empty_label)
+		return
+	if _roster_empty_label != null:
+		_roster_empty_label.queue_free()
+		_roster_empty_label = null
+
+	for tech in GameData.technicians:
+		var row: RosterRow = _roster_rows.get(tech)
+		if row == null:
+			row = _create_roster_row(tech)
+			_roster_rows[tech] = row
+			roster_list.add_child(row.container)
+		_update_roster_row(row, tech)
+
+
+## Builds one technician's row structure ONCE - see _refresh_roster_list()'s
+## comment for why this never gets torn down again. A checkbox per assignable
+## station (Ship is automatic and never needs staffing, so it's excluded) -
+## checking a box assigns tech there, unchecking frees it, this is also how a
+## technician ends up working more than one station at once. Station
+## checkboxes themselves are added lazily in _update_roster_row() below, not
+## here, since a printer bought after this row already exists needs its own
+## checkbox to show up without the whole row being rebuilt.
+func _create_roster_row(tech: Technician) -> RosterRow:
+	var row := RosterRow.new()
+	row.container = VBoxContainer.new()
+
+	# Fixed 2-line minimum height on both - design request, this session:
+	# "the menus still shift with the status of technicians changing and
+	# spanning over multiple lines... make it its own fixed larger section
+	# that spans 2 lines so the jumping doesn't keep happening." Moving
+	# TechnicianStatusLabel to the end of the Station Detail Menu popup
+	# fixed jumping *there*, but this row's own header text length varies
+	# just as much ("Idle" vs "Working 2 station(s), 85% productivity -
+	# walking to Clean, interacting") and previously had no minimum height,
+	# so crossing a line-wrap threshold changed THIS row's own height and
+	# shifted every roster row below it. carrying_label was worse: toggling
+	# `.visible` gave it a footprint of literally zero when not carrying
+	# anything, popping the row's height between two very different values
+	# every time a technician's carried_parts went from empty to non-empty
+	# or back - happening constantly for an active technician. Both now
+	# reserve the same vertical space always, whether their text is short,
+	# long, or blank.
+	row.header = Label.new()
+	row.header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.header.custom_minimum_size = Vector2(0, 40)
+	row.container.add_child(row.header)
+
+	row.carrying_label = Label.new()
+	row.carrying_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.carrying_label.custom_minimum_size = Vector2(0, 40)
+	row.container.add_child(row.carrying_label)
+
+	var strategy_row := HBoxContainer.new()
+	var strategy_label := Label.new()
+	strategy_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Without an explicit minimum width, an autowrapping Label reports almost
+	# no minimum size of its own, so the HBoxContainer squeezes it down to
+	# whatever sliver is left after the OptionButton claims what it wants,
+	# and it wraps one character per line ("S/t/r/a/t/e/g/y/:" stacked
+	# vertically) instead of sitting on one line to the OptionButton's left.
+	# Reported as "the text is vertical."
+	strategy_label.custom_minimum_size = Vector2(70.0, 0.0)
+	strategy_label.text = "Strategy:"
+	strategy_row.add_child(strategy_label)
+
+	row.strategy_option = OptionButton.new()
+	for strategy in Technician.RoutingStrategy.values():
+		row.strategy_option.add_item(Technician.ROUTING_STRATEGY_LABEL[strategy])
+	row.strategy_option.select(tech.routing_strategy)
+	row.strategy_option.item_selected.connect(_on_strategy_selected.bind(tech))
+	strategy_row.add_child(row.strategy_option)
+	row.container.add_child(strategy_row)
+
+	row.station_toggles = GridContainer.new()
+	row.station_toggles.columns = 2
+	row.container.add_child(row.station_toggles)
+
+	row.container.add_child(HSeparator.new())
+	return row
+
+
+## Updates an existing row's live fields in place - text, the carrying
+## label's visibility, and every station checkbox's pressed state (via
+## set_pressed_no_signal() so re-syncing an already-correct checkbox doesn't
+## fire its own toggled handler and needlessly re-assign/unassign). Doesn't
+## touch strategy_option's selection - the only thing that ever changes
+## tech.routing_strategy is this exact dropdown, so the OptionButton's own
+## displayed selection is already correct the instant the player picks one,
+## no need to re-sync it from data (and doing so here would risk interrupting
+## the dropdown mid-interaction for no benefit).
+func _update_roster_row(row: RosterRow, tech: Technician) -> void:
+	var assignment_text := "Idle"
+	if tech.is_assigned:
+		assignment_text = "Working %d station(s), %d%% productivity" % [
+			tech.real_assigned_station_ids().size(), roundi(tech.productivity_multiplier * 100.0)
+		]
+		if tech.is_traveling:
+			assignment_text += " - walking to %s" % _display_name_for(tech.travel_target_station_id)
+		else:
+			assignment_text += " - at %s" % _display_name_for(tech.current_station_id)
+			if tech.is_interacting:
+				assignment_text += ", interacting"
+	row.header.text = "%s (%s) - %s" % [tech.technician_name, tech.tier_label, assignment_text]
+
+	# Always visible now (see _create_roster_row()'s comment) - blank rather
+	# than hidden when not carrying anything, so the row's height never pops.
+	row.carrying_label.text = "Carrying: %s" % _carried_parts_summary(tech) if not tech.carried_parts.is_empty() else ""
+
+	# Design request, this session: "i don't want printer #2 to be a
+	# separate responsibility i want the print station responsibility to
+	# cover all the printers not individual ones." GameData.assignable_station_group_ids()
+	# collapses every printer instance into one virtual "printing" checkbox
+	# instead of listing "Printing #1"/"Printing #2" separately - see
+	# _add_printer_group_check() below for that one special case, every
+	# other entry is a normal concrete-station checkbox exactly as before.
+	for id in GameData.assignable_station_group_ids():
+		if id == "printing":
+			if not row.station_checks.has(id):
+				_add_printer_group_check(row, tech)
+			var group_check: CheckBox = row.station_checks.get(id)
+			if group_check != null:
+				group_check.set_pressed_no_signal(tech.assigned_station_ids.has("printing"))
+			continue
+		if not row.station_checks.has(id):
+			_add_station_check(row, tech, id)
+		var check: CheckBox = row.station_checks.get(id)
+		if check != null:
+			check.set_pressed_no_signal(tech.assigned_station_ids.has(id))
+
+
+func _add_station_check(row: RosterRow, tech: Technician, id: String) -> void:
+	var def := GameData.get_station(id)
+	if def.station_type == Station.StationType.AUTOMATIC:
+		return
+	var station: Station = station_by_id.get(id)
+	if station == null:
+		return
+	var check := CheckBox.new()
+	check.text = station.station_name
+	check.button_pressed = tech.assigned_station_ids.has(id)
+	check.toggled.connect(_on_station_toggled.bind(tech, station))
+	row.station_toggles.add_child(check)
+	row.station_checks[id] = check
+
+
+## Design request, this session: one checkbox covering every currently-owned
+## printer at once - see GameData.assign_technician_to_printer_group() for
+## what checking it actually does (including automatically covering a
+## printer bought later, with no need to touch this checkbox again).
+func _add_printer_group_check(row: RosterRow, tech: Technician) -> void:
+	var check := CheckBox.new()
+	check.text = "Printing (all)"
+	check.button_pressed = tech.assigned_station_ids.has("printing")
+	check.toggled.connect(_on_printer_group_toggled.bind(tech))
+	row.station_toggles.add_child(check)
+	row.station_checks["printing"] = check
+
+
+func _on_printer_group_toggled(pressed: bool, tech: Technician) -> void:
+	if pressed:
+		GameData.assign_technician_to_printer_group(tech)
+	else:
+		GameData.unassign_technician_from_printer_group(tech)
+	_refresh.call_deferred()
+
+
+## Design doc Section 9's third fix path - "a hire distinct from station
+## technicians, tied to a defect category rather than a station." A one-time
+## permanent hire per type (no assignment, no roster row with checkboxes -
+## see GameData.hire_specialist()), so this is a much simpler list than the
+## Technicians tab's: once hired, a type just shows "Hired" instead of a
+## Hire button, forever.
+func _refresh_specialist_list() -> void:
+	_clear_list(specialist_list)
+	for type in GameData.SpecialistType.values():
+		var row := HBoxContainer.new()
+		var label := Label.new()
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.custom_minimum_size = Vector2(280.0, 0.0)
+		var categories: Array = GameData.SPECIALIST_CATEGORIES.get(type, [])
+		var category_names: Array[String] = []
+		for category in categories:
+			category_names.append(GameData.DEFECT_CATEGORY_LABEL[category])
+		label.text = "%s - %s (%dg)" % [
+			GameData.SPECIALIST_LABEL[type],
+			", ".join(PackedStringArray(category_names)),
+			GameData.SPECIALIST_HIRE_COST,
+		]
+		row.add_child(label)
+
+		if GameData.is_specialist_hired(type):
+			var hired_label := Label.new()
+			hired_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			hired_label.text = "Hired"
+			row.add_child(hired_label)
+		else:
+			var hire_button := Button.new()
+			hire_button.text = "Hire"
+			hire_button.disabled = not GameData.can_afford(GameData.SPECIALIST_HIRE_COST)
+			hire_button.pressed.connect(_on_hire_specialist_pressed.bind(type))
+			row.add_child(hire_button)
+
+		specialist_list.add_child(row)
+
+
+func _on_hire_specialist_pressed(type: int) -> void: # GameData.SpecialistType
+	GameData.hire_specialist(type)
+	_refresh.call_deferred()
+
+
+## Prefers the live Station's own station_name (e.g. "Printing #2" for a
+## specific printer instance) over the shared StationDef.display_name, which
+## can't tell printer instances apart from each other (design doc Section 21.2).
+func _display_name_for(station_id: String) -> String:
+	var station: Station = station_by_id.get(station_id)
+	if station != null:
+		return station.station_name
+	var def := GameData.get_station(station_id)
+	return def.display_name if def != null else station_id
+
+
+## Same summary format as StationDetailMenu's - "Part #3 (Acme Co.) -> Deplate".
+func _carried_parts_summary(tech: Technician) -> String:
+	var pieces: Array[String] = []
+	for part in tech.carried_parts:
+		var contract := GameData.get_contract(part.contract_id)
+		var dest := _display_name_for(GameData.next_station_id_for(part))
+		pieces.append("#%d (%s) -> %s" % [
+			part.part_id, contract.customer_name if contract != null else "no contract", dest
+		])
+	return "%s [%d/%d]" % [", ".join(PackedStringArray(pieces)), tech.carried_parts.size(), Technician.CARRY_CAPACITY]
+
+
+## RoutingStrategy.values() is a plain 0..N-1 int enum added to the
+## OptionButton in that exact order with no custom ids, so the selected
+## index maps directly onto the enum value - no lookup table needed.
+func _on_strategy_selected(index: int, tech: Technician) -> void:
+	tech.routing_strategy = index as Technician.RoutingStrategy
+	GameData.technician_updated.emit(tech)
+
+
+func _on_station_toggled(pressed: bool, tech: Technician, station: Station) -> void:
+	if pressed:
+		GameData.assign_technician(tech, station)
+	else:
+		GameData.unassign_technician(tech, station)
+	_refresh.call_deferred()
+
+
+func _clear_list(list: VBoxContainer) -> void:
+	for child in list.get_children():
+		child.queue_free()

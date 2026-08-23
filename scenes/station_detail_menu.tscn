@@ -1,0 +1,177 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/station_detail_menu.gd" id="1_script"]
+
+[node name="StationDetailMenu" type="CanvasLayer"]
+layer = 2
+script = ExtResource("1_script")
+
+[node name="Backdrop" type="Control" parent="."]
+unique_name_in_owner = true
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+
+[node name="Panel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 8.0
+offset_top = 30.0
+offset_right = 300.0
+offset_bottom = 262.0
+
+[node name="Scroll" type="ScrollContainer" parent="Panel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+horizontal_scroll_mode = 0
+
+[node name="Content" type="VBoxContainer" parent="Panel/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TitleRow" type="HBoxContainer" parent="Panel/Scroll/Content"]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="Panel/Scroll/Content/TitleRow"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+text = "Station"
+
+[node name="CloseButton" type="Button" parent="Panel/Scroll/Content/TitleRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Close"
+
+[node name="StatusLabel" type="Label" parent="Panel/Scroll/Content"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Idle"
+
+[node name="DefectRow" type="HBoxContainer" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="QueueButton" type="Button" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Queue Print Job"
+
+[node name="CollectButton" type="Button" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Collect"
+
+[node name="PushThroughCheckBox" type="CheckBox" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Push Through Next Part (risky)"
+
+[node name="BatchRow" type="HBoxContainer" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="BatchLabel" type="Label" parent="Panel/Scroll/Content/BatchRow"]
+autowrap_mode = 3
+layout_mode = 2
+custom_minimum_size = Vector2(90, 0)
+text = "Batch size:"
+
+[node name="BatchSpinBox" type="SpinBox" parent="Panel/Scroll/Content/BatchRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="InventoryHeader" type="Label" parent="Panel/Scroll/Content"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Insert Part From Inventory"
+
+[node name="InventoryList" type="VBoxContainer" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="UpgradeHeader" type="Label" parent="Panel/Scroll/Content"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Upgrade"
+
+[node name="UpgradeButton" type="Button" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Upgrade"
+
+[node name="UpgradeRackButton" type="Button" parent="Panel/Scroll/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Upgrade Rack"
+
+[node name="TechnicianHeader" type="Label" parent="Panel/Scroll/Content"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Technician"
+
+[node name="TechnicianStatusLabel" type="Label" parent="Panel/Scroll/Content"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+text = "Unstaffed"
+
+[node name="RackPanel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 304.0
+offset_top = 30.0
+offset_right = 472.0
+offset_bottom = 262.0
+
+[node name="RackScroll" type="ScrollContainer" parent="RackPanel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+horizontal_scroll_mode = 0
+
+[node name="RackContent" type="VBoxContainer" parent="RackPanel/RackScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RackHeader" type="Label" parent="RackPanel/RackScroll/RackContent"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Queue Rack"
+
+[node name="RackGrid" type="GridContainer" parent="RackPanel/RackScroll/RackContent"]
+unique_name_in_owner = true
+layout_mode = 2
+columns = 5
+
+[node name="SelectedInfoLabel" type="Label" parent="RackPanel/RackScroll/RackContent"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+text = "Tap a slot to see part details."
+
+[node name="SelectedFixRow" type="HBoxContainer" parent="RackPanel/RackScroll/RackContent"]
+unique_name_in_owner = true
+layout_mode = 2

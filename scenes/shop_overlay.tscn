@@ -1,0 +1,130 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/shop_overlay.gd" id="1_script"]
+
+[node name="ShopOverlay" type="CanvasLayer"]
+script = ExtResource("1_script")
+
+[node name="ToggleButton" type="Button" parent="."]
+unique_name_in_owner = true
+offset_left = 290.0
+offset_top = 6.0
+offset_right = 360.0
+offset_bottom = 26.0
+text = "Shop"
+
+[node name="Backdrop" type="Control" parent="."]
+unique_name_in_owner = true
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+
+[node name="Panel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 15.0
+offset_top = 30.0
+offset_right = 465.0
+offset_bottom = 258.0
+
+[node name="TabContainer" type="TabContainer" parent="Panel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+
+[node name="Technicians" type="Control" parent="Panel/TabContainer"]
+layout_mode = 2
+
+[node name="TechScroll" type="ScrollContainer" parent="Panel/TabContainer/Technicians"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="TechContent" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HireHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Hire"
+
+[node name="HireList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="RosterHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Roster"
+
+[node name="RosterList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Printers" type="Control" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="PrinterScroll" type="ScrollContainer" parent="Panel/TabContainer/Printers"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="PrinterContent" type="VBoxContainer" parent="Panel/TabContainer/Printers/PrinterScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PrinterHeader" type="Label" parent="Panel/TabContainer/Printers/PrinterScroll/PrinterContent"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Printers"
+
+[node name="PrinterStatusLabel" type="Label" parent="Panel/TabContainer/Printers/PrinterScroll/PrinterContent"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+text = "0/0 printers owned"
+
+[node name="BuyPrinterButton" type="Button" parent="Panel/TabContainer/Printers/PrinterScroll/PrinterContent"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Buy Printer"
+
+[node name="Specialists" type="Control" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="SpecialistScroll" type="ScrollContainer" parent="Panel/TabContainer/Specialists"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="SpecialistContent" type="VBoxContainer" parent="Panel/TabContainer/Specialists/SpecialistScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpecialistHeader" type="Label" parent="Panel/TabContainer/Specialists/SpecialistScroll/SpecialistContent"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_font_sizes/font_size = 18
+text = "Specialists"
+
+[node name="SpecialistList" type="VBoxContainer" parent="Panel/TabContainer/Specialists/SpecialistScroll/SpecialistContent"]
+unique_name_in_owner = true
+layout_mode = 2
