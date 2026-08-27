@@ -365,8 +365,15 @@ func _build_floor() -> void:
 	# Full-floor base layer first (see HALLWAY_FILL's own comment) - every one
 	# of the four corner/center room zones below draws on top of it.
 	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
+	# Bug fix: _add_room_zone()'s "border" isn't a thin frame - it's a full-size
+	# ColorRect, with the normal (smaller, inset) fill drawn on top of it to
+	# create the illusion of a bordered panel. skip_fill means nothing ever
+	# covers that full-size border again, so it has to be drawn BEFORE the
+	# tiles now, not after - previously the tiles were built first and then
+	# immediately painted over edge-to-edge by the border rect, which is why
+	# they never visibly rendered despite being genuinely there the whole time.
+	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room", true)
 	_build_print_room_tiles()
-	_add_room_zone(PRINT_ROOM, PRINT_FILL, Color(1.0, 0.0, 1.0), "PRINT ROOM - CODE IS CURRENT", true)
 	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
 	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room")
 	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
