@@ -32,6 +32,13 @@ scope decisions, this file only tracks build status.
   codebase. Never make any claims about code before investigating unless you
   are certain of the correct answer - give grounded and hallucination-free
   answers.
+- Commit and push to the GitHub remote (`origin`) after making changes and
+  at the end of a session, on whatever branch is currently checked out -
+  standing instruction from the user (2026-08-26), pre-authorizing this
+  going forward rather than needing to ask each time. Still use judgment on
+  commit boundaries/messages per the usual git conventions (new commits
+  rather than amending, no force-push, no secrets staged); this only
+  removes the need to ask before the push itself.
 
 ---
 
