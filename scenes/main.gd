@@ -365,27 +365,31 @@ func _build_floor() -> void:
 	# Full-floor base layer first (see HALLWAY_FILL's own comment) - every one
 	# of the four corner/center room zones below draws on top of it.
 	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
-	# Bug fix: _add_room_zone()'s "border" isn't a thin frame - it's a full-size
-	# ColorRect, with the normal (smaller, inset) fill drawn on top of it to
-	# create the illusion of a bordered panel. skip_fill means nothing ever
-	# covers that full-size border again, so it has to be drawn BEFORE the
-	# tiles now, not after - previously the tiles were built first and then
-	# immediately painted over edge-to-edge by the border rect, which is why
-	# they never visibly rendered despite being genuinely there the whole time.
+	# Every room now gets a real tiled floor instead of a flat ColorRect fill
+	# (design request: "do the entire factory and use all the different
+	# tiles we have... make it feel like a real factory"), tinted per room to
+	# match its existing palette. Bug fix (see _build_room_tiles()'s own
+	# comment): the border must be drawn BEFORE the tiles, not after - it's a
+	# full-room-size rect, not a thin frame, so drawing it second would paint
+	# over the whole tiled floor.
 	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room", true)
-	_build_print_room_tiles()
-	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
-	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room")
-	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
-	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "VIM Bay")
+	_build_room_tiles(PRINT_ROOM, PRINT_FILL)
+	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room", true)
+	_build_room_tiles(SHELLING_ROOM, SHELLING_FILL)
+	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room", true)
+	_build_room_tiles(POST_PROCESSING_ROOM, POST_FILL)
+	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room", true)
+	_build_room_tiles(FURNACE_ROOM, FURNACE_FILL)
+	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "VIM Bay", true)
+	_build_room_tiles(POUR_ROOM, POUR_FILL)
 
 
 ## skip_fill lets a room draw its border/label only and supply its own floor
-## visual on top - the Print Room does this now, using a real tiled floor
-## instead of a flat ColorRect (see _build_print_room_tiles()) - the border
-## is still drawn AFTER the tiles below, so its frame naturally covers the
-## tilemap's outermost edge rather than needing inset math to line up with
-## the grid exactly.
+## visual on top - every room does this now, using a real tiled floor instead
+## of a flat ColorRect (see _build_room_tiles()). The border must be drawn
+## BEFORE _build_room_tiles() is called for that same room, not after - see
+## that function's own comment for why (a real bug this session, not just a
+## hypothetical).
 func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_text: String, skip_fill: bool = false) -> void:
 	# ColorRect/Label are Control nodes even out here in the 2D world, and
 	# Control defaults to MOUSE_FILTER_STOP - without explicitly setting it
@@ -413,51 +417,132 @@ func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_t
 		_room_floor_labels.append(entry)
 
 
-## Real per-cell floor tiles (design request, this session: "turn the game
-## into more of a grid feeling") - the Print Room is the only room with real
-## tile art so far (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png).
+## Real per-cell floor tiles for every room (design request, this session:
+## first just the Print Room to prove the grid concept, then "do the entire
+## factory and use all the different tiles we have... make it feel like a
+## real factory"). Only one tile sheet actually exists on disk
+## (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png, a 5x5
+## grid of 180x180 tiles - generic industrial floor art, not Print-Room-
+## specific despite the filename) - every room reuses the exact same sheet,
+## differentiated by a per-room modulate tint (that room's existing FILL
+## color) rather than needing five separate tile sheets.
 ##
-## Bug fix history, same session: the first pass loaded a pre-existing hand-
-## authored `resources/tilesets/print_room_floor_tileset.tres` via a real
-## `TileMapLayer` - logically correct in every headless check (position,
-## scale, filled cell count, source texture all verified), but confirmed via
-## screenshot to never actually render a single tile. Suspected the hand-
-## authored .tres, so a second pass rebuilt the whole TileSet fresh at
-## runtime via Godot's own TileSetAtlasSource/TileSet API instead of trusting
-## that file - still invisible, confirmed via a second screenshot from a
-## real LOCAL desktop Play run (not just the original remote/Xogot deploy),
-## which rules out a remote-runtime-compatibility gap specifically - this is
-## a real bug in the TileMapLayer approach itself, in this exact Godot
-## build, not an environment quirk. Rather than keep chasing TileMapLayer
-## internals blind (headless testing can confirm the DATA is correct but,
-## per this session's own hard-won lesson, can never confirm what anything
-## actually renders like), this now sidesteps TileMapLayer entirely and uses
-## the one rendering mechanism already proven working everywhere else in
-## this exact deployment - plain Sprite2D + Texture2D, the same mechanism
-## every station sprite already uses successfully. One Sprite2D per grid
-## cell (360 for the Print Room's 24x15), all sharing one AtlasTexture
-## cropped to the plain bolted floor panel's region (0,0)-(180,180) - more
-## nodes than a real TileMap, but trivial for a one-time static floor
-## decoration, and there's no more basic/compatible a way to put a texture
-## on screen in Godot than this.
-const PRINT_ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
-const PRINT_ROOM_TILE_SOURCE_SIZE: int = 180
+## Bug fix history, same session: this went through three failed rendering
+## attempts (a hand-authored TileSet via TileMapLayer, a runtime-built
+## TileSet via TileMapLayer, then plain Sprite2D) before the real bug was
+## found - none of the three approaches were actually broken. _add_room_zone()'s
+## "border" is a full-room-size ColorRect, not a thin frame; every room's
+## normal (smaller, inset) fill drawn on top of it is what creates the
+## illusion of a bordered panel. Building the tiles BEFORE calling
+## _add_room_zone() for that same room meant the border was drawn on top of
+## the tiles every time, painting over the entire floor edge-to-edge - the
+## tiles were rendering correctly on every attempt, just immediately hidden.
+## Fixed by drawing the border first (see _build_floor()), tiles after.
+##
+## One Sprite2D per grid cell (a plain Sprite2D + AtlasTexture region, the
+## same mechanism every station sprite already uses - more nodes than a real
+## TileMap, but trivial for a one-time static floor decoration), using
+## rotation to get 4 sides/corners out of just two source tiles (a straight
+## edge and a corner, blue accent-lined) rather than needing a separate tile
+## per direction - both tiles happen to point their accent line in a
+## direction that rotates cleanly in 90-degree steps to cover every other
+## side/corner. The interior is a weighted-random mix of most of the sheet's
+## remaining tiles (plain variants, vents, a hazard stripe, diamond plate, a
+## numbered marker, a directional arrow, bolted corners) so it reads as a
+## real, slightly-worn factory floor rather than one flat repeating tile.
+const ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
+const ROOM_TILE_SOURCE_SIZE: int = 180
 
-func _build_print_room_tiles() -> void:
-	var atlas_tex := AtlasTexture.new()
-	atlas_tex.atlas = PRINT_ROOM_TILE_TEXTURE
-	atlas_tex.region = Rect2(0, 0, PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
+## Atlas coordinates (col, row), 0-indexed, matching the 5x5 sheet.
+const TILE_EDGE := Vector2i(0, 1)     # straight edge, accent line on the left by default
+const TILE_CORNER := Vector2i(1, 1)   # corner, accent line forming a top-left L by default
 
-	var tile_scale: float = GRID_CELL_SIZE / float(PRINT_ROOM_TILE_SOURCE_SIZE)
-	var cells_wide := int(PRINT_ROOM.size.x / GRID_CELL_SIZE)
-	var cells_tall := int(PRINT_ROOM.size.y / GRID_CELL_SIZE)
+## Interior tile weights - deliberately NOT uniform. Plain-ish tiles
+## dominate so the floor still reads as "a floor" at a glance; the rest are
+## real variety sprinkled in, not evenly distributed.
+const INTERIOR_TILE_WEIGHTS: Array[Dictionary] = [
+	{"coords": Vector2i(0, 0), "weight": 55.0}, # plain bolted panel
+	{"coords": Vector2i(1, 2), "weight": 15.0}, # plain, no accents
+	{"coords": Vector2i(2, 0), "weight": 8.0},  # quartered/grid-line panel
+	{"coords": Vector2i(0, 4), "weight": 5.0},  # bolted corners, plain variant
+	{"coords": Vector2i(1, 3), "weight": 4.0},  # small centered vent
+	{"coords": Vector2i(2, 3), "weight": 3.0},  # big centered vent
+	{"coords": Vector2i(0, 3), "weight": 3.0},  # hazard stripe
+	{"coords": Vector2i(4, 0), "weight": 3.0},  # diamond plate
+	{"coords": Vector2i(3, 3), "weight": 2.0},  # wide vent strip
+	{"coords": Vector2i(1, 4), "weight": 1.0},  # octagon floor marker
+	{"coords": Vector2i(2, 4), "weight": 0.5},  # numbered ("01") marker
+	{"coords": Vector2i(3, 4), "weight": 0.5},  # directional arrow
+]
+
+var _room_tile_rng := RandomNumberGenerator.new()
+
+
+func _pick_interior_tile() -> Vector2i:
+	var total := 0.0
+	for entry in INTERIOR_TILE_WEIGHTS:
+		total += entry["weight"]
+	var roll := _room_tile_rng.randf() * total
+	for entry in INTERIOR_TILE_WEIGHTS:
+		roll -= entry["weight"]
+		if roll <= 0.0:
+			return entry["coords"]
+	return INTERIOR_TILE_WEIGHTS[0]["coords"]
+
+
+func _build_room_tiles(rect: Rect2, tint: Color) -> void:
+	var cells_wide := int(rect.size.x / GRID_CELL_SIZE)
+	var cells_tall := int(rect.size.y / GRID_CELL_SIZE)
+	var half_cell := GRID_CELL_SIZE * 0.5
+
 	for cy in cells_tall:
 		for cx in cells_wide:
+			var is_top := cy == 0
+			var is_bottom := cy == cells_tall - 1
+			var is_left := cx == 0
+			var is_right := cx == cells_wide - 1
+
+			var atlas_coords: Vector2i
+			var rotation_degrees_value := 0.0
+			if (is_top or is_bottom) and (is_left or is_right):
+				atlas_coords = TILE_CORNER
+				if is_top and is_right:
+					rotation_degrees_value = 90.0
+				elif is_bottom and is_right:
+					rotation_degrees_value = 180.0
+				elif is_bottom and is_left:
+					rotation_degrees_value = 270.0
+				# else top-left, the tile's own default orientation, 0 degrees
+			elif is_top:
+				atlas_coords = TILE_EDGE
+				rotation_degrees_value = 90.0
+			elif is_bottom:
+				atlas_coords = TILE_EDGE
+				rotation_degrees_value = 270.0
+			elif is_left:
+				atlas_coords = TILE_EDGE
+				# left is the tile's own default orientation, 0 degrees
+			elif is_right:
+				atlas_coords = TILE_EDGE
+				rotation_degrees_value = 180.0
+			else:
+				atlas_coords = _pick_interior_tile()
+
+			var atlas_tex := AtlasTexture.new()
+			atlas_tex.atlas = ROOM_TILE_TEXTURE
+			atlas_tex.region = Rect2(
+				Vector2(atlas_coords) * float(ROOM_TILE_SOURCE_SIZE), Vector2.ONE * float(ROOM_TILE_SOURCE_SIZE)
+			)
+
 			var tile := Sprite2D.new()
 			tile.texture = atlas_tex
-			tile.centered = false
-			tile.position = PRINT_ROOM.position + Vector2(cx, cy) * GRID_CELL_SIZE
-			tile.scale = Vector2.ONE * tile_scale
+			# Centered (not top-left-anchored) specifically so rotation below
+			# pivots around the cell's own center instead of swinging the
+			# tile out of its cell.
+			tile.position = rect.position + Vector2(cx, cy) * GRID_CELL_SIZE + Vector2(half_cell, half_cell)
+			tile.scale = Vector2.ONE * (GRID_CELL_SIZE / float(ROOM_TILE_SOURCE_SIZE))
+			tile.rotation_degrees = rotation_degrees_value
+			tile.modulate = tint
 			# Same zoomed-out-pixelation fix as every other real sprite this
 			# session - the tile texture also has mipmaps enabled (see its
 			# own .import file).
