@@ -28,7 +28,7 @@ offset_top = 54.0
 offset_right = 465.0
 offset_bottom = 258.0
 
-[node name="ContractsScroll" type="ScrollContainer" parent="Panel"]
+[node name="TabContainer" type="TabContainer" parent="Panel"]
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -36,9 +36,32 @@ offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
+
+[node name="Offers" type="Control" parent="Panel/TabContainer"]
+layout_mode = 2
+
+[node name="OffersScroll" type="ScrollContainer" parent="Panel/TabContainer/Offers"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
 horizontal_scroll_mode = 0
 
-[node name="ContractsList" type="VBoxContainer" parent="Panel/ContractsScroll"]
+[node name="OffersRoot" type="VBoxContainer" parent="Panel/TabContainer/Offers/OffersScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Active" type="Control" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="ContractsScroll" type="ScrollContainer" parent="Panel/TabContainer/Active"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="ContractsList" type="VBoxContainer" parent="Panel/TabContainer/Active/ContractsScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3

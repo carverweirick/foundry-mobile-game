@@ -14,6 +14,13 @@ var current_station_index: int = 0
 var status: Status = Status.IN_STATION
 var contract_id: int = -1
 
+## Which of its contract's Contract.line_items this Part actually is (design
+## doc Section 24.1, multi-line-item contracts) - a contract can ask for
+## several different geometries at once, so a Part needs to know which
+## specific one it represents, not just which contract it's for. Set once at
+## creation (Station._try_create_part()) and never changes afterward.
+var line_item_index: int = 0
+
 ## Design doc Section 9 - set by Station._maybe_flag_defect() when a risk
 ## roll hits. defect_station_id is the station that flagged it (needed to
 ## know whose queue_rack to contaminate on escalation, and to look up the

@@ -552,7 +552,7 @@ func _ship_part(part: Part) -> void:
 			contract.customer_name if contract != null else "no contract",
 		]
 		return
-	GameData.credit_contract_shipment(contract)
+	GameData.credit_contract_shipment(contract, part)
 	GameData.unregister_part(part)
 	status_label.text = "Shipped part #%d (%s)" % [
 		part.part_id, contract.customer_name if contract != null else "no contract"
@@ -790,9 +790,22 @@ func _try_create_part(contract: Contract = null) -> bool:
 			return false
 		contract = active[0]
 
+	# Section 24.1: a contract can have several line items - pick whichever
+	# one still needs more Parts (shipped-or-in-flight, not just shipped, so
+	# this doesn't keep overproducing one line item past what it actually
+	# needs while another on the same contract still needs work). No open
+	# line item (everything already shipped or covered by Parts already in
+	# the pipeline) means there's genuinely nothing to create yet - same as
+	# the old "contract has no room" case, just resolved per line item now.
+	var in_flight := GameData.in_flight_counts_for_contract(contract.contract_id)
+	var line_item_index := contract.first_open_line_item_index(in_flight)
+	if line_item_index < 0:
+		return false
+
 	var part := Part.new()
 	part.current_station_index = 0
 	part.contract_id = contract.contract_id
+	part.line_item_index = line_item_index
 	GameData.register_part(part)
 	current_part = part
 	_start_running()
@@ -1072,9 +1085,8 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 	var base_risk := GameData.base_defect_risk_for(station_id)
 	if base_risk <= 0.0:
 		return GameData.DefectCategory.NONE
-	var contract := GameData.get_contract(part.contract_id)
 	var familiarity_mult := GameData.familiarity_multiplier_for(
-		contract.geometry_name if contract != null else "", station_id
+		GameData.geometry_name_for_part(part), station_id
 	)
 	var tech_mult := (
 		active_worker.defect_multiplier if active_worker != null else 1.0
@@ -1107,9 +1119,8 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 ## Burnout-specific logic needed.
 func _resolve_push_through(part: Part) -> void:
 	part.is_push_through = false
-	var contract := GameData.get_contract(part.contract_id)
 	GameData.raise_familiarity(
-		contract.geometry_name if contract != null else "", station_id, GameData.FAMILIARITY_GAIN_PUSH_THROUGH
+		GameData.geometry_name_for_part(part), station_id, GameData.FAMILIARITY_GAIN_PUSH_THROUGH
 	)
 	var outcome := _roll_defect_outcome(part)
 

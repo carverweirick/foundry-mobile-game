@@ -2,6 +2,10 @@ extends Node
 
 signal currency_changed(new_amount: int)
 signal contract_updated(contract: Contract)
+## A new rolled offer joined contract_offers, or one was removed by
+## acceptance - the Contract Offers screen listens for this rather than
+## polling contract_offers.size() every frame.
+signal contract_offers_changed()
 signal held_parts_changed()
 signal technician_updated(tech: Technician)
 signal reputation_changed(new_amount: int)
@@ -129,8 +133,9 @@ const DEFECT_CONTAMINATION_CHANCE: float = 0.25
 ## so there's no risk there for familiarity to meaningfully reduce.
 const FAMILIARITY_TRACKED_STATIONS: Array[String] = ["shelling", "burnout", "mold_prep", "pour"]
 
-## Contract.geometry_name (a flavor string for now - the real geometry family
-## system from Section 10 isn't built yet) -> {station_id: stars 0-5}, one
+## A geometry name (a flavor string for now, resolved per-Part via
+## GameData.geometry_name_for_part() since Section 24.1 - the real geometry
+## family system from Section 10 isn't built yet) -> {station_id: stars 0-5}, one
 ## entry per FAMILIARITY_TRACKED_STATIONS station. A geometry/station pair
 ## never seen is 0 stars, brand new. Raised only by raise_familiarity()
 ## below, called from a redesign, a resolved specialist visit, or a Push
@@ -235,6 +240,18 @@ var currency: int = 500
 
 var stations: Array[StationDef] = []
 var contracts: Array[Contract] = []
+
+## Rolled contracts the player hasn't accepted yet (design doc Section 24.9 /
+## the "Contract Offers" screen) - a genuinely separate pool from `contracts`
+## above. An offer's deadline clock is NOT running (Contract.start() isn't
+## called until accept_contract_offer() below) and it doesn't count toward
+## anything work-related (get_active_contracts(), count_parts_in_pipeline(),
+## the backpressure/auto-queue logic) until the player actually accepts it.
+## The six starting contracts skip this pool entirely and go straight into
+## `contracts` already-active, so a brand new player isn't handed an extra
+## "accept your own starting work" step - only contracts generated afterward
+## via generate_contract() ever appear here.
+var contract_offers: Array[Contract] = []
 
 ## The pipeline in real production sequence, revised this session per design
 ## doc Section 21.3-21.5: Deplate is gone entirely (collecting a finished
@@ -389,9 +406,27 @@ const REPUTATION_QUALITY_BONUS_MAX: float = 0.35
 ## real jobs available rather than a single-contract-at-a-time queue,
 ## consistent with Section 8's "multiple contracts run at once" / overlap
 ## structure. Checked from _process_contracts() below.
+## Renamed in spirit this session: this now floors the size of the
+## *offers* pool (contract_offers), not the active/accepted one - filling
+## the active pool is now an explicit player action (accept_contract_offer()),
+## not automatic. Generation still only fires while below this floor, so the
+## pool settles at roughly this size and only grows a fresh offer once an
+## existing one gets accepted (freeing a slot) - see _process_contracts().
 const MIN_ACTIVE_CONTRACTS: int = 4
 const CONTRACT_GENERATION_COOLDOWN_SECONDS: float = 45.0
 var _contract_generation_cooldown: float = 0.0
+
+## How many line items a generated offer asks for, by tier - bigger/later-
+## tier customers ask for more variety at once (design doc Section 24.1: "A
+## customer contract can have multiple parts that they're asking for").
+## First-pass placeholder shape, same spirit as every other invented number
+## in this file.
+const LINE_ITEM_COUNT_RANGE := {
+	Contract.ContractTier.LOCAL_SHOPS: Vector2i(1, 1),
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: Vector2i(1, 2),
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: Vector2i(2, 3),
+	Contract.ContractTier.FLAGSHIP: Vector2i(2, 4),
+}
 
 ## Section 8: "company names and the part/alloy work they need are two fully
 ## separate pools, rolled independently rather than fixed pairs." Company
@@ -437,7 +472,27 @@ const FAMILY_MIN_TIER := {
 	"Impeller": Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
 	"Manifold": Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
 	"Strut": Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
-	"Turbine": Contract.ContractTier.FLAGSHIP,
+	# Turbine/HotSection lowered from FLAGSHIP-only to INDUSTRIAL_ACCOUNTS this
+	# session (design doc Section 24.3, "a much larger, visually distinct real
+	# geometry roster... so it doesn't feel like you're continuously
+	# processing the same parts over and over again") - gating the whole
+	# aerospace-signature rotating/hot-section geometries behind the rarest
+	# tier meant they almost never showed up. Flagship-tier work in these
+	# families still exists (bigger quantities, pricier alloys), it's just no
+	# longer the ONLY tier that can roll them.
+	"Turbine": Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
+	"HotSection": Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
+}
+## Section 10's per-family Complexity column (Low/Medium/High/Very High),
+## surfaced directly on the new Contract Offers screen's difficulty tag
+## (design doc Section 24.8 flags a future per-geometry number as a richer
+## follow-up - this is the simpler per-family version that already existed
+## in the design doc, just not displayed anywhere in-game until now).
+const FAMILY_COMPLEXITY_LABEL := {
+	"Decorative": "Low", "Bracket": "Low",
+	"Valve": "Medium", "Housing": "Medium", "Seal": "Medium",
+	"Impeller": "High", "Manifold": "High", "Strut": "High",
+	"Turbine": "Very High", "HotSection": "Very High",
 }
 const GEOMETRY_POOL := {
 	"Decorative": ["Pendant Blanks", "Decorative Medallions"],
@@ -448,7 +503,14 @@ const GEOMETRY_POOL := {
 	"Impeller": ["Pump Impellers", "Blower Impellers", "Compressor Impellers", "Fuel Pump Impellers"],
 	"Manifold": ["Hydraulic Manifolds", "Fuel Manifolds", "Bleed Air Manifolds"],
 	"Strut": ["Landing Gear Struts", "Actuator Linkages"],
-	"Turbine": ["Turbine Blades", "Turbine Vanes"],
+	# Expanded this session (design doc Section 24.3, direct request: "blades,
+	# turbines, blisks, recuperators, hot case sections... veins" [vanes]) -
+	# Turbine Blades/Vanes already existed; Blisks, Nozzle Guide Vanes, and
+	# Compressor Vanes are new rotating-hardware geometries in the same family.
+	"Turbine": ["Turbine Blades", "Turbine Vanes", "Nozzle Guide Vanes", "Compressor Vanes", "Blisks"],
+	# New family this session - the hot-section/casing side of the same
+	# aerospace ask, distinct from Turbine's rotating hardware.
+	"HotSection": ["Combustor Liners", "Recuperators", "Hot Section Casings"],
 }
 
 ## Section 10's alloy table, "roughly matched to contract tier."
@@ -533,6 +595,20 @@ func count_parts_in_pipeline(contract_id: int) -> int:
 	return count
 
 
+## Per-line-item in-flight counts for a contract (Section 24.1) - how many
+## Parts already exist somewhere in the pipeline for each line item, keyed by
+## line_item_index. Station._try_create_part() uses this to pick which line
+## item still needs more Parts started for it - the same "shipped-or-in-
+## flight, not just shipped" reasoning count_parts_in_pipeline() above
+## already uses per-contract, just broken out per line item now.
+func in_flight_counts_for_contract(contract_id: int) -> Dictionary:
+	var counts := {}
+	for p in active_parts:
+		if p.contract_id == contract_id:
+			counts[p.line_item_index] = counts.get(p.line_item_index, 0) + 1
+	return counts
+
+
 ## Bug fix (this session): a staffed entry station (or a player mashing
 ## Queue) used to keep creating brand new Parts as fast as its timer allowed,
 ## completely regardless of whether anything downstream could actually
@@ -574,6 +650,28 @@ func next_station_id_for(part: Part) -> String:
 	return PIPELINE_ORDER[next_index]
 
 
+## The specific geometry/alloy a Part is actually being made as - resolved
+## through its contract's line_items, not a flat contract-level field any
+## more (Section 24.1). Every caller that used to read
+## `contract.geometry_name`/`alloy_name` directly off a Part's contract now
+## goes through these two instead, since a contract can have several line
+## items and a Part only ever belongs to one of them.
+func geometry_name_for_part(part: Part) -> String:
+	var contract := get_contract(part.contract_id)
+	if contract == null:
+		return ""
+	var li := contract.line_item_at(part.line_item_index)
+	return li.geometry_name if li != null else ""
+
+
+func alloy_name_for_part(part: Part) -> String:
+	var contract := get_contract(part.contract_id)
+	if contract == null:
+		return ""
+	var li := contract.line_item_at(part.line_item_index)
+	return li.alloy_name if li != null else ""
+
+
 func get_active_contracts() -> Array[Contract]:
 	return contracts.filter(func(c): return not c.is_complete)
 
@@ -585,14 +683,18 @@ func get_contract(id: int) -> Contract:
 	return null
 
 
-## Credits one unit toward a contract's progress, and pays out once it's
-## fully shipped. Called from a Station when a part it's producing for
-## that contract reaches Ship.
-func credit_contract_shipment(contract: Contract) -> void:
+## Credits one unit toward a contract's progress - specifically the one line
+## item `part` was actually made for (Section 24.1: a contract can have
+## several line items, only one of which this Part fulfills) - and pays out
+## once the WHOLE contract (every line item) is fully shipped. Called from a
+## Station when a part it's producing for that contract reaches Ship.
+func credit_contract_shipment(contract: Contract, part: Part) -> void:
 	if contract == null or contract.is_complete:
 		return
 
-	contract.quantity_shipped += 1
+	var line_item := contract.line_item_at(part.line_item_index)
+	if line_item != null:
+		line_item.quantity_shipped += 1
 	if contract.is_complete:
 		currency += contract.payout
 		currency_changed.emit(currency)
@@ -703,11 +805,52 @@ func _roll_geometry_for_tier(tier: int) -> String:
 	return parts[randi() % parts.size()]
 
 
+## Section 24.1: a contract can ask for several distinct geometries at once.
+## Rolls `count` geometries independently (each its own family+part roll, so
+## a single contract can genuinely span different families - design doc
+## Section 24.1 asks for variety, not one family per contract), retrying a
+## handful of times on a duplicate so the same geometry doesn't appear twice
+## as two different line items on one contract. Not a hard guarantee at high
+## counts against a small eligible pool, just a strong first-pass attempt.
+func _roll_distinct_geometries_for_tier(tier: int, count: int) -> Array[String]:
+	var picked: Array[String] = []
+	for _i in count:
+		var geometry := ""
+		for _attempt in 5:
+			geometry = _roll_geometry_for_tier(tier)
+			if not picked.has(geometry):
+				break
+		picked.append(geometry)
+	return picked
+
+
+## Reverse lookup into GEOMETRY_POOL (keyed by family, not by geometry) -
+## used both for the complexity tag below and for tinting a geometry's
+## placeholder icon on the Contract Offers screen. "" for a geometry that
+## somehow isn't in any pool (shouldn't happen in practice).
+func family_for_geometry(geometry_name: String) -> String:
+	for family in GEOMETRY_POOL.keys():
+		if (GEOMETRY_POOL[family] as Array).has(geometry_name):
+			return family
+	return ""
+
+
+## Section 10's family Complexity column, looked up via family_for_geometry()
+## - "Medium"/"High"/etc. Falls back to "Medium" for an unrecognized geometry.
+func complexity_label_for_geometry(geometry_name: String) -> String:
+	return FAMILY_COMPLEXITY_LABEL.get(family_for_geometry(geometry_name), "Medium")
+
+
 ## Design doc Section 8: "randomized contract generation... company names and
 ## the part/alloy work they need are two fully separate pools, rolled
 ## independently rather than fixed pairs" plus "repeat clients" and "per-
-## company relationship." Called automatically from _process_contracts()
-## whenever the active pool runs low - see MIN_ACTIVE_CONTRACTS above.
+## company relationship." Section 24.1 (this session): a contract can now ask
+## for several distinct geometries at once, not just one. Called
+## automatically from _process_contracts() whenever the offers pool runs low
+## - see MIN_ACTIVE_CONTRACTS above. Builds an OFFER, not an active contract -
+## see Section 24.9 / the Contract Offers screen: this no longer starts the
+## deadline clock or joins the active `contracts` list on its own, the player
+## has to accept_contract_offer() it first.
 func generate_contract() -> Contract:
 	var tier := _roll_contract_tier()
 	var repeat_name := _maybe_pick_repeat_client()
@@ -729,30 +872,62 @@ func generate_contract() -> Contract:
 	else:
 		customer = _roll_new_customer_name(tier)
 
-	var geometry := _roll_geometry_for_tier(tier)
+	var item_range: Vector2i = LINE_ITEM_COUNT_RANGE[tier]
+	var item_count := randi_range(item_range.x, item_range.y)
+	var geometries := _roll_distinct_geometries_for_tier(tier, item_count)
+	# One alloy for the whole contract, not per line item - a customer's
+	# order is one material spec, same as the real-world framing (design doc
+	# Section 24.1's own example just says "steel," singular, for a
+	# multi-part order).
 	var alloy_pool: Array = ALLOY_POOL[tier]
 	var alloy: String = alloy_pool[randi() % alloy_pool.size()]
+
 	var quantity_range: Vector2i = CONTRACT_QUANTITY_RANGE[tier]
-	var quantity := randi_range(quantity_range.x, quantity_range.y)
-	var payout := int(round(quantity * float(CONTRACT_PAYOUT_PER_UNIT[tier]) * randf_range(0.85, 1.15)))
-	# Design request (this session): "the higher your company reputation the
-	# better contracts you'll get... as well as attract contracts from other
-	# bigger companies with better contracts." Reputation already gates
-	# WHICH tier can be rolled at all (_max_eligible_tier()) and leans the
-	# roll toward bigger companies as higher tiers unlock
-	# (CONTRACT_TIER_ROLL_WEIGHTS) - this is the continuous half of that same
-	# idea, applied to every generated contract regardless of tier or
-	# repeat/new: a smoothly growing bonus so Reputation keeps mattering
-	# between tier thresholds too, not just at the moment one clears.
+	# Divide the tier's existing whole-contract quantity range across however
+	# many line items got rolled, so a multi-item contract's TOTAL size stays
+	# in roughly the same ballpark as a single-item one used to be, rather
+	# than multiplying the total ask by item_count on top of everything else.
+	var per_item_range := Vector2i(
+		maxi(1, quantity_range.x / item_count), maxi(1, quantity_range.y / item_count)
+	)
 	var reputation_bonus := 1.0 + (float(reputation) / float(REPUTATION_MAX)) * REPUTATION_QUALITY_BONUS_MAX
-	quantity = maxi(quantity_range.x, int(round(quantity * reputation_bonus)))
-	payout = int(round(payout * reputation_bonus))
+
+	var line_items: Array[Contract.LineItem] = []
+	var total_quantity := 0
+	for geometry in geometries:
+		var li := Contract.LineItem.new()
+		li.geometry_name = geometry
+		li.alloy_name = alloy
+		var qty := randi_range(per_item_range.x, per_item_range.y)
+		# Same continuous Reputation-quality bonus as before, applied per
+		# line item now rather than to one whole-contract number.
+		qty = maxi(per_item_range.x, int(round(qty * reputation_bonus)))
+		li.quantity_required = qty
+		total_quantity += qty
+		line_items.append(li)
+
+	var payout := int(round(total_quantity * float(CONTRACT_PAYOUT_PER_UNIT[tier]) * randf_range(0.85, 1.15) * reputation_bonus))
 	var deadline: float = CONTRACT_DEADLINE_SECONDS[tier]
 
-	var contract := _make_contract(customer, tier, geometry, alloy, quantity, deadline, payout)
-	contracts.append(contract)
-	contract_updated.emit(contract)
-	return contract
+	var offer := _make_contract(customer, tier, line_items, deadline, payout, false)
+	contract_offers.append(offer)
+	contract_offers_changed.emit()
+	return offer
+
+
+## Moves a rolled offer into real active work: starts its deadline clock
+## (Contract.start(), deliberately not called until now - see that method's
+## own comment), removes it from contract_offers, and appends it to
+## `contracts` so get_active_contracts()/the backpressure and auto-queue
+## logic all pick it up exactly like any other active contract from here on.
+func accept_contract_offer(offer: Contract) -> void:
+	if not contract_offers.has(offer):
+		return
+	contract_offers.erase(offer)
+	offer.start()
+	contracts.append(offer)
+	contract_offers_changed.emit()
+	contract_updated.emit(offer)
 
 
 ## Section 8's "at 5 stars" is the Reputation-0 baseline - eases down toward
@@ -772,8 +947,11 @@ func _repeat_client_tier_bump_threshold() -> float:
 ## Sweeps every active contract for a deadline that just lapsed (Section 8:
 ## "missing deadlines... lowers reputation," a one-time penalty via
 ## Contract.deadline_penalty_applied so it doesn't refire every frame after),
-## then tops the active contract pool back up via generate_contract() once
-## it's run low, subject to a cooldown so a whole burst can't land at once.
+## then tops the OFFERS pool back up via generate_contract() once it's run
+## low, subject to a cooldown so a whole burst can't land at once. Filling
+## the active pool itself is no longer automatic (see contract_offers/
+## accept_contract_offer() above) - only offers get auto-generated; an offer
+## only becomes real active work once the player accepts it.
 func _process_contracts(delta: float) -> void:
 	for c in contracts:
 		if c.is_complete or c.deadline_penalty_applied:
@@ -785,7 +963,7 @@ func _process_contracts(delta: float) -> void:
 			contract_updated.emit(c)
 
 	_contract_generation_cooldown = max(_contract_generation_cooldown - delta, 0.0)
-	if _contract_generation_cooldown <= 0.0 and get_active_contracts().size() < MIN_ACTIVE_CONTRACTS:
+	if _contract_generation_cooldown <= 0.0 and contract_offers.size() < MIN_ACTIVE_CONTRACTS:
 		generate_contract()
 		_contract_generation_cooldown = CONTRACT_GENERATION_COOLDOWN_SECONDS
 
@@ -1041,24 +1219,49 @@ func _init() -> void:
 	# Low/Medium/High/Very High) - concrete numbers below are first-pass
 	# placeholders scaled to that, same spirit as the Technician costs.
 	contracts = [
-		_make_contract("Local Hardware Co.", Contract.ContractTier.LOCAL_SHOPS,
+		_make_single_item_contract("Local Hardware Co.", Contract.ContractTier.LOCAL_SHOPS,
 			"Mounting Brackets", "Mild Steel", 5, 1200.0, 50),
-		_make_contract("Riverside Jewelers", Contract.ContractTier.LOCAL_SHOPS,
+		_make_single_item_contract("Riverside Jewelers", Contract.ContractTier.LOCAL_SHOPS,
 			"Pendant Blanks", "Bronze", 8, 1200.0, 70),
-		_make_contract("Cascade Fluid Systems", Contract.ContractTier.REGIONAL_MANUFACTURERS,
+		_make_single_item_contract("Cascade Fluid Systems", Contract.ContractTier.REGIONAL_MANUFACTURERS,
 			"Valve Bodies", "Stainless Steel", 15, 1800.0, 220),
-		_make_contract("Northline Pumps Inc.", Contract.ContractTier.REGIONAL_MANUFACTURERS,
+		_make_single_item_contract("Northline Pumps Inc.", Contract.ContractTier.REGIONAL_MANUFACTURERS,
 			"Pump Housings", "Cast Iron Blend", 20, 1800.0, 280),
-		_make_contract("Summit Industrial Group", Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
+		_make_single_item_contract("Summit Industrial Group", Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
 			"Gear Housings", "Alloy Steel", 40, 2700.0, 650),
 		# Recurring flagship work isn't modeled yet - this is a one-time
 		# contract for now, same as the other five.
-		_make_contract("Meridian Aerospace", Contract.ContractTier.FLAGSHIP,
+		_make_single_item_contract("Meridian Aerospace", Contract.ContractTier.FLAGSHIP,
 			"Turbine Blades", "Nickel Superalloy", 120, 5400.0, 2500),
 	]
 
 
+## `auto_start`: true for the six immediately-active starting contracts
+## (start() runs right away, same as before this session), false for a
+## generated offer (Contract.start() waits for accept_contract_offer()).
 func _make_contract(
+	customer: String,
+	tier: Contract.ContractTier,
+	line_items: Array[Contract.LineItem],
+	deadline_seconds: float,
+	payout: int,
+	auto_start: bool = true
+) -> Contract:
+	var c := Contract.new()
+	c.customer_name = customer
+	c.tier = tier
+	c.line_items = line_items
+	c.deadline_seconds = deadline_seconds
+	c.payout = payout
+	if auto_start:
+		c.start()
+	return c
+
+
+## Convenience for a single-geometry contract (the six starting contracts
+## below) - builds the one-element line_items array _make_contract() now
+## expects, so those call sites don't need to construct a LineItem by hand.
+func _make_single_item_contract(
 	customer: String,
 	tier: Contract.ContractTier,
 	geometry: String,
@@ -1067,16 +1270,12 @@ func _make_contract(
 	deadline_seconds: float,
 	payout: int
 ) -> Contract:
-	var c := Contract.new()
-	c.customer_name = customer
-	c.tier = tier
-	c.geometry_name = geometry
-	c.alloy_name = alloy
-	c.quantity_required = quantity
-	c.deadline_seconds = deadline_seconds
-	c.payout = payout
-	c.start()
-	return c
+	var li := Contract.LineItem.new()
+	li.geometry_name = geometry
+	li.alloy_name = alloy
+	li.quantity_required = quantity
+	var items: Array[Contract.LineItem] = [li]
+	return _make_contract(customer, tier, items, deadline_seconds, payout, true)
 
 
 ## Falls back to the shared "printing" template for any specific printer
@@ -1252,10 +1451,7 @@ const SCRAP_FAMILIARITY_THRESHOLD_STARS: int = 4
 func can_scrap_for_expertise(part: Part) -> bool:
 	if not part.is_defective:
 		return false
-	var contract := get_contract(part.contract_id)
-	if contract == null:
-		return false
-	return weakest_familiarity_stars(contract.geometry_name) >= SCRAP_FAMILIARITY_THRESHOLD_STARS
+	return weakest_familiarity_stars(geometry_name_for_part(part)) >= SCRAP_FAMILIARITY_THRESHOLD_STARS
 
 
 ## The only scrap-before-shipping action in the game (design doc Section
@@ -1275,8 +1471,7 @@ func scrap_part_for_expertise(part: Part) -> bool:
 
 
 func _clear_defect_and_raise_familiarity(part: Part, stars: int) -> void:
-	var contract := get_contract(part.contract_id)
-	raise_familiarity(contract.geometry_name if contract != null else "", part.defect_station_id, stars)
+	raise_familiarity(geometry_name_for_part(part), part.defect_station_id, stars)
 	part.clear_defect()
 
 

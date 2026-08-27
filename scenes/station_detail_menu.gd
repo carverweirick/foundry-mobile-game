@@ -422,8 +422,7 @@ func _add_defect_fix_buttons(row: Container, part: Part) -> void:
 	# the single weakest-link station's familiarity as a percentage... since
 	# that is the number that actually matters for judging the specific risk."
 	if GameData.can_scrap_for_expertise(part):
-		var contract := GameData.get_contract(part.contract_id)
-		var weakest_percent := GameData.weakest_familiarity_percent(contract.geometry_name if contract != null else "")
+		var weakest_percent := GameData.weakest_familiarity_percent(GameData.geometry_name_for_part(part))
 		var scrap := Button.new()
 		scrap.text = "Scrap - won't meet tolerance (weakest link %d%% familiar)" % weakest_percent
 		scrap.pressed.connect(_on_scrap_part.bind(part))
@@ -530,12 +529,12 @@ func _refresh_selected_info() -> void:
 ## Design doc Section 21.7's "detail view": per-station familiarity, not just
 ## the quick-glance average already in _part_detail_text() below.
 func _part_familiarity_breakdown_text(part: Part) -> String:
-	var contract := GameData.get_contract(part.contract_id)
-	if contract == null:
+	var geometry_name := GameData.geometry_name_for_part(part)
+	if geometry_name == "":
 		return "Familiarity by station: no contract"
 	var lines: Array[String] = ["Familiarity by station:"]
 	for station_id in GameData.FAMILIARITY_TRACKED_STATIONS:
-		var stars := GameData.familiarity_stars_for(contract.geometry_name, station_id)
+		var stars := GameData.familiarity_stars_for(geometry_name, station_id)
 		lines.append("  %s: %d/5" % [_display_name_for(station_id), stars])
 	return "\n".join(PackedStringArray(lines))
 
@@ -550,8 +549,9 @@ func _part_detail_text(part: Part) -> String:
 	var lines: Array[String] = []
 	lines.append("Part #%d" % part.part_id)
 	if contract != null:
-		lines.append("Contract: %s (%s, %s)" % [contract.customer_name, contract.geometry_name, contract.alloy_name])
-		lines.append("Familiarity: %d/5 stars (avg)" % GameData.average_familiarity_stars(contract.geometry_name))
+		var geometry_name := GameData.geometry_name_for_part(part)
+		lines.append("Contract: %s (%s, %s)" % [contract.customer_name, geometry_name, GameData.alloy_name_for_part(part)])
+		lines.append("Familiarity: %d/5 stars (avg)" % GameData.average_familiarity_stars(geometry_name))
 	else:
 		lines.append("Contract: none")
 	lines.append("Stage: waiting in queue at %s" % _station.station_name)
@@ -621,7 +621,7 @@ func _refresh_inventory_list() -> void:
 		# Design doc Section 21.7's quick-glance display: an average star
 		# rating everywhere a Part shows up in a list, not just the rack panel.
 		familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(
-			contract.geometry_name if contract != null else ""
+			GameData.geometry_name_for_part(part)
 		)
 		row.add_child(familiarity_label)
 

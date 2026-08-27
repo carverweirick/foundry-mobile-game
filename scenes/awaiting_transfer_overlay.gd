@@ -110,8 +110,6 @@ func _add_transfer_row(part: Part) -> void:
 	var row := HBoxContainer.new()
 	transfer_list.add_child(row)
 
-	var contract := GameData.get_contract(part.contract_id)
-
 	var id_label := Label.new()
 	id_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	id_label.custom_minimum_size = Vector2(45.0, 0.0)
@@ -122,7 +120,7 @@ func _add_transfer_row(part: Part) -> void:
 	familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	familiarity_label.custom_minimum_size = Vector2(40.0, 0.0)
 	familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(
-		contract.geometry_name if contract != null else ""
+		GameData.geometry_name_for_part(part)
 	)
 	row.add_child(familiarity_label)
 
