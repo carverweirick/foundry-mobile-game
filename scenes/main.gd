@@ -408,24 +408,51 @@ func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_t
 
 ## Real per-cell floor tiles (design request, this session: "turn the game
 ## into more of a grid feeling") - the Print Room is the only room with real
-## tile art so far (assets/sprites/floor_tiles/, resources/tilesets/
-## print_room_floor_tileset.tres, sliced but never actually wired into the
-## floor before now). The TileSet's own tile_size is 180x180 (the source
-## art's real resolution) - scaling the TileMapLayer node itself down to
-## GRID_CELL_SIZE/180 renders each source tile at exactly one grid cell
-## instead, without needing a second, smaller copy of the art. Filled
-## uniformly with the plain bolted floor panel (atlas coord (0,0)) for now -
-## the same sheet also has a matched set of blue accent-line edge/corner
-## tiles and decorative props (vents, hazard stripes, a numbered marker) for
-## a richer pass later, not used yet.
-const PRINT_ROOM_TILESET: TileSet = preload("res://resources/tilesets/print_room_floor_tileset.tres")
+## tile art so far (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png).
+##
+## Bug fix: the first pass loaded the pre-existing hand-authored
+## `resources/tilesets/print_room_floor_tileset.tres` (written by an earlier
+## session directly as a text resource, never actually saved out by Godot's
+## own TileSet editor) - it parsed and loaded without any error, but never
+## actually rendered a visible tile in a real windowed run (only a flat
+## background showed, confirmed from a screenshot; nothing catches this
+## difference in this project's headless-only testing, since headless mode
+## never exercises real GPU rendering at all - see this session's own
+## conversation). Rather than debug a hand-typed resource file against
+## real Godot internals blind, this now builds the whole TileSet fresh at
+## runtime via the real TileSetAtlasSource/TileSet API instead of trusting
+## a pre-existing file - guaranteed to be exactly what Godot's own object
+## model expects, since it's Godot's own constructors doing the work. The
+## packed atlas's native tile size is 180x180 - scaling the TileMapLayer
+## node itself down to GRID_CELL_SIZE/180 renders each source tile at
+## exactly one grid cell instead, without needing a second, smaller copy of
+## the art. Filled uniformly with the plain bolted floor panel (atlas coord
+## (0,0)) for now - the same sheet also has a matched set of blue accent-line
+## edge/corner tiles and decorative props (vents, hazard stripes, a numbered
+## marker) for a richer pass later, not used yet. The old .tres resource is
+## left on disk unused rather than deleted, in case it's worth fixing up
+## properly through the real editor later instead of building tiles in code
+## forever.
+const PRINT_ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
+const PRINT_ROOM_TILE_SOURCE_SIZE: int = 180
 
 func _build_print_room_tiles() -> void:
+	var atlas_source := TileSetAtlasSource.new()
+	atlas_source.texture = PRINT_ROOM_TILE_TEXTURE
+	atlas_source.texture_region_size = Vector2i(PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
+	atlas_source.create_tile(Vector2i(0, 0))
+
+	var tile_set := TileSet.new()
+	tile_set.tile_size = Vector2i(PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
+	tile_set.add_source(atlas_source, 0)
+
 	var tilemap := TileMapLayer.new()
-	tilemap.tile_set = PRINT_ROOM_TILESET
+	tilemap.tile_set = tile_set
 	tilemap.position = PRINT_ROOM.position
-	var tile_world_size: float = PRINT_ROOM_TILESET.tile_size.x
-	tilemap.scale = Vector2.ONE * (GRID_CELL_SIZE / tile_world_size)
+	tilemap.scale = Vector2.ONE * (GRID_CELL_SIZE / float(PRINT_ROOM_TILE_SOURCE_SIZE))
+	# Same zoomed-out-pixelation fix as every other real sprite this session -
+	# the tile texture also has mipmaps enabled (see its own .import file).
+	tilemap.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	add_child(tilemap)
 
 	var cells_wide := int(PRINT_ROOM.size.x / GRID_CELL_SIZE)
