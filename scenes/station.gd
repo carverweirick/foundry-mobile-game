@@ -92,6 +92,14 @@ const MAX_RACK_CAPACITY: int = 10
 ## One texture per tier, index 0 = Tier 1 ... index 4 = Tier 5.
 ## Leave empty (or entries null) for stations without art yet; a placeholder is used instead.
 @export var tier_sprites: Array[Texture2D] = []
+## Per-station fudge factor on top of BASE_SPRITE_SCALE, for a real photo
+## asset whose native resolution doesn't match the ~360-460px most station
+## art assumes (bug fix, design feedback: "the cleaner is a bit larger than
+## the rest" - cleaner_1/2/3.png are 1254x1254, the same resolution class as
+## Burnout/Pour's real art, but Clean sits packed into a tight row of small
+## Print Room stations rather than having a whole room mostly to itself like
+## Burnout/Pour do). 1.0 (no change) for every station except Clean.
+@export var sprite_scale_override: float = 1.0
 ## Real per-state art (Clean is the first station to get this - see
 ## cleaner_1/2/3.png) - index 0 = idle, 1 = running, 2 = ready. Distinct from
 ## tier_sprites above, which is indexed by current_tier: a station can only
@@ -192,7 +200,7 @@ func _ready() -> void:
 
 	name_label.text = station_name
 
-	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE
+	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * sprite_scale_override
 
 	timer_bar.min_value = 0.0
 	timer_bar.max_value = max(timer_duration, 0.01)
@@ -207,7 +215,7 @@ func _ready() -> void:
 ## the way in. get_click_rect() reads station_sprite.scale live, so the
 ## clickable area shrinks right along with the visible sprite.
 func set_sprite_scale_multiplier(multiplier: float) -> void:
-	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * multiplier
+	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * multiplier * sprite_scale_override
 
 
 func _process(delta: float) -> void:
@@ -997,23 +1005,23 @@ func _update_sprite() -> void:
 		_apply_state_tint()
 
 
-## Picks the right state_sprites frame - the interaction flourish while a
-## technician is physically mid-interaction here (see INTERACT_ANIM_FRAME_SECONDS's
-## comment), otherwise a static frame straight off current_state: 0 = idle,
-## 1 = running, 2 = ready.
+## Picks the right state_sprites frame. Bug fix (design feedback: "it should
+## be closed when the technician leaves the station"): the machine now
+## defaults to frame 0 (closed) at all times, in every one of IDLE/RUNNING/
+## READY - not one open frame while running and a different open frame while
+## ready, which read as the lid just being left open unattended (like running
+## a dishwasher with the door open). state_sprites[1]/[2] (open) only ever
+## appear during the interaction flourish itself, while a technician is
+## physically mid-interaction here (see INTERACT_ANIM_FRAME_SECONDS's
+## comment) - open only because someone's actually there with their hands in
+## it, closed the rest of the time, including the instant they walk away.
 func _apply_state_sprite() -> void:
 	station_sprite.modulate = Color.WHITE
 	if _is_interact_animating():
 		var frame := int(_interact_anim_elapsed / INTERACT_ANIM_FRAME_SECONDS)
 		station_sprite.texture = state_sprites[clampi(frame, 0, state_sprites.size() - 1)]
 		return
-	match current_state:
-		State.IDLE:
-			station_sprite.texture = state_sprites[0]
-		State.RUNNING:
-			station_sprite.texture = state_sprites[1]
-		State.READY:
-			station_sprite.texture = state_sprites[2]
+	station_sprite.texture = state_sprites[0]
 
 
 func _is_interact_animating() -> bool:

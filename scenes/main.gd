@@ -16,6 +16,22 @@ const ROOM_BORDER_WIDTH: float = 4.0
 const FLOOR_MIN: Vector2 = Vector2(0.0, 0.0)
 const FLOOR_MAX: Vector2 = Vector2(1720.0, 960.0)
 
+## The floor's real grid unit (design request, this session: "turn the game
+## into more of a grid feeling so that customization of floor layout later
+## on will be easy/contained"), the first real step toward design doc
+## Section 5's "the floor is meant to sit on a tile grid" - stations still
+## don't have an explicit multi-cell footprint yet (that's the next step,
+## once the Floor Editor itself gets built), but every room boundary and
+## station position is now expressed in whole GRID_CELL_SIZE units, so
+## nothing about the current layout has to be re-derived or approximated
+## when that footprint system lands. 20 was picked as the largest cell size
+## that evenly divides every existing room/floor dimension already in place
+## (the 40px margins, every room's width/height, and the full 1720x960
+## floor) - a "fine" grid relative to a station's own footprint, per design
+## request: most real-art stations span roughly 3-4 cells across, Burnout/
+## Pour's much bigger photo sprites span around 11.
+const GRID_CELL_SIZE: float = 20.0
+
 ## Camera2D.zoom in Godot works the opposite of what the names below might
 ## suggest at a glance: a HIGHER zoom value means MORE magnified (LESS world
 ## area visible), a LOWER value means zoomed further out (MORE area visible).
@@ -125,7 +141,7 @@ const STATION_POSITIONS := {
 	"patching": Vector2(460, 260),
 	"burnout": Vector2(1300, 720),
 	"mold_prep": Vector2(1480, 720),
-	"pour": Vector2(750, 480),
+	"pour": Vector2(740, 480), # nudged from 750 to land exactly on a GRID_CELL_SIZE (20) multiple
 	"deshell": Vector2(120, 720),
 	"abrasive_blast": Vector2(280, 720),
 	"ship": Vector2(440, 720),
@@ -136,7 +152,7 @@ const STATION_POSITIONS := {
 ## (up to the factory level cap - see GameData.buy_printer()) has somewhere
 ## to go without overlapping. A formula rather than one fixed position per id
 ## since the number of owned printers is a runtime purchase, not fixed data.
-const PRINTER_ROW_Y: float = 110.0
+const PRINTER_ROW_Y: float = 100.0 # nudged from 110 to land exactly on a GRID_CELL_SIZE (20) multiple
 const PRINTER_ROW_START_X: float = 100.0
 const PRINTER_ROW_SPACING_X: float = 140.0
 
@@ -349,14 +365,21 @@ func _build_floor() -> void:
 	# Full-floor base layer first (see HALLWAY_FILL's own comment) - every one
 	# of the four corner/center room zones below draws on top of it.
 	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
-	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room")
+	_build_print_room_tiles()
+	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room", true)
 	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
 	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room")
 	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
 	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "VIM Bay")
 
 
-func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_text: String) -> void:
+## skip_fill lets a room draw its border/label only and supply its own floor
+## visual on top - the Print Room does this now, using a real tiled floor
+## instead of a flat ColorRect (see _build_print_room_tiles()) - the border
+## is still drawn AFTER the tiles below, so its frame naturally covers the
+## tilemap's outermost edge rather than needing inset math to line up with
+## the grid exactly.
+func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_text: String, skip_fill: bool = false) -> void:
 	# ColorRect/Label are Control nodes even out here in the 2D world, and
 	# Control defaults to MOUSE_FILTER_STOP - without explicitly setting it
 	# to IGNORE, every one of these purely decorative room backgrounds
@@ -368,18 +391,48 @@ func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_t
 	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(border)
 
-	var fill := ColorRect.new()
-	fill.position = rect.position + Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH)
-	fill.size = rect.size - Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH) * 2.0
-	fill.color = fill_color
-	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(fill)
+	if not skip_fill:
+		var fill := ColorRect.new()
+		fill.position = rect.position + Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH)
+		fill.size = rect.size - Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH) * 2.0
+		fill.color = fill_color
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(fill)
 
 	if label_text != "":
 		var entry := RoomFloorLabel.new()
 		entry.world_position = rect.position + Vector2(10.0, 6.0)
 		entry.label = _make_floor_label(label_text)
 		_room_floor_labels.append(entry)
+
+
+## Real per-cell floor tiles (design request, this session: "turn the game
+## into more of a grid feeling") - the Print Room is the only room with real
+## tile art so far (assets/sprites/floor_tiles/, resources/tilesets/
+## print_room_floor_tileset.tres, sliced but never actually wired into the
+## floor before now). The TileSet's own tile_size is 180x180 (the source
+## art's real resolution) - scaling the TileMapLayer node itself down to
+## GRID_CELL_SIZE/180 renders each source tile at exactly one grid cell
+## instead, without needing a second, smaller copy of the art. Filled
+## uniformly with the plain bolted floor panel (atlas coord (0,0)) for now -
+## the same sheet also has a matched set of blue accent-line edge/corner
+## tiles and decorative props (vents, hazard stripes, a numbered marker) for
+## a richer pass later, not used yet.
+const PRINT_ROOM_TILESET: TileSet = preload("res://resources/tilesets/print_room_floor_tileset.tres")
+
+func _build_print_room_tiles() -> void:
+	var tilemap := TileMapLayer.new()
+	tilemap.tile_set = PRINT_ROOM_TILESET
+	tilemap.position = PRINT_ROOM.position
+	var tile_world_size: float = PRINT_ROOM_TILESET.tile_size.x
+	tilemap.scale = Vector2.ONE * (GRID_CELL_SIZE / tile_world_size)
+	add_child(tilemap)
+
+	var cells_wide := int(PRINT_ROOM.size.x / GRID_CELL_SIZE)
+	var cells_tall := int(PRINT_ROOM.size.y / GRID_CELL_SIZE)
+	for cy in cells_tall:
+		for cx in cells_wide:
+			tilemap.set_cell(Vector2i(cx, cy), 0, Vector2i(0, 0))
 
 
 func _spawn_stations() -> void:
@@ -452,6 +505,7 @@ func _instantiate_station(def: GameData.StationDef, id: String, display_name: St
 	station.batch_cap = def.tier1_batch_cap
 	station.tier_sprites = _load_sprites(def.tier_sprite_paths)
 	station.state_sprites = _load_sprites(def.state_sprite_paths)
+	station.sprite_scale_override = def.sprite_scale_override
 	return station
 
 

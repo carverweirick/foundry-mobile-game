@@ -55,6 +55,14 @@ const CLEAN_STATE_SPRITES: Array[String] = [
 	"res://assets/sprites/cleaner_2.png",
 	"res://assets/sprites/cleaner_3.png",
 ]
+## Bug fix (design feedback: "the cleaner is a bit larger than the rest") -
+## cleaner_1/2/3.png are 1254x1254, the same resolution class as Burnout/
+## Pour's real art, which reads fine for them since each gets a whole room
+## mostly to itself - Clean instead sits packed into a tight row with UV
+## Cure/Scan/Patching's small placeholder boxes, where the same on-screen
+## size as Burnout/Pour visibly dwarfed its neighbors. Shrinks it down to
+## roughly match Printing's own real-art on-screen size instead.
+const CLEAN_SPRITE_SCALE_OVERRIDE: float = 0.35
 
 
 ## Design doc Section 9: Quality, Defects, and Geometry Familiarity. Covers a
@@ -223,6 +231,10 @@ class StationDef:
 	## Real per-state art (idle/running/ready), distinct from tier_sprite_paths
 	## above - see Station.state_sprites and CLEAN_STATE_SPRITES.
 	var state_sprite_paths: Array[String]
+	## See Station.sprite_scale_override's own comment - a fudge factor for a
+	## real art asset whose native resolution doesn't match what most station
+	## art assumes. 1.0 (no change) unless a station specifically needs it.
+	var sprite_scale_override: float = 1.0
 
 	func _init(
 		p_id: String,
@@ -233,7 +245,8 @@ class StationDef:
 		p_minutes: float,
 		p_batch: int,
 		p_sprites: Array[String] = [],
-		p_state_sprites: Array[String] = []
+		p_state_sprites: Array[String] = [],
+		p_sprite_scale_override: float = 1.0
 	) -> void:
 		id = p_id
 		display_name = p_name
@@ -244,6 +257,7 @@ class StationDef:
 		tier1_batch_cap = p_batch
 		tier_sprite_paths = p_sprites
 		state_sprite_paths = p_state_sprites
+		sprite_scale_override = p_sprite_scale_override
 
 	## Prototype-scale seconds derived from the real Tier 1 minutes above.
 	func get_prototype_timer_seconds() -> float:
@@ -1185,7 +1199,7 @@ func _init() -> void:
 		# New this session (design doc Section 21.4): every part passes through,
 		# batched, no defect risk of its own - removes excess resin before UV Cure.
 		StationDef.new("clean", "Clean", Station.StationType.BATCHED,
-			1, "Print Room", 8.0, 5, [], CLEAN_STATE_SPRITES),
+			1, "Print Room", 8.0, 5, [], CLEAN_STATE_SPRITES, CLEAN_SPRITE_SCALE_OVERRIDE),
 		StationDef.new("uv_cure", "UV Cure", Station.StationType.BATCHED,
 			1, "Print Room", 12.0, 6),
 		StationDef.new("scan", "Structured Light Scan", Station.StationType.QUEUE,
