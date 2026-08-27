@@ -108,16 +108,19 @@ Every station follows the same shape: queue it, optionally set a batch size, the
 
 **Standard Shop Floor:** every new player starts on a preset floor modeled on a real shop layout, so nobody has to design anything before they can start playing.
 
-Rooms and what lives in each:
-- **Print Room** (largest): Printing (multiple printer units), Clean, UV Cure, Structured Light Scan, Patching
-- **Shelling Room**: Shelling, its own dedicated space rather than sharing the Print Room's floor, since coat timing and batch capacity deserve real room to grow into
-- **Furnace Room**: Burnout, Mold Prep
-- **Pour Room (High Bay)**: Pour/VIM, tall ceiling for the gantry crane, a callback to the real high bay, gantry crane constraint
-- **Casting Area**: sits right off the Pour Room, the first stop for a part immediately after pour
-- **Post Processing Room**: Deshell, Abrasive Blast, Ship
-- **Hallway**: connects everything, and its length is not just flavor, see below
+**Layout, revised this session into a four-corners-plus-center arrangement** (design request: "print room top left, shell room top right, burnout bottom right, post processing in the bottom left, and then the VIM and air melter in the center"), replacing the previous scattered room placement:
+- **Print Room** (top-left): Printing (multiple printer units), Clean, UV Cure, Structured Light Scan, Patching
+- **Shelling Room** (top-right): Shelling, Pour Cup Attach
+- **Furnace Room** (bottom-right): Burnout, Mold Prep
+- **Post Processing Room** (bottom-left): Deshell, Abrasive Blast, Ship
+- **VIM Bay** (center): Pour/VIM today, and eventually a second melting station - see "Air Melter" below. Replaces the old "Pour Room (High Bay)"/Casting Area pairing - Casting Area never held a station and is dropped from the layout entirely; the gantry-crane/high-bay flavor folds into this same central room instead of a separate one.
+- **Hallway**: connects everything - implemented as one full-floor base layer under all five room zones rather than a hand-drawn spine-and-branch shape, since the four corners only meet the center at single pinwheel-style points, not shared edges
 
 Anyone who doesn't want to design their own floor just plays on this from day one, with a reset to standard layout option always available if a custom layout stops working out.
+
+**Room expansion, a future direction (not built yet):** the four corner rooms should eventually be expandable - buying more floor space in a corner to fit more machines for that room's process, tying directly into the Floor Editor's "room size sets capacity directly" rule below rather than being a separate system. The center VIM Bay is deliberately not one of the expandable rooms in this framing - it's the fixed hub the four corners grow around.
+
+**Air Melter, a new station idea (not built yet):** an alternate melting method alongside VIM in the center room, unlockable at a later Factory Level (see Section 21.2's existing factory-level-gates-printer-count precedent - this would be a second thing Factory Level gates, once Factory Level actually has a way to rise past 1, which it currently doesn't - see Section 20 item 5). The idea as given: only certain specific geometries can be poured from the Air Melter, not a blanket alternative to VIM for everything - which geometries, and what tradeoff pouring via Air Melter offers (speed? cost? a different defect profile?) versus the existing VIM/Pour station, still needs its own design pass before this is buildable.
 
 **The Floor Editor**, for anyone who wants to design their own:
 - Grid based room and equipment placement, similar to a base building game

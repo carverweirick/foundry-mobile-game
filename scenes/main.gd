@@ -64,18 +64,36 @@ const FLOOR_LABEL_OFFSET: Vector2 = Vector2(-20.0, 66.0) # matches station.tscn'
 
 # Room zones: rect (x, y, width, height), fill color, border color, label.
 # Colors loosely follow the Art Style section's room palettes.
-const SHELLING_ROOM := Rect2(40, 40, 480, 240)
-const PRINT_ROOM := Rect2(40, 320, 560, 460)
-const FURNACE_ROOM := Rect2(650, 560, 360, 360)
-const POUR_ROOM := Rect2(1060, 320, 360, 360)
-const CASTING_AREA := Rect2(1420, 320, 220, 360)
-const POST_PROCESSING_ROOM := Rect2(1060, 40, 620, 240)
+#
+# Reworked this session (design request): four corner rooms - Print (top-
+# left), Shelling (top-right), Post Processing (bottom-left), Furnace/Burnout
+# (bottom-right) - around a central VIM Bay housing Pour and, eventually, a
+# new "Air Melter" alternate-melt station (design idea only so far, not a
+# real Station yet - see GameData/design doc Section 24 for status; no
+# STATION_POSITIONS entry exists for it until it's actually built). The old
+# scattered layout (Shelling/Print stacked on the left, Furnace lower-middle,
+# Pour/Casting Area on the right, Post Processing upper-right) is gone,
+# along with the Casting Area zone itself (still no station ever lived
+# there) and the old spine-plus-branch Hallway shape. Floor bounds
+# (FLOOR_MIN/FLOOR_MAX) are UNCHANGED - the four 480x300 corners plus the
+# 680x280 center hub, with the existing 40px margin, sum to exactly the
+# existing 1720x960 floor, so MIN_ZOOM/camera-clamp math needed no retuning.
+const PRINT_ROOM := Rect2(40, 40, 480, 300)
+const SHELLING_ROOM := Rect2(1200, 40, 480, 300)
+const POST_PROCESSING_ROOM := Rect2(40, 620, 480, 300)
+const FURNACE_ROOM := Rect2(1200, 620, 480, 300)
+## The center hub - still named POUR_ROOM in code (Pour is the one real
+## Station there today) even though its on-floor label now reads "VIM Bay"
+## to match the new framing; GameData's own StationDef.room_name for Pour
+## stays the unrelated string "Pour Room" (used for Overview/Staff grouping
+## elsewhere), so renaming this floor label didn't need any GameData changes.
+const POUR_ROOM := Rect2(520, 340, 680, 280)
 
-# Connective hallway, drawn as a horizontal spine plus a branch down to the
-# Furnace Room, which sits lower-middle rather than on the main seam.
-const HALLWAY_SPINE := Rect2(40, 280, 1640, 40)
-const HALLWAY_BRANCH := Rect2(790, 320, 80, 240)
-
+## Since the four corners only meet the center hub at single pinwheel-style
+## corner points (not shared edges), a full-floor base layer avoids any bare
+## background showing through the gaps between rooms - simpler than crafting
+## bespoke connective hallway shapes, and every empty stretch of floor reads
+## as "walkable hallway" by default this way.
 const HALLWAY_FILL := Color(0.7, 0.7, 0.68)
 const HALLWAY_BORDER := Color(0.5, 0.5, 0.48)
 const SHELLING_FILL := Color(0.87, 0.8, 0.66)
@@ -86,8 +104,6 @@ const FURNACE_FILL := Color(0.85, 0.5, 0.35)
 const FURNACE_BORDER := Color(0.6, 0.25, 0.15)
 const POUR_FILL := Color(0.95, 0.78, 0.25)
 const POUR_BORDER := Color(0.7, 0.45, 0.1)
-const CASTING_FILL := Color(0.88, 0.72, 0.45)
-const CASTING_BORDER := Color(0.65, 0.5, 0.25)
 const POST_FILL := Color(0.78, 0.81, 0.85)
 const POST_BORDER := Color(0.5, 0.55, 0.6)
 
@@ -98,19 +114,21 @@ const POST_BORDER := Color(0.5, 0.55, 0.6)
 # below instead of a single fixed spot. Deplate is gone entirely (Section
 # 21.3); Clean, Scan, Patching now share printing's old row/column area,
 # Mold Prep sits alongside Burnout in the Furnace Room (Section 21.4/21.5).
+# Repositioned this session into the new four-corners-plus-center layout
+# above - same station groupings as before, new coordinates.
 const STATION_POSITIONS := {
-	"shelling": Vector2(200, 130),
-	"pour_cup_attach": Vector2(400, 130),
-	"clean": Vector2(140, 620),
-	"uv_cure": Vector2(280, 620),
-	"scan": Vector2(420, 620),
-	"patching": Vector2(560, 620),
-	"burnout": Vector2(750, 730),
-	"mold_prep": Vector2(930, 730),
-	"pour": Vector2(1240, 500),
-	"deshell": Vector2(1180, 130),
-	"abrasive_blast": Vector2(1365, 130),
-	"ship": Vector2(1550, 130),
+	"shelling": Vector2(1300, 160),
+	"pour_cup_attach": Vector2(1480, 160),
+	"clean": Vector2(100, 260),
+	"uv_cure": Vector2(220, 260),
+	"scan": Vector2(340, 260),
+	"patching": Vector2(460, 260),
+	"burnout": Vector2(1300, 720),
+	"mold_prep": Vector2(1480, 720),
+	"pour": Vector2(750, 480),
+	"deshell": Vector2(120, 720),
+	"abrasive_blast": Vector2(280, 720),
+	"ship": Vector2(440, 720),
 }
 
 ## Printers sit in their own row within the Print Room (top of the area
@@ -118,8 +136,8 @@ const STATION_POSITIONS := {
 ## (up to the factory level cap - see GameData.buy_printer()) has somewhere
 ## to go without overlapping. A formula rather than one fixed position per id
 ## since the number of owned printers is a runtime purchase, not fixed data.
-const PRINTER_ROW_Y: float = 420.0
-const PRINTER_ROW_START_X: float = 140.0
+const PRINTER_ROW_Y: float = 110.0
+const PRINTER_ROW_START_X: float = 100.0
 const PRINTER_ROW_SPACING_X: float = 140.0
 
 func _printer_position(printer_index: int) -> Vector2:
@@ -328,14 +346,14 @@ func _on_reputation_changed(new_amount: int) -> void:
 
 
 func _build_floor() -> void:
-	_add_room_zone(HALLWAY_SPINE, HALLWAY_FILL, HALLWAY_BORDER, "")
-	_add_room_zone(HALLWAY_BRANCH, HALLWAY_FILL, HALLWAY_BORDER, "")
-	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
+	# Full-floor base layer first (see HALLWAY_FILL's own comment) - every one
+	# of the four corner/center room zones below draws on top of it.
+	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
 	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room")
-	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
-	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "Pour Room (High Bay)")
-	_add_room_zone(CASTING_AREA, CASTING_FILL, CASTING_BORDER, "Casting Area")
+	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
 	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room")
+	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
+	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "VIM Bay")
 
 
 func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_text: String) -> void:
