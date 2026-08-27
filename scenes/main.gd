@@ -366,7 +366,7 @@ func _build_floor() -> void:
 	# of the four corner/center room zones below draws on top of it.
 	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
 	_build_print_room_tiles()
-	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room", true)
+	_add_room_zone(PRINT_ROOM, PRINT_FILL, Color(1.0, 0.0, 1.0), "PRINT ROOM - CODE IS CURRENT", true)
 	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room")
 	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room")
 	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room")
