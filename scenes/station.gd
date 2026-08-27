@@ -92,6 +92,15 @@ const MAX_RACK_CAPACITY: int = 10
 ## One texture per tier, index 0 = Tier 1 ... index 4 = Tier 5.
 ## Leave empty (or entries null) for stations without art yet; a placeholder is used instead.
 @export var tier_sprites: Array[Texture2D] = []
+## Real per-state art (Clean is the first station to get this - see
+## cleaner_1/2/3.png) - index 0 = idle, 1 = running, 2 = ready. Distinct from
+## tier_sprites above, which is indexed by current_tier: a station can only
+## ever have ONE of these two art systems active at a time (state_sprites
+## wins if both are somehow populated - see _update_sprite()), since tier
+## and state are two different axes a single static photo can't represent
+## at once. Leave empty for a station without real per-state art; falls back
+## to tier_sprites, then the generic tinted placeholder, same as before.
+@export var state_sprites: Array[Texture2D] = []
 
 ## True only for the first station in GameData.PIPELINE_ORDER (Printing) -
 ## the only place a brand new Part gets created rather than received.
@@ -128,6 +137,16 @@ var assigned_technicians: Array[Technician] = []
 ## still drop cargo into the rack, just don't compete to run the machine.
 var active_worker: Technician = null
 var _has_tiered_art: bool = false
+var _has_state_art: bool = false
+
+## How long the interaction-flourish animation holds each state_sprites frame
+## before advancing to the next one (design request: "an animation that
+## plays when a technician interacts with the station"). Three frames over
+## Technician.INTERACT_SECONDS (1.5s) at 0.5s each lands exactly on the last
+## frame right as the interaction ends, so the flourish always finishes
+## cleanly rather than getting cut off mid-cycle.
+const INTERACT_ANIM_FRAME_SECONDS: float = 0.5
+var _interact_anim_elapsed: float = 0.0
 
 ## Parallel-shelling-only state (design doc Section 21.4) - see
 ## is_parallel_shelling(). shelling_active_parts holds one ShellingRun per
@@ -197,6 +216,13 @@ func _process(delta: float) -> void:
 	elif current_state == State.RUNNING:
 		timer_bar.value = station_timer.time_left
 		timer_bar_label.text = "%.1fs" % station_timer.time_left
+
+	if _has_state_art:
+		if _is_interact_animating():
+			_interact_anim_elapsed += delta
+		else:
+			_interact_anim_elapsed = 0.0
+		_apply_state_sprite()
 
 	# Design request, this session: several technicians can be assigned here
 	# at once now - iterate a duplicate defensively (an unassign triggered
@@ -957,12 +983,50 @@ func _auto_queue_if_possible() -> bool:
 
 
 func _update_sprite() -> void:
+	_has_state_art = state_sprites.size() >= 3
+	if _has_state_art:
+		_apply_state_sprite()
+		return
+
 	_has_tiered_art = tier_sprites.size() >= current_tier and tier_sprites[current_tier - 1] != null
 	if _has_tiered_art:
 		station_sprite.texture = tier_sprites[current_tier - 1]
 		station_sprite.modulate = Color.WHITE
 	else:
 		station_sprite.texture = _get_placeholder_texture()
+		_apply_state_tint()
+
+
+## Picks the right state_sprites frame - the interaction flourish while a
+## technician is physically mid-interaction here (see INTERACT_ANIM_FRAME_SECONDS's
+## comment), otherwise a static frame straight off current_state: 0 = idle,
+## 1 = running, 2 = ready.
+func _apply_state_sprite() -> void:
+	station_sprite.modulate = Color.WHITE
+	if _is_interact_animating():
+		var frame := int(_interact_anim_elapsed / INTERACT_ANIM_FRAME_SECONDS)
+		station_sprite.texture = state_sprites[clampi(frame, 0, state_sprites.size() - 1)]
+		return
+	match current_state:
+		State.IDLE:
+			station_sprite.texture = state_sprites[0]
+		State.RUNNING:
+			station_sprite.texture = state_sprites[1]
+		State.READY:
+			station_sprite.texture = state_sprites[2]
+
+
+func _is_interact_animating() -> bool:
+	return active_worker != null and active_worker.is_interacting
+
+
+## Shared by both _update_display() call sites below - whichever one of the
+## three art systems this station actually has (real per-state art, tiered
+## art, or the generic tinted placeholder) gets refreshed on a state change.
+func _refresh_state_visual() -> void:
+	if _has_state_art:
+		_apply_state_sprite()
+	elif not _has_tiered_art:
 		_apply_state_tint()
 
 
@@ -1178,8 +1242,7 @@ func _update_display() -> void:
 
 	if is_parallel_shelling():
 		status_label.text = _parallel_shelling_status_text() + _rack_suffix() + _defect_suffix()
-		if not _has_tiered_art:
-			_apply_state_tint()
+		_refresh_state_visual()
 		return
 
 	match current_state:
@@ -1194,8 +1257,7 @@ func _update_display() -> void:
 	status_label.text += _rack_suffix()
 	status_label.text += _defect_suffix()
 
-	if not _has_tiered_art:
-		_apply_state_tint()
+	_refresh_state_visual()
 
 
 ## "2/3 running, 1 ready" - design doc Section 21.4's parallel shelling model

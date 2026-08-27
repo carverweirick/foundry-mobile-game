@@ -43,6 +43,19 @@ const POUR_SPRITES: Array[String] = [
 	"res://assets/sprites/pour_station.png",
 ]
 
+## Real 3-state art for Clean (design request, this session), the first
+## station with genuine per-state photos instead of a generic tinted
+## placeholder box - index 0 = idle (closed), 1 = running (open, basket
+## submerged), 2 = ready (open, basket lifted out). Passed as a
+## StationDef's `state_sprites` constructor arg, NOT `tier_sprites` above -
+## Station.state_sprites is indexed by current_state, not current_tier, and
+## Clean has no tiered art of its own.
+const CLEAN_STATE_SPRITES: Array[String] = [
+	"res://assets/sprites/cleaner_1.png",
+	"res://assets/sprites/cleaner_2.png",
+	"res://assets/sprites/cleaner_3.png",
+]
+
 
 ## Design doc Section 9: Quality, Defects, and Geometry Familiarity. Covers a
 ## defect happening, getting flagged, escalating if ignored, and now (this
@@ -207,6 +220,9 @@ class StationDef:
 	var tier1_timer_minutes: float
 	var tier1_batch_cap: int
 	var tier_sprite_paths: Array[String]
+	## Real per-state art (idle/running/ready), distinct from tier_sprite_paths
+	## above - see Station.state_sprites and CLEAN_STATE_SPRITES.
+	var state_sprite_paths: Array[String]
 
 	func _init(
 		p_id: String,
@@ -216,7 +232,8 @@ class StationDef:
 		p_room: String,
 		p_minutes: float,
 		p_batch: int,
-		p_sprites: Array[String] = []
+		p_sprites: Array[String] = [],
+		p_state_sprites: Array[String] = []
 	) -> void:
 		id = p_id
 		display_name = p_name
@@ -226,6 +243,7 @@ class StationDef:
 		tier1_timer_minutes = p_minutes
 		tier1_batch_cap = p_batch
 		tier_sprite_paths = p_sprites
+		state_sprite_paths = p_state_sprites
 
 	## Prototype-scale seconds derived from the real Tier 1 minutes above.
 	func get_prototype_timer_seconds() -> float:
@@ -1167,7 +1185,7 @@ func _init() -> void:
 		# New this session (design doc Section 21.4): every part passes through,
 		# batched, no defect risk of its own - removes excess resin before UV Cure.
 		StationDef.new("clean", "Clean", Station.StationType.BATCHED,
-			1, "Print Room", 8.0, 5),
+			1, "Print Room", 8.0, 5, [], CLEAN_STATE_SPRITES),
 		StationDef.new("uv_cure", "UV Cure", Station.StationType.BATCHED,
 			1, "Print Room", 12.0, 6),
 		StationDef.new("scan", "Structured Light Scan", Station.StationType.QUEUE,

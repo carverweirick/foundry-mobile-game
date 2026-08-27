@@ -451,6 +451,7 @@ func _instantiate_station(def: GameData.StationDef, id: String, display_name: St
 	station.timer_duration = def.get_prototype_timer_seconds()
 	station.batch_cap = def.tier1_batch_cap
 	station.tier_sprites = _load_sprites(def.tier_sprite_paths)
+	station.state_sprites = _load_sprites(def.state_sprite_paths)
 	return station
 
 
