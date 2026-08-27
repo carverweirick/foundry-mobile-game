@@ -1,0 +1,67 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/dashboard_overlay.gd" id="1_script"]
+
+[node name="DashboardOverlay" type="CanvasLayer"]
+script = ExtResource("1_script")
+
+[node name="ToggleButton" type="Button" parent="."]
+unique_name_in_owner = true
+offset_left = 370.0
+offset_top = 30.0
+offset_right = 465.0
+offset_bottom = 50.0
+text = "Dashboard"
+
+[node name="Backdrop" type="Control" parent="."]
+unique_name_in_owner = true
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+
+[node name="Panel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 15.0
+offset_top = 54.0
+offset_right = 465.0
+offset_bottom = 258.0
+
+[node name="TabContainer" type="TabContainer" parent="Panel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+
+[node name="Stations" type="Control" parent="Panel/TabContainer"]
+layout_mode = 2
+
+[node name="StationsScroll" type="ScrollContainer" parent="Panel/TabContainer/Stations"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="StationsList" type="VBoxContainer" parent="Panel/TabContainer/Stations/StationsScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Contracts" type="Control" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="ContractsScroll" type="ScrollContainer" parent="Panel/TabContainer/Contracts"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
+
+[node name="ContractsList" type="VBoxContainer" parent="Panel/TabContainer/Contracts/ContractsScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3

@@ -274,7 +274,7 @@ var held_parts: Array[Part] = []
 var technicians: Array[Technician] = []
 
 ## station_id -> live Station node, set by main.gd right after spawning all
-## 11 stations (same pattern as MenuOverlay/ShopOverlay's station_by_id).
+## 11 stations (same pattern as every overlay's own station_by_id).
 ## Technician.tick() needs this to look up real station positions for actual
 ## distance-based walking - see Technician.WALK_SPEED.
 var station_by_id: Dictionary = {}
@@ -1162,8 +1162,8 @@ func printer_station_ids() -> Array[String]:
 ## every owned printer instance, plus every other PIPELINE_ORDER entry except
 ## the "printing" placeholder itself (which has no single matching node - see
 ## printer_station_ids() above). UI that needs to walk every real station
-## (ShopOverlay's technician assignment checkboxes, MenuOverlay's Overview
-## tab) uses this instead of PIPELINE_ORDER directly.
+## (StaffOverlay's technician assignment checkboxes, OverviewOverlay's list)
+## uses this instead of PIPELINE_ORDER directly.
 func all_real_station_ids() -> Array[String]:
 	var ids := printer_station_ids()
 	for id in PIPELINE_ORDER:

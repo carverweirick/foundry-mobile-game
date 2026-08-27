@@ -1,20 +1,20 @@
-extends CanvasLayer
-class_name ShopOverlay
+extends OverlayBase
+class_name StaffOverlay
 
-## Emitted when this overlay opens - main.gd listens on all three overlays'
-## own opened() signal to close the other two, so only one is ever visible
-## at once (bug fix, this session: nothing previously enforced that, which
-## let a background overlay's persistent toggle button/backdrop collide
-## visually with whichever popped open on top of it).
-signal opened()
-
-## The Shop button's overlay (design doc Section 6) - deliberately a
-## separate button and panel from the Menu button/MenuOverlay, dedicated to
-## spending currency rather than checking status. Hiring a technician no
-## longer happens at an individual station; it happens here, and assigning
-## them to a station (or several) is a separate step done from the same
-## roster row. Only the Technicians tab exists so far; built to hold future
-## Shop tabs (station upgrades, alloy stock, per Section 11) later.
+## Standalone entry point covering the old Shop overlay's Technicians and
+## Specialists tabs (design request, this session: split the old Shop
+## overlay's tabs into individually-labeled buttons - Technicians and
+## Specialists specifically got regrouped into one "Staff" button rather than
+## two separate ones, since both are hiring actions - a station technician
+## vs. a one-time specialist engineer - distinct from Printers, which is
+## buying equipment rather than hiring someone). Content and refresh logic
+## are otherwise unchanged from the old ShopOverlay.
+##
+## Hiring a technician doesn't happen at an individual station; it happens
+## here, and assigning them to a station (or several) is a separate step done
+## from the same roster row. Specialists (design doc Section 9's third defect
+## fix path) are a much simpler one-time-hire-per-type list underneath, on
+## their own tab, since a specialist isn't assigned anywhere or ever un-hired.
 
 const REFRESH_INTERVAL: float = 0.25
 
@@ -32,18 +32,13 @@ class RosterRow:
 	var station_toggles: GridContainer
 	var station_checks: Dictionary = {} # station_id -> CheckBox
 
-@onready var toggle_button: Button = %ToggleButton
-@onready var backdrop: Control = %Backdrop
-@onready var panel: Panel = %Panel
 @onready var hire_list: VBoxContainer = %HireList
 @onready var roster_list: VBoxContainer = %RosterList
 @onready var specialist_list: VBoxContainer = %SpecialistList
-@onready var printer_status_label: Label = %PrinterStatusLabel
-@onready var buy_printer_button: Button = %BuyPrinterButton
 
-## Set by main.gd right after all Station nodes are spawned, same as
-## MenuOverlay - needed to list which stations a technician can be assigned
-## to and to read/write their live assigned_technicians state.
+## Set by main.gd right after all Station nodes are spawned - needed to list
+## which stations a technician can be assigned to and to read/write their
+## live assigned_technicians state.
 var station_by_id: Dictionary = {}
 
 var _refresh_elapsed: float = 0.0
@@ -51,10 +46,7 @@ var _roster_rows: Dictionary = {} # Technician -> RosterRow
 var _roster_empty_label: Label = null
 
 
-func _ready() -> void:
-	toggle_button.pressed.connect(_on_toggle_pressed)
-	backdrop.gui_input.connect(_on_backdrop_gui_input)
-	buy_printer_button.pressed.connect(_on_buy_printer_pressed)
+func _on_ready() -> void:
 	# Deferred, not direct: technician_updated can fire from inside a
 	# checkbox's own toggled handler (assign_technician() emits it
 	# synchronously), and _refresh_live_only() tears down/rebuilds every
@@ -81,28 +73,9 @@ func _process(delta: float) -> void:
 	_refresh_live_only()
 
 
-func _on_toggle_pressed() -> void:
-	_set_open(not panel.visible)
-
-
-func _on_backdrop_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_set_open(false)
-
-
-## Public - called by main.gd when Escape is pressed, so any open overlay
-## closes no matter which one it is (design request, this session).
-func close() -> void:
-	_set_open(false)
-
-
-func _set_open(open: bool) -> void:
-	panel.visible = open
-	backdrop.visible = open
-	if open:
-		_refresh_elapsed = 0.0
-		_refresh()
-		opened.emit()
+func _on_open() -> void:
+	_refresh_elapsed = 0.0
+	_refresh()
 
 
 ## Full rebuild, including the Hire and Specialists sections - only called on
@@ -113,42 +86,7 @@ func _refresh() -> void:
 		return
 	_refresh_hire_list()
 	_refresh_specialist_list()
-	_refresh_printer_section()
 	_refresh_live_only()
-
-
-## Whether the mouse/touch button is currently held down anywhere - see
-## StationDetailMenu._click_in_progress()'s comment for the full rationale.
-## Generalizes _any_strategy_popup_open()'s same idea (don't rebuild out from
-## under an in-progress interaction) to every button in every list here, not
-## just the routing-strategy dropdown.
-func _click_in_progress() -> bool:
-	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-
-
-## Design doc Section 21.2: printers are purchased individually, capped by
-## factory level. This is a simple standing status + one buy button, same
-## spirit as the Specialists tab, not a per-printer roster - individual
-## printer tiers are managed from each printer's own Station Detail Menu
-## (they're just ordinary Stations once spawned) exactly like every other
-## station's Upgrade/Upgrade Rack buttons, not from here.
-func _refresh_printer_section() -> void:
-	var cap := GameData.printer_cap()
-	printer_status_label.text = "%d/%d printers owned (Factory Level %d)" % [
-		GameData.owned_printer_count, cap, GameData.factory_level
-	]
-	if GameData.can_buy_printer():
-		var cost := GameData.printer_purchase_cost()
-		buy_printer_button.text = "Buy Printer (%dg)" % cost
-		buy_printer_button.disabled = not GameData.can_afford(cost)
-	else:
-		buy_printer_button.text = "Factory level cap reached"
-		buy_printer_button.disabled = true
-
-
-func _on_buy_printer_pressed() -> void:
-	GameData.buy_printer()
-	_refresh.call_deferred()
 
 
 ## A strategy OptionButton is a two-step interaction (open the dropdown,
@@ -168,12 +106,7 @@ func _on_buy_printer_pressed() -> void:
 ## NOT rebuild here: they only ever change in response to a specific hire
 ## action (which already triggers a reactive _refresh() via currency_changed),
 ## so tearing their buttons down and recreating them on this same blind timer
-## served no purpose except occasionally eating a click - a rebuild landing
-## between a click's press and release (a real, human-timescale race distinct
-## from the same-frame handler-safety call_deferred already used elsewhere)
-## silently discarded that click; a second click then worked because it
-## happened to land between rebuilds instead. This was reported as "the hire
-## button doesn't work on the first click."
+## served no purpose except occasionally eating a click.
 func _refresh_live_only() -> void:
 	if _any_strategy_popup_open() or _click_in_progress():
 		return
@@ -211,13 +144,12 @@ func _on_hire_pressed(tier: Technician.SkillTier) -> void:
 	_refresh.call_deferred()
 
 
-## Bug fix (this session): the roster used to be torn down and rebuilt from
-## scratch every 0.25s poll, same as every other list here - fine for
-## avoiding the click-eating race once guarded, but a freshly created Control
-## needs at least one layout pass to reach its final size, so destroying and
+## Bug fix (carried over from ShopOverlay): the roster used to be torn down
+## and rebuilt from scratch every 0.25s poll - fine for avoiding the
+## click-eating race once guarded, but a freshly created Control needs at
+## least one layout pass to reach its final size, so destroying and
 ## recreating everything every 250ms caused a visible "pop"/reflow every
-## single poll even when nothing had actually changed. Reported as the roster
-## "jump[ing] around during background activity." Now each technician gets a
+## single poll even when nothing had actually changed. Each technician gets a
 ## persistent RosterRow, built once (_create_roster_row()) and updated in
 ## place from then on (_update_roster_row()) - text/visibility/checkbox state
 ## changes, no destroying and recreating Controls on a blind timer.
@@ -254,22 +186,15 @@ func _create_roster_row(tech: Technician) -> RosterRow:
 	var row := RosterRow.new()
 	row.container = VBoxContainer.new()
 
-	# Fixed 2-line minimum height on both - design request, this session:
-	# "the menus still shift with the status of technicians changing and
-	# spanning over multiple lines... make it its own fixed larger section
-	# that spans 2 lines so the jumping doesn't keep happening." Moving
-	# TechnicianStatusLabel to the end of the Station Detail Menu popup
-	# fixed jumping *there*, but this row's own header text length varies
-	# just as much ("Idle" vs "Working 2 station(s), 85% productivity -
-	# walking to Clean, interacting") and previously had no minimum height,
-	# so crossing a line-wrap threshold changed THIS row's own height and
-	# shifted every roster row below it. carrying_label was worse: toggling
-	# `.visible` gave it a footprint of literally zero when not carrying
-	# anything, popping the row's height between two very different values
-	# every time a technician's carried_parts went from empty to non-empty
-	# or back - happening constantly for an active technician. Both now
-	# reserve the same vertical space always, whether their text is short,
-	# long, or blank.
+	# Fixed 2-line minimum height on both - a technician's status text length
+	# varies a lot ("Idle" vs "Working 2 station(s), 85% productivity -
+	# walking to Clean, interacting"), and without a fixed height, crossing a
+	# line-wrap threshold changed this row's own height and shifted every
+	# roster row below it. carrying_label is worse: toggling `.visible` gave
+	# it a footprint of literally zero when not carrying anything, popping
+	# the row's height between two very different values constantly for an
+	# active technician. Both now reserve the same vertical space always,
+	# whether their text is short, long, or blank.
 	row.header = Label.new()
 	row.header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.header.custom_minimum_size = Vector2(0, 40)
@@ -286,9 +211,8 @@ func _create_roster_row(tech: Technician) -> RosterRow:
 	# Without an explicit minimum width, an autowrapping Label reports almost
 	# no minimum size of its own, so the HBoxContainer squeezes it down to
 	# whatever sliver is left after the OptionButton claims what it wants,
-	# and it wraps one character per line ("S/t/r/a/t/e/g/y/:" stacked
-	# vertically) instead of sitting on one line to the OptionButton's left.
-	# Reported as "the text is vertical."
+	# and it wraps one character per line instead of sitting on one line to
+	# the OptionButton's left.
 	strategy_label.custom_minimum_size = Vector2(70.0, 0.0)
 	strategy_label.text = "Strategy:"
 	strategy_row.add_child(strategy_label)
@@ -315,9 +239,7 @@ func _create_roster_row(tech: Technician) -> RosterRow:
 ## fire its own toggled handler and needlessly re-assign/unassign). Doesn't
 ## touch strategy_option's selection - the only thing that ever changes
 ## tech.routing_strategy is this exact dropdown, so the OptionButton's own
-## displayed selection is already correct the instant the player picks one,
-## no need to re-sync it from data (and doing so here would risk interrupting
-## the dropdown mid-interaction for no benefit).
+## displayed selection is already correct the instant the player picks one.
 func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 	var assignment_text := "Idle"
 	if tech.is_assigned:
@@ -332,17 +254,15 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 				assignment_text += ", interacting"
 	row.header.text = "%s (%s) - %s" % [tech.technician_name, tech.tier_label, assignment_text]
 
-	# Always visible now (see _create_roster_row()'s comment) - blank rather
-	# than hidden when not carrying anything, so the row's height never pops.
+	# Always visible now - blank rather than hidden when not carrying
+	# anything, so the row's height never pops.
 	row.carrying_label.text = "Carrying: %s" % _carried_parts_summary(tech) if not tech.carried_parts.is_empty() else ""
 
-	# Design request, this session: "i don't want printer #2 to be a
+	# Design request (carried over): "i don't want printer #2 to be a
 	# separate responsibility i want the print station responsibility to
 	# cover all the printers not individual ones." GameData.assignable_station_group_ids()
 	# collapses every printer instance into one virtual "printing" checkbox
-	# instead of listing "Printing #1"/"Printing #2" separately - see
-	# _add_printer_group_check() below for that one special case, every
-	# other entry is a normal concrete-station checkbox exactly as before.
+	# instead of listing "Printing #1"/"Printing #2" separately.
 	for id in GameData.assignable_station_group_ids():
 		if id == "printing":
 			if not row.station_checks.has(id):
@@ -373,10 +293,10 @@ func _add_station_check(row: RosterRow, tech: Technician, id: String) -> void:
 	row.station_checks[id] = check
 
 
-## Design request, this session: one checkbox covering every currently-owned
-## printer at once - see GameData.assign_technician_to_printer_group() for
-## what checking it actually does (including automatically covering a
-## printer bought later, with no need to touch this checkbox again).
+## One checkbox covering every currently-owned printer at once - see
+## GameData.assign_technician_to_printer_group() for what checking it
+## actually does (including automatically covering a printer bought later,
+## with no need to touch this checkbox again).
 func _add_printer_group_check(row: RosterRow, tech: Technician) -> void:
 	var check := CheckBox.new()
 	check.text = "Printing (all)"
@@ -440,7 +360,7 @@ func _on_hire_specialist_pressed(type: int) -> void: # GameData.SpecialistType
 
 ## Prefers the live Station's own station_name (e.g. "Printing #2" for a
 ## specific printer instance) over the shared StationDef.display_name, which
-## can't tell printer instances apart from each other (design doc Section 21.2).
+## can't tell printer instances apart from each other.
 func _display_name_for(station_id: String) -> String:
 	var station: Station = station_by_id.get(station_id)
 	if station != null:

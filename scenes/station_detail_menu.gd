@@ -1,9 +1,9 @@
 extends CanvasLayer
 class_name StationDetailMenu
 
-## Emitted when this overlay opens - see ShopOverlay.opened's comment for
-## why (main.gd wires all three overlays' opened() signals crosswise so
-## only one is ever visible at once).
+## Emitted when this overlay opens - see OverlayBase.opened's comment for why
+## (main.gd wires every overlay's opened() signal generically so only one is
+## ever visible at once - see main.gd's _overlays array).
 signal opened()
 
 ## Per-station popup opened by tapping a station on the floor (main.gd hit-
@@ -46,9 +46,11 @@ var _refresh_elapsed: float = 0.0
 ## RackGrid's columns=5), built ONCE in _ready() and reused every refresh
 ## rather than torn down and rebuilt like every other dynamic list in this
 ## file. That's deliberate, not an oversight: rebuilding from scratch every
-## 0.25s poll is exactly what caused the Shop's hire button to intermittently
-## eat its first click (a rebuild landing mid-click destroys the very button
-## being pressed) - see ShopOverlay._refresh_live_only(). A slot the player
+## 0.25s poll is exactly what caused the old Shop overlay's hire button to
+## intermittently eat its first click (a rebuild landing mid-click destroys
+## the very button being pressed) - see StaffOverlay._refresh_live_only()
+## (the technician-hiring half of that old Shop panel, now its own overlay).
+## A slot the player
 ## might be actively clicking is exactly the wrong thing to keep recreating.
 const RACK_SLOT_COUNT: int = 10
 var _rack_slot_buttons: Array[Button] = []
@@ -128,11 +130,12 @@ func _process(delta: float) -> void:
 ## before other code can run, so a rebuild landing in between - a real,
 ## human-timescale race, well within normal click duration - can silently eat
 ## the click. This generalizes what was previously several individually
-## patched trouble spots (the Shop's Hire button, its routing-strategy
-## dropdown) into one check used everywhere a list gets rebuilt on a timer or
-## a reactive signal, in this file, ShopOverlay, and MenuOverlay - skipping
-## a refresh here just means it retries next frame/poll instead, once the
-## click has actually finished.
+## patched trouble spots (the old Shop overlay's Hire button, its
+## routing-strategy dropdown) into one check used everywhere a list gets
+## rebuilt on a timer or a reactive signal, in this file and every OverlayBase
+## subclass (see that class's own _click_in_progress()) - skipping a refresh
+## here just means it retries next frame/poll instead, once the click has
+## actually finished.
 func _click_in_progress() -> bool:
 	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 
@@ -237,7 +240,7 @@ func _on_upgrade_rack_pressed() -> void:
 ## Deferred, not direct: this rebuilds inventory_list, which destroys the
 ## very Insert button this handler is still running because of (queue_free()
 ## on a Control mid-click confuses Godot's input handling for whatever
-## replaces it) - see the same fix in ShopOverlay for the checkbox grid.
+## replaces it) - see the same fix in StaffOverlay for the checkbox grid.
 func _on_insert_part(part: Part) -> void:
 	if _station == null or not _station.can_accept_part():
 		_refresh.call_deferred() # station filled up since the list was drawn; re-sync
@@ -355,7 +358,7 @@ func _refresh() -> void:
 
 ## Design doc Section 9's two per-Part fix paths (Mortar Patch, Shell Crack
 ## only, and Redesign, any category) - the third, a specialist, is a
-## standing Shop-level hire rather than a per-Part action, see ShopOverlay's
+## standing hire rather than a per-Part action, see StaffOverlay's
 ## Specialists tab. Shown right under the main status line for whichever
 ## Part is actively running here.
 func _refresh_defect_row() -> void:

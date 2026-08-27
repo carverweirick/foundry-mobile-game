@@ -17,6 +17,7 @@ batch_cap = 1
 tier_sprites = [ExtResource("2_tier1"), ExtResource("3_tier2"), ExtResource("4_tier3"), ExtResource("5_tier4"), ExtResource("6_tier5")]
 
 [node name="StationSprite" type="Sprite2D" parent="."]
+texture_filter = 3
 position = Vector2(32, 32)
 scale = Vector2(0.18, 0.18)
 

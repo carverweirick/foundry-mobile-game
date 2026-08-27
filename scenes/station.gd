@@ -965,12 +965,13 @@ const PLACEHOLDER_BORDER: int = 10
 const PLACEHOLDER_BORDER_COLOR: Color = Color(0.25, 0.15, 0.08)
 
 func _get_placeholder_texture() -> ImageTexture:
-	var image := Image.create(PLACEHOLDER_SIZE, PLACEHOLDER_SIZE, false, Image.FORMAT_RGBA8)
+	var image := Image.create(PLACEHOLDER_SIZE, PLACEHOLDER_SIZE, true, Image.FORMAT_RGBA8)
 	image.fill(PLACEHOLDER_BORDER_COLOR)
 	image.fill_rect(Rect2i(
 		PLACEHOLDER_BORDER, PLACEHOLDER_BORDER,
 		PLACEHOLDER_SIZE - PLACEHOLDER_BORDER * 2, PLACEHOLDER_SIZE - PLACEHOLDER_BORDER * 2
 	), Color.WHITE)
+	image.generate_mipmaps()
 	return ImageTexture.create_from_image(image)
 
 

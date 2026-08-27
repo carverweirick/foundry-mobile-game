@@ -1,0 +1,44 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/contracts_overlay.gd" id="1_script"]
+
+[node name="ContractsOverlay" type="CanvasLayer"]
+script = ExtResource("1_script")
+
+[node name="ToggleButton" type="Button" parent="."]
+unique_name_in_owner = true
+offset_left = 370.0
+offset_top = 6.0
+offset_right = 465.0
+offset_bottom = 26.0
+text = "Contracts"
+
+[node name="Backdrop" type="Control" parent="."]
+unique_name_in_owner = true
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+
+[node name="Panel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 15.0
+offset_top = 54.0
+offset_right = 465.0
+offset_bottom = 258.0
+
+[node name="ContractsScroll" type="ScrollContainer" parent="Panel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+horizontal_scroll_mode = 0
+
+[node name="ContractsList" type="VBoxContainer" parent="Panel/ContractsScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3

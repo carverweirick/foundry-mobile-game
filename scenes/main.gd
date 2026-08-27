@@ -140,14 +140,46 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var currency_label: Label = $HUD/CurrencyLabel
 @onready var reputation_label: Label = $HUD/ReputationLabel
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
-@onready var menu_overlay: MenuOverlay = $MenuOverlay
 @onready var station_detail_menu: StationDetailMenu = $StationDetailMenu
-@onready var shop_overlay: ShopOverlay = $ShopOverlay
+@onready var overview_overlay: OverviewOverlay = $OverviewOverlay
+@onready var awaiting_transfer_overlay: AwaitingTransferOverlay = $AwaitingTransferOverlay
+@onready var contracts_overlay: ContractsOverlay = $ContractsOverlay
+@onready var staff_overlay: StaffOverlay = $StaffOverlay
+@onready var printers_overlay: PrintersOverlay = $PrintersOverlay
+@onready var dashboard_overlay: Dashboard = $DashboardOverlay
+
+## Every top-level overlay panel that should ever be mutually exclusive with
+## every other one - populated in _ready() once all the @onready vars above
+## are valid. Deliberately untyped (not Array[OverlayBase]): station_detail_menu
+## isn't an OverlayBase (see that class's own comment for why - it opens via
+## open_for(station) rather than a persistent toggle button), but it still
+## duck-types the same panel/close()/opened shape every OverlayBase subclass
+## does, so it belongs in the same exclusivity/freeze/Escape handling below.
+## Introduced this session when the entry-point split (one button per
+## category instead of tabs bundled under Menu/Shop) took the overlay count
+## from 3 to 7 - hand-writing every pairwise opened.connect() close-the-others
+## block at that count would have been both a lot of near-identical
+## boilerplate and an easy place to accidentally miss a pair.
+var _overlays: Array = []
 
 var _dragging: bool = false
 var _press_screen_position: Vector2 = Vector2.ZERO
 var _stations_by_id: Dictionary = {}
 var _technician_sprites: Dictionary = {} # Technician -> Sprite2D
+
+## Real per-finger touch tracking (index -> last known screen position), used
+## specifically to recognize a genuine two-finger pinch on an actual mobile
+## touchscreen (bug fix: "when i remote deploy the game on my phone i cant
+## zoom"). InputEventMagnifyGesture (handled in _unhandled_input() below) is
+## NOT synthesized from a touchscreen pinch - Godot only generates it from a
+## desktop trackpad's own native gesture recognizer (e.g. macOS), so relying
+## on it alone left pinch-to-zoom completely non-functional on a real phone
+## export, even though wheel-zoom (and a desktop trackpad, if one were ever
+## used to test) both worked fine. A real touchscreen instead sends
+## per-finger InputEventScreenTouch/InputEventScreenDrag events, which is
+## what this dictionary tracks by index to detect a second finger joining.
+var _touch_points: Dictionary = {} # touch index -> Vector2 position
+var _pinch_last_distance: float = 0.0
 
 ## Screen-space room name labels (FloorLabels layer) - world_position is the
 ## fixed world point each one anchors to (rooms don't move, but their screen
@@ -171,8 +203,10 @@ func _ready() -> void:
 	_spawn_stations()
 	_setup_camera()
 
-	menu_overlay.station_by_id = _stations_by_id
-	shop_overlay.station_by_id = _stations_by_id
+	overview_overlay.station_by_id = _stations_by_id
+	awaiting_transfer_overlay.station_by_id = _stations_by_id
+	staff_overlay.station_by_id = _stations_by_id
+	dashboard_overlay.station_by_id = _stations_by_id
 	GameData.station_by_id = _stations_by_id
 
 	GameData.currency_changed.connect(_on_currency_changed)
@@ -180,25 +214,30 @@ func _ready() -> void:
 	GameData.reputation_changed.connect(_on_reputation_changed)
 	_on_reputation_changed(GameData.reputation)
 
-	# Bug fix (this session): "the shop button is over different menu
-	# screens" / "when i select a station the button bugs out a little bit."
-	# Nothing previously stopped more than one of these three overlays being
-	# open at once - a station tap opened StationDetailMenu without closing
-	# a still-open Menu/Shop panel underneath, and since all three overlays
-	# are separate top-level CanvasLayers, the persistent Shop/Menu toggle
-	# buttons could render on top of (or visually collide with) whichever
-	# overlay was actually meant to be in front. Each overlay now emits
-	# opened() the moment it opens - close the other two in response so
-	# exactly one is ever visible.
-	menu_overlay.opened.connect(func():
-		shop_overlay.close()
-		station_detail_menu.close())
-	shop_overlay.opened.connect(func():
-		menu_overlay.close()
-		station_detail_menu.close())
-	station_detail_menu.opened.connect(func():
-		menu_overlay.close()
-		shop_overlay.close())
+	# Bug fix (originally this session's split of one bundled Menu/Shop panel
+	# into individual per-category overlays, later generalized): "the shop
+	# button is over different menu screens" / "when i select a station the
+	# button bugs out a little bit." Nothing previously stopped more than one
+	# overlay being open at once - a station tap opened StationDetailMenu
+	# without closing a still-open overlay underneath, and since every
+	# overlay is a separate top-level CanvasLayer, a background overlay's
+	# persistent toggle button could render on top of (or visually collide
+	# with) whichever popped open on top of it. Each overlay emits opened()
+	# the moment it opens - close every other one in response so exactly one
+	# is ever visible. Generic over _overlays rather than one hardcoded
+	# .connect() block per pair (see that array's own comment for why).
+	_overlays = [
+		overview_overlay, awaiting_transfer_overlay, contracts_overlay,
+		staff_overlay, printers_overlay, dashboard_overlay, station_detail_menu,
+	]
+	for overlay in _overlays:
+		overlay.opened.connect(_on_overlay_opened.bind(overlay))
+
+
+func _on_overlay_opened(opened_overlay: Node) -> void:
+	for overlay in _overlays:
+		if overlay != opened_overlay:
+			overlay.close()
 
 
 func _process(_delta: float) -> void:
@@ -219,6 +258,7 @@ func _sync_technician_sprites() -> void:
 			sprite = Sprite2D.new()
 			sprite.texture = TECHNICIAN_TEXTURE
 			sprite.scale = Vector2(TECHNICIAN_SCALE, TECHNICIAN_SCALE)
+			sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 			add_child(sprite)
 			_technician_sprites[tech] = sprite
 		sprite.visible = tech.current_station_id != "" or tech.is_traveling
@@ -510,12 +550,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	# While a popup is open, background pan/zoom/click should stay frozen -
 	# without this, scroll events inside a popup's ScrollContainer that don't
 	# need to actually scroll (short lists) fall through un-consumed and get
-	# picked up here as camera zoom instead.
-	if menu_overlay.panel.visible or station_detail_menu.panel.visible or shop_overlay.panel.visible:
+	# picked up here as camera zoom instead. Generic over _overlays (see that
+	# array's own comment) rather than one hardcoded "or" per overlay.
+	if _any_overlay_open():
 		return
 
-	if event is InputEventScreenDrag:
-		_pan_camera(event.relative)
+	if event is InputEventScreenTouch:
+		_on_screen_touch(event as InputEventScreenTouch)
+	elif event is InputEventScreenDrag:
+		_on_screen_drag(event as InputEventScreenDrag)
 	elif event is InputEventMouseButton:
 		# Explicit cast rather than relying on the "is" check above to narrow
 		# event's static type - GDScript doesn't do that narrowing here, so
@@ -543,20 +586,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		_zoom_camera(magnify_event.factor, magnify_event.position)
 
 
-## Closes whichever one overlay is currently open (StationDetailMenu, Shop,
-## or Menu, checked in that order - only one is ever open at a time in
-## practice). Returns whether anything was actually closed, so the Escape
-## handler above knows whether to consider the key consumed.
+func _any_overlay_open() -> bool:
+	for overlay in _overlays:
+		if overlay.panel.visible:
+			return true
+	return false
+
+
+## Closes whichever one overlay is currently open (only one is ever open at a
+## time in practice, enforced by _on_overlay_opened() above). Returns whether
+## anything was actually closed, so the Escape handler above knows whether to
+## consider the key consumed. Generic over _overlays (see that array's own
+## comment) rather than one hardcoded check per overlay.
 func _close_topmost_overlay() -> bool:
-	if station_detail_menu.panel.visible:
-		station_detail_menu.close()
-		return true
-	if shop_overlay.panel.visible:
-		shop_overlay.close()
-		return true
-	if menu_overlay.panel.visible:
-		menu_overlay.close()
-		return true
+	for overlay in _overlays:
+		if overlay.panel.visible:
+			overlay.close()
+			return true
 	return false
 
 
@@ -569,6 +615,64 @@ func _try_click_station(world_pos: Vector2) -> void:
 		if station.get_click_rect().has_point(local_pos):
 			station_detail_menu.open_for(station)
 			return
+
+
+## Updates _touch_points on every real finger press/release. A second finger
+## joining means this is now a pinch, not a single-finger pan/tap - cancel
+## any in-progress _dragging state so the emulated mouse motion Godot derives
+## from whichever finger drives its emulated pointer (still generated even
+## with a second finger also down) doesn't fight the pinch by also panning
+## the camera while it's being zoomed. Dropping back below 2 fingers just
+## ends the pinch; the remaining finger (if any) resumes panning naturally
+## through its own continuing relative-delta drag events, no special-casing
+## needed for that transition.
+func _on_screen_touch(event: InputEventScreenTouch) -> void:
+	if event.pressed:
+		_touch_points[event.index] = event.position
+	else:
+		_touch_points.erase(event.index)
+
+	if _touch_points.size() >= 2:
+		_dragging = false
+		_pinch_last_distance = _pinch_distance()
+	else:
+		_pinch_last_distance = 0.0
+
+
+## With exactly one finger down, this is the real per-finger equivalent of
+## the mouse-drag pan below (same _pan_camera() call) - previously this
+## branch panned unconditionally regardless of how many fingers were on
+## screen, which meant a genuine two-finger pinch was ALSO panning the camera
+## once per finger's own drag event on top of whatever zoom math got added
+## here, fighting each other. With two fingers down, this is a pinch instead:
+## the standard "compare current inter-finger distance to last frame's" ratio
+## drives _zoom_camera() the same way a wheel tick or a desktop trackpad's
+## InputEventMagnifyGesture already does, anchored to the midpoint between
+## the two fingers rather than the screen center.
+func _on_screen_drag(event: InputEventScreenDrag) -> void:
+	_touch_points[event.index] = event.position
+	if _touch_points.size() < 2:
+		_pan_camera(event.relative)
+		return
+
+	var distance := _pinch_distance()
+	if _pinch_last_distance > 0.0:
+		_zoom_camera(distance / _pinch_last_distance, _pinch_midpoint())
+	_pinch_last_distance = distance
+
+
+## Only ever called with exactly 2 active touch points (see the two functions
+## above) - a 3rd simultaneous finger would pick two arbitrary entries out of
+## the three rather than handling a genuine 3-finger gesture, a deliberate
+## simplification since nobody pinch-zooms with three fingers.
+func _pinch_distance() -> float:
+	var points := _touch_points.values()
+	return (points[0] as Vector2).distance_to(points[1] as Vector2)
+
+
+func _pinch_midpoint() -> Vector2:
+	var points := _touch_points.values()
+	return ((points[0] as Vector2) + (points[1] as Vector2)) * 0.5
 
 
 ## Deliberately NOT scaled by camera.zoom - a given drag distance moves the

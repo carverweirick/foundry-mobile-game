@@ -1,9 +1,13 @@
 [gd_scene format=3 uid="uid://cl8s1moqrvqxy"]
 
 [ext_resource type="Script" uid="uid://dy315sqjox5g" path="res://scenes/main.gd" id="1_script"]
-[ext_resource type="PackedScene" path="res://scenes/menu_overlay.tscn" id="2_menu_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/station_detail_menu.tscn" id="3_station_detail_menu"]
-[ext_resource type="PackedScene" path="res://scenes/shop_overlay.tscn" id="4_shop_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/dashboard_overlay.tscn" id="5_dashboard_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/overview_overlay.tscn" id="6_overview_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/awaiting_transfer_overlay.tscn" id="7_awaiting_transfer_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/contracts_overlay.tscn" id="8_contracts_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/staff_overlay.tscn" id="9_staff_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/printers_overlay.tscn" id="10_printers_overlay"]
 
 [node name="Main" type="Node2D" unique_id=1774776552]
 script = ExtResource("1_script")
@@ -28,8 +32,16 @@ text = "Reputation: 0"
 
 [node name="FloorLabels" type="CanvasLayer" parent="."]
 
-[node name="MenuOverlay" parent="." instance=ExtResource("2_menu_overlay")]
-
 [node name="StationDetailMenu" parent="." instance=ExtResource("3_station_detail_menu")]
 
-[node name="ShopOverlay" parent="." instance=ExtResource("4_shop_overlay")]
+[node name="OverviewOverlay" parent="." instance=ExtResource("6_overview_overlay")]
+
+[node name="AwaitingTransferOverlay" parent="." instance=ExtResource("7_awaiting_transfer_overlay")]
+
+[node name="ContractsOverlay" parent="." instance=ExtResource("8_contracts_overlay")]
+
+[node name="StaffOverlay" parent="." instance=ExtResource("9_staff_overlay")]
+
+[node name="PrintersOverlay" parent="." instance=ExtResource("10_printers_overlay")]
+
+[node name="DashboardOverlay" parent="." instance=ExtResource("5_dashboard_overlay")]
