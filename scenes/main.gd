@@ -410,56 +410,52 @@ func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_t
 ## into more of a grid feeling") - the Print Room is the only room with real
 ## tile art so far (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png).
 ##
-## Bug fix: the first pass loaded the pre-existing hand-authored
-## `resources/tilesets/print_room_floor_tileset.tres` (written by an earlier
-## session directly as a text resource, never actually saved out by Godot's
-## own TileSet editor) - it parsed and loaded without any error, but never
-## actually rendered a visible tile in a real windowed run (only a flat
-## background showed, confirmed from a screenshot; nothing catches this
-## difference in this project's headless-only testing, since headless mode
-## never exercises real GPU rendering at all - see this session's own
-## conversation). Rather than debug a hand-typed resource file against
-## real Godot internals blind, this now builds the whole TileSet fresh at
-## runtime via the real TileSetAtlasSource/TileSet API instead of trusting
-## a pre-existing file - guaranteed to be exactly what Godot's own object
-## model expects, since it's Godot's own constructors doing the work. The
-## packed atlas's native tile size is 180x180 - scaling the TileMapLayer
-## node itself down to GRID_CELL_SIZE/180 renders each source tile at
-## exactly one grid cell instead, without needing a second, smaller copy of
-## the art. Filled uniformly with the plain bolted floor panel (atlas coord
-## (0,0)) for now - the same sheet also has a matched set of blue accent-line
-## edge/corner tiles and decorative props (vents, hazard stripes, a numbered
-## marker) for a richer pass later, not used yet. The old .tres resource is
-## left on disk unused rather than deleted, in case it's worth fixing up
-## properly through the real editor later instead of building tiles in code
-## forever.
+## Bug fix history, same session: the first pass loaded a pre-existing hand-
+## authored `resources/tilesets/print_room_floor_tileset.tres` via a real
+## `TileMapLayer` - logically correct in every headless check (position,
+## scale, filled cell count, source texture all verified), but confirmed via
+## screenshot to never actually render a single tile. Suspected the hand-
+## authored .tres, so a second pass rebuilt the whole TileSet fresh at
+## runtime via Godot's own TileSetAtlasSource/TileSet API instead of trusting
+## that file - still invisible, confirmed via a second screenshot from a
+## real LOCAL desktop Play run (not just the original remote/Xogot deploy),
+## which rules out a remote-runtime-compatibility gap specifically - this is
+## a real bug in the TileMapLayer approach itself, in this exact Godot
+## build, not an environment quirk. Rather than keep chasing TileMapLayer
+## internals blind (headless testing can confirm the DATA is correct but,
+## per this session's own hard-won lesson, can never confirm what anything
+## actually renders like), this now sidesteps TileMapLayer entirely and uses
+## the one rendering mechanism already proven working everywhere else in
+## this exact deployment - plain Sprite2D + Texture2D, the same mechanism
+## every station sprite already uses successfully. One Sprite2D per grid
+## cell (360 for the Print Room's 24x15), all sharing one AtlasTexture
+## cropped to the plain bolted floor panel's region (0,0)-(180,180) - more
+## nodes than a real TileMap, but trivial for a one-time static floor
+## decoration, and there's no more basic/compatible a way to put a texture
+## on screen in Godot than this.
 const PRINT_ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
 const PRINT_ROOM_TILE_SOURCE_SIZE: int = 180
 
 func _build_print_room_tiles() -> void:
-	var atlas_source := TileSetAtlasSource.new()
-	atlas_source.texture = PRINT_ROOM_TILE_TEXTURE
-	atlas_source.texture_region_size = Vector2i(PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
-	atlas_source.create_tile(Vector2i(0, 0))
+	var atlas_tex := AtlasTexture.new()
+	atlas_tex.atlas = PRINT_ROOM_TILE_TEXTURE
+	atlas_tex.region = Rect2(0, 0, PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
 
-	var tile_set := TileSet.new()
-	tile_set.tile_size = Vector2i(PRINT_ROOM_TILE_SOURCE_SIZE, PRINT_ROOM_TILE_SOURCE_SIZE)
-	tile_set.add_source(atlas_source, 0)
-
-	var tilemap := TileMapLayer.new()
-	tilemap.tile_set = tile_set
-	tilemap.position = PRINT_ROOM.position
-	tilemap.scale = Vector2.ONE * (GRID_CELL_SIZE / float(PRINT_ROOM_TILE_SOURCE_SIZE))
-	# Same zoomed-out-pixelation fix as every other real sprite this session -
-	# the tile texture also has mipmaps enabled (see its own .import file).
-	tilemap.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
-	add_child(tilemap)
-
+	var tile_scale: float = GRID_CELL_SIZE / float(PRINT_ROOM_TILE_SOURCE_SIZE)
 	var cells_wide := int(PRINT_ROOM.size.x / GRID_CELL_SIZE)
 	var cells_tall := int(PRINT_ROOM.size.y / GRID_CELL_SIZE)
 	for cy in cells_tall:
 		for cx in cells_wide:
-			tilemap.set_cell(Vector2i(cx, cy), 0, Vector2i(0, 0))
+			var tile := Sprite2D.new()
+			tile.texture = atlas_tex
+			tile.centered = false
+			tile.position = PRINT_ROOM.position + Vector2(cx, cy) * GRID_CELL_SIZE
+			tile.scale = Vector2.ONE * tile_scale
+			# Same zoomed-out-pixelation fix as every other real sprite this
+			# session - the tile texture also has mipmaps enabled (see its
+			# own .import file).
+			tile.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+			add_child(tile)
 
 
 func _spawn_stations() -> void:
