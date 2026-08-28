@@ -106,12 +106,12 @@ const FURNACE_ROOM := Rect2(1200, 620, 480, 300)
 const POUR_ROOM := Rect2(520, 340, 680, 280)
 
 ## Since the four corners only meet the center hub at single pinwheel-style
-## corner points (not shared edges), a full-floor base layer avoids any bare
-## background showing through the gaps between rooms - simpler than crafting
-## bespoke connective hallway shapes, and every empty stretch of floor reads
-## as "walkable hallway" by default this way.
+## corner points (not shared edges), every cell of the floor's continuous
+## tile grid that isn't inside one of the room rects below gets tinted this
+## color instead (see _zone_tint_for_point()) - the whole floor is one tiled
+## surface, this is just the "hallway" zone's own tint, not a separate
+## background layer underneath it.
 const HALLWAY_FILL := Color(0.7, 0.7, 0.68)
-const HALLWAY_BORDER := Color(0.5, 0.5, 0.48)
 const SHELLING_FILL := Color(0.87, 0.8, 0.66)
 const SHELLING_BORDER := Color(0.65, 0.55, 0.4)
 const PRINT_FILL := Color(0.87, 0.93, 0.97)
@@ -362,137 +362,108 @@ func _on_reputation_changed(new_amount: int) -> void:
 
 
 func _build_floor() -> void:
-	# Full-floor base layer first (see HALLWAY_FILL's own comment) - every one
-	# of the four corner/center room zones below draws on top of it.
-	_add_room_zone(Rect2(FLOOR_MIN, FLOOR_MAX - FLOOR_MIN), HALLWAY_FILL, HALLWAY_BORDER, "")
-	# Every room now gets a real tiled floor instead of a flat ColorRect fill
-	# (design request: "do the entire factory and use all the different
-	# tiles we have... make it feel like a real factory"), tinted per room to
-	# match its existing palette. Bug fix (see _build_room_tiles()'s own
-	# comment): the border must be drawn BEFORE the tiles, not after - it's a
-	# full-room-size rect, not a thin frame, so drawing it second would paint
-	# over the whole tiled floor.
-	_add_room_zone(PRINT_ROOM, PRINT_FILL, PRINT_BORDER, "Print Room", true)
-	_build_room_tiles(PRINT_ROOM, PRINT_FILL)
-	_add_room_zone(SHELLING_ROOM, SHELLING_FILL, SHELLING_BORDER, "Shelling Room", true)
-	_build_room_tiles(SHELLING_ROOM, SHELLING_FILL)
-	_add_room_zone(POST_PROCESSING_ROOM, POST_FILL, POST_BORDER, "Post Processing Room", true)
-	_build_room_tiles(POST_PROCESSING_ROOM, POST_FILL)
-	_add_room_zone(FURNACE_ROOM, FURNACE_FILL, FURNACE_BORDER, "Furnace Room", true)
-	_build_room_tiles(FURNACE_ROOM, FURNACE_FILL)
-	_add_room_zone(POUR_ROOM, POUR_FILL, POUR_BORDER, "VIM Bay", true)
-	_build_room_tiles(POUR_ROOM, POUR_FILL)
+	# One continuous tiled floor across the whole 1720x960 bounds (design
+	# request, this session: "i want the factory to act as all one big shop
+	# floor with the designated zones but the tileset across the entire
+	# floor so theres no dead areas" - the previous per-room-only tiling left
+	# the hallway between rooms as flat dead space). Zones are still visually
+	# designated - see _zone_tint_for_point() - but by tinting this one
+	# continuous grid, not by separate per-room ColorRect fills.
+	_build_full_floor_tiles()
+	# A thin outline (not a filled rect - that would cover the tiles under
+	# it) plus a name label is all each zone still needs on top of the tiles
+	# to read as "a room."
+	_add_zone_outline(PRINT_ROOM, PRINT_BORDER)
+	_add_room_label(PRINT_ROOM, "Print Room")
+	_add_zone_outline(SHELLING_ROOM, SHELLING_BORDER)
+	_add_room_label(SHELLING_ROOM, "Shelling Room")
+	_add_zone_outline(POST_PROCESSING_ROOM, POST_BORDER)
+	_add_room_label(POST_PROCESSING_ROOM, "Post Processing Room")
+	_add_zone_outline(FURNACE_ROOM, FURNACE_BORDER)
+	_add_room_label(FURNACE_ROOM, "Furnace Room")
+	_add_zone_outline(POUR_ROOM, POUR_BORDER)
+	_add_room_label(POUR_ROOM, "VIM Bay")
 
 
-## skip_fill lets a room draw its border/label only and supply its own floor
-## visual on top - every room does this now, using a real tiled floor instead
-## of a flat ColorRect (see _build_room_tiles()). The border must be drawn
-## BEFORE _build_room_tiles() is called for that same room, not after - see
-## that function's own comment for why (a real bug this session, not just a
-## hypothetical).
-func _add_room_zone(rect: Rect2, fill_color: Color, border_color: Color, label_text: String, skip_fill: bool = false) -> void:
-	# ColorRect/Label are Control nodes even out here in the 2D world, and
-	# Control defaults to MOUSE_FILTER_STOP - without explicitly setting it
-	# to IGNORE, every one of these purely decorative room backgrounds
-	# silently swallows clicks before they ever reach _unhandled_input.
-	var border := ColorRect.new()
-	border.position = rect.position
-	border.size = rect.size
-	border.color = border_color
-	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(border)
-
-	if not skip_fill:
-		var fill := ColorRect.new()
-		fill.position = rect.position + Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH)
-		fill.size = rect.size - Vector2(ROOM_BORDER_WIDTH, ROOM_BORDER_WIDTH) * 2.0
-		fill.color = fill_color
-		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(fill)
-
-	if label_text != "":
-		var entry := RoomFloorLabel.new()
-		entry.world_position = rect.position + Vector2(10.0, 6.0)
-		entry.label = _make_floor_label(label_text)
-		_room_floor_labels.append(entry)
+func _add_zone_outline(rect: Rect2, border_color: Color) -> void:
+	# Four thin strips tracing the rect's perimeter rather than one filled
+	# ColorRect - a filled rect would hide the tiles drawn under it, same
+	# mistake as this session's earlier draw-order bug.
+	var strips := [
+		Rect2(rect.position, Vector2(rect.size.x, ROOM_BORDER_WIDTH)),
+		Rect2(rect.position + Vector2(0.0, rect.size.y - ROOM_BORDER_WIDTH), Vector2(rect.size.x, ROOM_BORDER_WIDTH)),
+		Rect2(rect.position, Vector2(ROOM_BORDER_WIDTH, rect.size.y)),
+		Rect2(rect.position + Vector2(rect.size.x - ROOM_BORDER_WIDTH, 0.0), Vector2(ROOM_BORDER_WIDTH, rect.size.y)),
+	]
+	for strip: Rect2 in strips:
+		var outline := ColorRect.new()
+		outline.position = strip.position
+		outline.size = strip.size
+		outline.color = border_color
+		# Control defaults to MOUSE_FILTER_STOP - without IGNORE, this purely
+		# decorative outline would silently swallow clicks meant for the
+		# floor beneath it.
+		outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(outline)
 
 
-## Real per-cell floor tiles for every room (design request, this session:
-## first just the Print Room to prove the grid concept, then "do the entire
-## factory and use all the different tiles we have... make it feel like a
-## real factory"). Only one tile sheet actually exists on disk
-## (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png, a 5x5
-## grid of 180x180 tiles - generic industrial floor art, not Print-Room-
-## specific despite the filename) - every room reuses the exact same sheet,
-## differentiated by a per-room modulate tint (that room's existing FILL
-## color) rather than needing five separate tile sheets.
-##
-## Bug fix history, same session: this went through three failed rendering
-## attempts (a hand-authored TileSet via TileMapLayer, a runtime-built
-## TileSet via TileMapLayer, then plain Sprite2D) before the real bug was
-## found - none of the three approaches were actually broken. _add_room_zone()'s
-## "border" is a full-room-size ColorRect, not a thin frame; every room's
-## normal (smaller, inset) fill drawn on top of it is what creates the
-## illusion of a bordered panel. Building the tiles BEFORE calling
-## _add_room_zone() for that same room meant the border was drawn on top of
-## the tiles every time, painting over the entire floor edge-to-edge - the
-## tiles were rendering correctly on every attempt, just immediately hidden.
-## Fixed by drawing the border first (see _build_floor()), tiles after.
+func _add_room_label(rect: Rect2, label_text: String) -> void:
+	var entry := RoomFloorLabel.new()
+	entry.world_position = rect.position + Vector2(10.0, 6.0)
+	entry.label = _make_floor_label(label_text)
+	_room_floor_labels.append(entry)
+
+
+## Real per-cell floor tiles across the entire floor, one continuous grid
+## (design request, this session, replacing an earlier per-room-only version
+## that left the hallway between rooms untiled). Only one tile sheet exists
+## on disk (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png,
+## a 5x5 grid of 180x180 tiles - generic industrial floor art, not
+## Print-Room-specific despite the filename). Every cell uses the SAME plain
+## interior tile (TILE_PLAIN) - an earlier version of this pass used a
+## weighted-random mix of vents/hazard stripes/markers for variety, but that
+## read as cluttered/messy once actually seen on screen (direct feedback:
+## "get rid of your attempt of livening the shop floor up it looks messy"),
+## so it's gone - uniform and clean instead. Zones are still visually
+## distinct via a per-cell modulate tint (_zone_tint_for_point()) rather
+## than needing separate art per zone.
 ##
 ## One Sprite2D per grid cell (a plain Sprite2D + AtlasTexture region, the
-## same mechanism every station sprite already uses - more nodes than a real
-## TileMap, but trivial for a one-time static floor decoration), using
-## rotation to get 4 sides/corners out of just two source tiles (a straight
-## edge and a corner, blue accent-lined) rather than needing a separate tile
-## per direction - both tiles happen to point their accent line in a
-## direction that rotates cleanly in 90-degree steps to cover every other
-## side/corner. The interior is a weighted-random mix of most of the sheet's
-## remaining tiles (plain variants, vents, a hazard stripe, diamond plate, a
-## numbered marker, a directional arrow, bolted corners) so it reads as a
-## real, slightly-worn factory floor rather than one flat repeating tile.
+## same mechanism every station sprite already uses), using rotation to get
+## 4 sides/corners of the outer floor boundary out of just two source tiles
+## (a straight edge and a corner, blue accent-lined) rather than needing a
+## separate tile per direction - both tiles happen to point their accent
+## line in a direction that rotates cleanly in 90-degree steps to cover
+## every other side/corner.
 const ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
 const ROOM_TILE_SOURCE_SIZE: int = 180
 
 ## Atlas coordinates (col, row), 0-indexed, matching the 5x5 sheet.
 const TILE_EDGE := Vector2i(0, 1)     # straight edge, accent line on the left by default
 const TILE_CORNER := Vector2i(1, 1)   # corner, accent line forming a top-left L by default
-
-## Interior tile weights - deliberately NOT uniform. Plain-ish tiles
-## dominate so the floor still reads as "a floor" at a glance; the rest are
-## real variety sprinkled in, not evenly distributed.
-const INTERIOR_TILE_WEIGHTS: Array[Dictionary] = [
-	{"coords": Vector2i(0, 0), "weight": 55.0}, # plain bolted panel
-	{"coords": Vector2i(1, 2), "weight": 15.0}, # plain, no accents
-	{"coords": Vector2i(2, 0), "weight": 8.0},  # quartered/grid-line panel
-	{"coords": Vector2i(0, 4), "weight": 5.0},  # bolted corners, plain variant
-	{"coords": Vector2i(1, 3), "weight": 4.0},  # small centered vent
-	{"coords": Vector2i(2, 3), "weight": 3.0},  # big centered vent
-	{"coords": Vector2i(0, 3), "weight": 3.0},  # hazard stripe
-	{"coords": Vector2i(4, 0), "weight": 3.0},  # diamond plate
-	{"coords": Vector2i(3, 3), "weight": 2.0},  # wide vent strip
-	{"coords": Vector2i(1, 4), "weight": 1.0},  # octagon floor marker
-	{"coords": Vector2i(2, 4), "weight": 0.5},  # numbered ("01") marker
-	{"coords": Vector2i(3, 4), "weight": 0.5},  # directional arrow
-]
-
-var _room_tile_rng := RandomNumberGenerator.new()
+const TILE_PLAIN := Vector2i(1, 2)    # plain, no accents - the sole interior tile now
 
 
-func _pick_interior_tile() -> Vector2i:
-	var total := 0.0
-	for entry in INTERIOR_TILE_WEIGHTS:
-		total += entry["weight"]
-	var roll := _room_tile_rng.randf() * total
-	for entry in INTERIOR_TILE_WEIGHTS:
-		roll -= entry["weight"]
-		if roll <= 0.0:
-			return entry["coords"]
-	return INTERIOR_TILE_WEIGHTS[0]["coords"]
+## Which zone a given world point falls in, for per-cell tinting - a room's
+## own FILL color if inside that room's rect, HALLWAY_FILL otherwise. Rooms
+## don't overlap (verified elsewhere), so at most one of these ever matches.
+func _zone_tint_for_point(point: Vector2) -> Color:
+	if PRINT_ROOM.has_point(point):
+		return PRINT_FILL
+	if SHELLING_ROOM.has_point(point):
+		return SHELLING_FILL
+	if POST_PROCESSING_ROOM.has_point(point):
+		return POST_FILL
+	if FURNACE_ROOM.has_point(point):
+		return FURNACE_FILL
+	if POUR_ROOM.has_point(point):
+		return POUR_FILL
+	return HALLWAY_FILL
 
 
-func _build_room_tiles(rect: Rect2, tint: Color) -> void:
-	var cells_wide := int(rect.size.x / GRID_CELL_SIZE)
-	var cells_tall := int(rect.size.y / GRID_CELL_SIZE)
+func _build_full_floor_tiles() -> void:
+	var cells_wide := int((FLOOR_MAX.x - FLOOR_MIN.x) / GRID_CELL_SIZE)
+	var cells_tall := int((FLOOR_MAX.y - FLOOR_MIN.y) / GRID_CELL_SIZE)
 	var half_cell := GRID_CELL_SIZE * 0.5
 
 	for cy in cells_tall:
@@ -526,7 +497,9 @@ func _build_room_tiles(rect: Rect2, tint: Color) -> void:
 				atlas_coords = TILE_EDGE
 				rotation_degrees_value = 180.0
 			else:
-				atlas_coords = _pick_interior_tile()
+				atlas_coords = TILE_PLAIN
+
+			var cell_position := FLOOR_MIN + Vector2(cx, cy) * GRID_CELL_SIZE + Vector2(half_cell, half_cell)
 
 			var atlas_tex := AtlasTexture.new()
 			atlas_tex.atlas = ROOM_TILE_TEXTURE
@@ -539,10 +512,10 @@ func _build_room_tiles(rect: Rect2, tint: Color) -> void:
 			# Centered (not top-left-anchored) specifically so rotation below
 			# pivots around the cell's own center instead of swinging the
 			# tile out of its cell.
-			tile.position = rect.position + Vector2(cx, cy) * GRID_CELL_SIZE + Vector2(half_cell, half_cell)
+			tile.position = cell_position
 			tile.scale = Vector2.ONE * (GRID_CELL_SIZE / float(ROOM_TILE_SOURCE_SIZE))
 			tile.rotation_degrees = rotation_degrees_value
-			tile.modulate = tint
+			tile.modulate = _zone_tint_for_point(cell_position)
 			# Same zoomed-out-pixelation fix as every other real sprite this
 			# session - the tile texture also has mipmaps enabled (see its
 			# own .import file).
