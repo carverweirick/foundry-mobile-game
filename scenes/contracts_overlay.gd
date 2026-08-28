@@ -266,10 +266,18 @@ func _refresh_offer_detail() -> void:
 	var badge_text: String
 	var badge_color: Color
 	var footer_text: String
+	# Only ever two tags, both backed by real game state (familiarity/risk).
+	# An earlier version also appended "BONUS QUALITY"/"FIRST ARTICLE" to the
+	# safe/risky ends of this line - real manufacturing-sounding terms, but
+	# neither tied to an actual mechanic (there's no quality-bonus system,
+	# Section 24.2, or first-article-inspection step built), which is exactly
+	# what surfaced as player confusion ("what does first article mean on the
+	# contract?") - dropped rather than explained, since there was nothing
+	# real behind them to explain.
 	if weakest_percent >= 80:
 		badge_text = "MASTERED - SAFE CONTRACT"
 		badge_color = Color(0.25, 0.6, 0.3)
-		footer_text = "HIGH FAMILIARITY • LOW RISK • BONUS QUALITY"
+		footer_text = "HIGH FAMILIARITY • LOW RISK"
 	elif weakest_percent >= 40:
 		badge_text = "MODERATE RISK"
 		badge_color = Color(0.75, 0.55, 0.15)
@@ -277,15 +285,16 @@ func _refresh_offer_detail() -> void:
 	else:
 		badge_text = "UNFAMILIAR - HIGH RISK"
 		badge_color = Color(0.75, 0.25, 0.15)
-		footer_text = "LOW FAMILIARITY • HIGH RISK • FIRST ARTICLE"
+		footer_text = "LOW FAMILIARITY • HIGH RISK"
 	_detail_badge_label.text = badge_text
 	_detail_badge_label.add_theme_color_override("font_color", badge_color)
 	_detail_footer_label.text = footer_text
 	_detail_footer_label.add_theme_color_override("font_color", badge_color)
 
 	var alloy := offer.line_items[0].alloy_name if not offer.line_items.is_empty() else ""
-	_detail_info_label.text = "%s to complete  |  Payout %dg\n%s complexity • %s • Investment Casting • %s" % [
-		_format_time(offer.deadline_seconds), offer.payout,
+	var exp: int = GameData.FACTORY_EXP_PER_CONTRACT_TIER.get(offer.tier, 0)
+	_detail_info_label.text = "%s to complete  |  Payout %dg  |  +%d Factory EXP\n%s complexity • %s • Investment Casting • %s" % [
+		_format_time(offer.deadline_seconds), offer.payout, exp,
 		_offer_complexity_label(offer), alloy, _offer_volume_label(offer),
 	]
 
@@ -323,6 +332,12 @@ func _build_line_item_row(li: Contract.LineItem) -> Control:
 
 	var familiarity_label := Label.new()
 	familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Same one-character-per-line wrap bug documented elsewhere in this
+	# codebase (CLAUDE.md: "short inline labels next to a wide sibling
+	# control could wrap vertically") - without an explicit minimum width,
+	# this label had none of its own and got squeezed down to a sliver next
+	# to name_label's wider fixed width, wrapping "0/5" onto three lines.
+	familiarity_label.custom_minimum_size = Vector2(45.0, 24.0)
 	familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(li.geometry_name)
 	row.add_child(familiarity_label)
 

@@ -1259,7 +1259,11 @@ func _init() -> void:
 	# qualitative deadline/payout per tier (Generous/Moderate/Tighter/Tight,
 	# Low/Medium/High/Very High) - concrete numbers below are first-pass
 	# placeholders scaled to that, same spirit as the Technician costs.
-	contracts = [
+	# Direct request, this session: "there shouldn't be any active contracts
+	# when you start" - these load as unaccepted OFFERS now, same as any
+	# generated one, rather than immediately active with a running deadline
+	# clock. accept_contract_offer() is what actually starts each one.
+	contract_offers = [
 		_make_single_item_contract("Local Hardware Co.", Contract.ContractTier.LOCAL_SHOPS,
 			"Mounting Brackets", "Mild Steel", 5, 1200.0, 50),
 		_make_single_item_contract("Riverside Jewelers", Contract.ContractTier.LOCAL_SHOPS,
@@ -1300,8 +1304,10 @@ func _make_contract(
 
 
 ## Convenience for a single-geometry contract (the six starting contracts
-## below) - builds the one-element line_items array _make_contract() now
+## above) - builds the one-element line_items array _make_contract() now
 ## expects, so those call sites don't need to construct a LineItem by hand.
+## auto_start=false: these load as offers now, not immediately-active
+## contracts (see the comment above the six starting contracts).
 func _make_single_item_contract(
 	customer: String,
 	tier: Contract.ContractTier,
@@ -1316,7 +1322,7 @@ func _make_single_item_contract(
 	li.alloy_name = alloy
 	li.quantity_required = quantity
 	var items: Array[Contract.LineItem] = [li]
-	return _make_contract(customer, tier, items, deadline_seconds, payout, true)
+	return _make_contract(customer, tier, items, deadline_seconds, payout, false)
 
 
 ## Falls back to the shared "printing" template for any specific printer

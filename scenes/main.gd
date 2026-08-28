@@ -185,6 +185,7 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var camera: Camera2D = $Camera2D
 @onready var currency_label: Label = $HUD/CurrencyLabel
 @onready var reputation_label: Label = $HUD/ReputationLabel
+@onready var factory_level_label: Label = $HUD/FactoryLevelLabel
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
 @onready var station_detail_menu: StationDetailMenu = $StationDetailMenu
 @onready var overview_overlay: OverviewOverlay = $OverviewOverlay
@@ -259,6 +260,12 @@ func _ready() -> void:
 	_on_currency_changed(GameData.currency)
 	GameData.reputation_changed.connect(_on_reputation_changed)
 	_on_reputation_changed(GameData.reputation)
+	# Design request (this session): "i want to be able to see my factory
+	# level, currency, and reputation" - factory_progress_changed already
+	# existed for the Printers overlay's own EXP readout (see GameData), this
+	# just gives the floor HUD a listener too.
+	GameData.factory_progress_changed.connect(func(): _on_factory_progress_changed())
+	_on_factory_progress_changed()
 
 	# Bug fix (originally this session's split of one bundled Menu/Shop panel
 	# into individual per-category overlays, later generalized): "the shop
@@ -371,6 +378,10 @@ func _on_currency_changed(new_amount: int) -> void:
 
 func _on_reputation_changed(new_amount: int) -> void:
 	reputation_label.text = "Reputation: %d" % new_amount
+
+
+func _on_factory_progress_changed() -> void:
+	factory_level_label.text = "Factory Level: %d" % GameData.factory_level
 
 
 func _build_floor() -> void:
