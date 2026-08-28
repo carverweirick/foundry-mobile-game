@@ -362,6 +362,132 @@ var held_parts: Array[Part] = []
 ## anywhere - the Shop's Technicians tab roster (design doc Section 6/7).
 var technicians: Array[Technician] = []
 
+## Rotating applicant pool (design request, this session: "build the rotating
+## applicant pool" - replacing "hire any tier, any time"), mirroring the
+## contract_offers pattern exactly: a pool of rolled-but-unhired candidates,
+## separate from technicians (the real roster) - hire_applicant() below is
+## what actually moves one over.
+var applicant_pool: Array[Technician] = []
+signal applicant_pool_changed()
+
+const APPLICANT_POOL_SIZE: int = 4
+## First-pass placeholder, same spirit as every other invented number in
+## this file - much longer than CONTRACT_GENERATION_COOLDOWN_SECONDS (45s)
+## since staff hiring is meant to feel like a slower, more deliberate cadence
+## than the standing contract pool.
+const APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS: float = 300.0
+## Gems only, not try_spend_with_gems()'s gold-first-then-gems fallback -
+## "refreshable for gems" specifically means this action costs the harder-to-
+## get currency, not a small amount of ordinary gold that happens to get
+## covered by ready cash. First-pass placeholder, priced well under
+## FACTORY_LEVEL_UP_GEM_REWARD's own per-level payout so it's a real but not
+## crushing spend.
+const APPLICANT_REFRESH_COST: int = 3
+
+const APPLICANT_FIRST_NAMES: Array[String] = [
+	"Daniel", "Maya", "Jakob", "Victor", "Elena", "Marcus", "Priya", "Owen", "Sofia", "Derek",
+]
+const APPLICANT_LAST_NAMES: Array[String] = [
+	"Price", "Singh", "Klein", "Moreau", "Reyes", "Chen", "Novak", "Brooks", "Ibarra", "Walsh",
+]
+
+## Weighted toward lower tiers, same shape/spirit as CONTRACT_TIER_ROLL_WEIGHTS -
+## a standing pool of mostly-Apprentice/Technician candidates with an
+## occasional Senior/Master, not an even spread.
+const APPLICANT_TIER_ROLL_WEIGHTS: Array[int] = [40, 30, 20, 10]
+
+var _applicant_pool_cooldown: float = 0.0
+
+
+func _roll_applicant_tier() -> Technician.SkillTier:
+	var tiers := Technician.SkillTier.values()
+	var total := 0
+	for w in APPLICANT_TIER_ROLL_WEIGHTS:
+		total += w
+	var roll := randf() * total
+	for i in tiers.size():
+		roll -= APPLICANT_TIER_ROLL_WEIGHTS[i]
+		if roll <= 0.0:
+			return tiers[i]
+	return tiers[0]
+
+
+## A brand new, unhired candidate - random role, tier, name, and (via
+## Technician.roll_department_skills()) per-department skill. Never appended
+## to applicant_pool itself here - callers decide where it goes.
+func generate_applicant() -> Technician:
+	var applicant := Technician.new()
+	applicant.role = Technician.StaffRole.TECHNICIAN if randf() < 0.5 else Technician.StaffRole.ENGINEER
+	applicant.skill_tier = _roll_applicant_tier()
+	applicant.technician_name = "%s %s" % [
+		APPLICANT_FIRST_NAMES[randi() % APPLICANT_FIRST_NAMES.size()],
+		APPLICANT_LAST_NAMES[randi() % APPLICANT_LAST_NAMES.size()],
+	]
+	applicant.roll_department_skills()
+	return applicant
+
+
+func can_afford_applicant_refresh() -> bool:
+	return gems >= APPLICANT_REFRESH_COST
+
+
+## The paid "Refresh Applicants" button - a full reroll of the whole pool,
+## distinct from the passive auto-refill below (which only ever tops up
+## slots emptied by a hire, never discards a candidate you might still be
+## saving up for).
+func refresh_applicant_pool() -> bool:
+	if not can_afford_applicant_refresh():
+		return false
+	gems -= APPLICANT_REFRESH_COST
+	gems_changed.emit(gems)
+	applicant_pool.clear()
+	for i in APPLICANT_POOL_SIZE:
+		applicant_pool.append(generate_applicant())
+	_applicant_pool_cooldown = APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS
+	applicant_pool_changed.emit()
+	return true
+
+
+## Free, passive top-up - only ever fills slots the pool is actually missing
+## (from a hire, or the very first time at startup), never replaces a
+## candidate still sitting there unhired.
+func _refill_applicant_pool() -> void:
+	var changed := false
+	while applicant_pool.size() < APPLICANT_POOL_SIZE:
+		applicant_pool.append(generate_applicant())
+		changed = true
+	if changed:
+		applicant_pool_changed.emit()
+
+
+func _process_applicant_pool(delta: float) -> void:
+	_applicant_pool_cooldown = max(_applicant_pool_cooldown - delta, 0.0)
+	if _applicant_pool_cooldown <= 0.0:
+		_refill_applicant_pool()
+		_applicant_pool_cooldown = APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS
+
+
+## Read-only window onto _applicant_pool_cooldown for the Staff overlay's
+## countdown display, so that var can stay private rather than the UI
+## reaching into GameData's own internal state directly.
+func applicant_pool_refresh_seconds_left() -> float:
+	return _applicant_pool_cooldown
+
+
+## Moves an applicant from the pool into the real roster, spending their
+## hire_cost the same gold-first-then-gems way every other purchase in the
+## game works (unlike the pool refresh above, ordinary hiring isn't meant to
+## be a gems-only action).
+func hire_applicant(applicant: Technician) -> bool:
+	if not applicant_pool.has(applicant):
+		return false
+	if not try_spend_with_gems(applicant.hire_cost):
+		return false
+	applicant_pool.erase(applicant)
+	technicians.append(applicant)
+	applicant_pool_changed.emit()
+	return true
+
 ## station_id -> live Station node, set by main.gd right after spawning all
 ## 11 stations (same pattern as every overlay's own station_by_id).
 ## Technician.tick() needs this to look up real station positions for actual
@@ -1077,25 +1203,6 @@ func _process_contracts(delta: float) -> void:
 		_contract_generation_cooldown = CONTRACT_GENERATION_COOLDOWN_SECONDS
 
 
-## Deducts hire_cost, adds the new Technician to the roster, and returns it -
-## or null if currency is short. This only hires; assigning them to a
-## station (or several) is a separate step, see assign_technician() below.
-func hire_technician(
-	tier: Technician.SkillTier, technician_name: String = "", role: Technician.StaffRole = Technician.StaffRole.TECHNICIAN
-) -> Technician:
-	var tech := Technician.new()
-	tech.skill_tier = tier
-	tech.role = role
-	tech.technician_name = technician_name if technician_name != "" else Technician.TIER_LABEL[tier]
-	tech.roll_department_skills()
-
-	if not try_spend_with_gems(tech.hire_cost):
-		return null
-
-	technicians.append(tech)
-	return tech
-
-
 ## Assigns tech to station. Design request, this session: multiple
 ## technicians can now be assigned to the same station at once (previously
 ## this evicted whoever was there before) - Station.assigned_technicians is
@@ -1208,6 +1315,7 @@ func _process(delta: float) -> void:
 			technician_updated.emit(tech)
 	_check_defect_escalations()
 	_process_contracts(delta)
+	_process_applicant_pool(delta)
 
 
 ## Design doc Section 9, escalation: sweeps every live Part (wherever it
@@ -1357,6 +1465,9 @@ func _init() -> void:
 		_make_single_item_contract("Meridian Aerospace", Contract.ContractTier.FLAGSHIP,
 			"Turbine Blades", "Nickel Superalloy", 120, 5400.0, 2500),
 	]
+
+	# Staff overlay should never open to an empty applicant pool.
+	_refill_applicant_pool()
 
 
 ## `auto_start`: true for the six immediately-active starting contracts

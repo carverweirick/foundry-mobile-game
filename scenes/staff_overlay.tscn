@@ -61,6 +61,20 @@ text = "Hire"
 unique_name_in_owner = true
 layout_mode = 2
 
+[node name="RefreshRow" type="HBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+layout_mode = 2
+
+[node name="RefreshApplicantsButton" type="Button" parent="Panel/TabContainer/Technicians/TechScroll/TechContent/RefreshRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Refresh Applicants"
+
+[node name="RefreshCountdownLabel" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent/RefreshRow"]
+unique_name_in_owner = true
+autowrap_mode = 3
+layout_mode = 2
+text = "New applicants in: 0:00"
+
 [node name="RosterHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
 autowrap_mode = 3
 layout_mode = 2

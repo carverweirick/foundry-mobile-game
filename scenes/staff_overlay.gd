@@ -15,6 +15,14 @@ class_name StaffOverlay
 ## from the same roster row. Specialists (design doc Section 9's third defect
 ## fix path) are a much simpler one-time-hire-per-type list underneath, on
 ## their own tab, since a specialist isn't assigned anywhere or ever un-hired.
+##
+## Hiring itself is a rotating applicant pool now, not "any tier, any time"
+## (design request, this session: "build the rotating applicant pool") - see
+## GameData.applicant_pool/hire_applicant()/refresh_applicant_pool(). Each
+## candidate is either a Technician (Patching/Post Process skill) or an
+## Engineer (Printing/Shelling/Pour skill - Technician.StaffRole, this
+## session's own staff rework), with randomly-rolled per-department stars
+## shown right on the card.
 
 const REFRESH_INTERVAL: float = 0.25
 
@@ -32,9 +40,35 @@ class RosterRow:
 	var station_toggles: GridContainer
 	var station_checks: Dictionary = {} # station_id -> CheckBox
 
+
+## Persistent per-applicant card in the rotating pool (design request, this
+## session: "build the rotating applicant pool") - same persistent-widget
+## reasoning as RosterRow and ContractsOverlay's OfferRow: hiring/refreshing
+## churns this list, but tearing every card down on the unconditional
+## refresh would risk the same click-eating race those fixes were for.
+class ApplicantRow:
+	var container: VBoxContainer
+	var header: Label
+	var skill_row: HBoxContainer
+	var skill_labels: Dictionary = {} # department name -> Label, built once
+	var cost_label: Label
+	var hire_button: Button
+	var applicant: Technician = null
+
+## Department id -> display text, for the skill-row labels below.
+const DEPARTMENT_LABEL := {
+	"printing": "Printing",
+	"shelling": "Shelling",
+	"pour": "Pour",
+	"patching": "Patching",
+	"post_process": "Post Process",
+}
+
 @onready var hire_list: VBoxContainer = %HireList
 @onready var roster_list: VBoxContainer = %RosterList
 @onready var specialist_list: VBoxContainer = %SpecialistList
+@onready var refresh_applicants_button: Button = %RefreshApplicantsButton
+@onready var refresh_countdown_label: Label = %RefreshCountdownLabel
 
 ## Set by main.gd right after all Station nodes are spawned - needed to list
 ## which stations a technician can be assigned to and to read/write their
@@ -44,6 +78,8 @@ var station_by_id: Dictionary = {}
 var _refresh_elapsed: float = 0.0
 var _roster_rows: Dictionary = {} # Technician -> RosterRow
 var _roster_empty_label: Label = null
+var _applicant_rows: Dictionary = {} # Technician -> ApplicantRow
+var _applicants_empty_label: Label = null
 
 
 func _on_ready() -> void:
@@ -64,6 +100,10 @@ func _on_ready() -> void:
 	# change can flip a Hire button's affordability independent of currency.
 	GameData.gems_changed.connect(func(_g): _refresh.call_deferred())
 	GameData.technician_updated.connect(func(_t): _refresh_live_only.call_deferred())
+	# Rotating applicant pool (this session) - a hire, a paid reroll, or the
+	# passive auto-refill all fire this.
+	GameData.applicant_pool_changed.connect(func(): _refresh.call_deferred())
+	refresh_applicants_button.pressed.connect(_on_refresh_applicants_pressed)
 
 
 func _process(delta: float) -> void:
@@ -114,6 +154,14 @@ func _refresh_live_only() -> void:
 	if _any_strategy_popup_open() or _click_in_progress():
 		return
 	_refresh_roster_list()
+	_update_refresh_countdown()
+
+
+## The "new applicants in: X" countdown is a continuously-ticking number, not
+## a rebuild - safe to touch every poll same as the Roster list, no risk of
+## eating a click since this only ever assigns .text on an existing Label.
+func _update_refresh_countdown() -> void:
+	refresh_countdown_label.text = "New applicants in: %s" % _format_time(GameData.applicant_pool_refresh_seconds_left())
 
 
 func _any_strategy_popup_open() -> bool:
@@ -123,28 +171,113 @@ func _any_strategy_popup_open() -> bool:
 	return false
 
 
+## Rotating applicant pool (design request, this session: "build the
+## rotating applicant pool" - replaces the old flat "hire any tier, any
+## time" list). Persistent-widget pattern, same reasoning as the Roster
+## list below and ContractsOverlay's OfferRow - hiring/refreshing churns
+## this list, so rows are built once and updated in place, never torn down
+## except when the underlying applicant actually leaves the pool.
 func _refresh_hire_list() -> void:
-	_clear_list(hire_list)
-	for tier in Technician.SkillTier.values():
-		var row := HBoxContainer.new()
-		var label := Label.new()
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.custom_minimum_size = Vector2(180.0, 0.0)
-		label.text = "%s (%dg)" % [Technician.TIER_LABEL[tier], Technician.TIER_HIRE_COST[tier]]
-		row.add_child(label)
+	var pool_ids: Dictionary = {}
+	for a in GameData.applicant_pool:
+		pool_ids[a] = true
 
-		var hire_button := Button.new()
-		hire_button.text = "Hire"
-		hire_button.disabled = not GameData.can_afford_with_gems(Technician.TIER_HIRE_COST[tier])
-		hire_button.pressed.connect(_on_hire_pressed.bind(tier))
-		row.add_child(hire_button)
+	for applicant in _applicant_rows.keys().duplicate():
+		if not pool_ids.has(applicant):
+			var stale: ApplicantRow = _applicant_rows[applicant]
+			stale.container.queue_free()
+			_applicant_rows.erase(applicant)
 
-		hire_list.add_child(row)
+	if GameData.applicant_pool.is_empty():
+		if _applicants_empty_label == null:
+			_applicants_empty_label = Label.new()
+			_applicants_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_applicants_empty_label.text = "No applicants right now - check back shortly, or refresh below."
+			hire_list.add_child(_applicants_empty_label)
+	elif _applicants_empty_label != null:
+		_applicants_empty_label.queue_free()
+		_applicants_empty_label = null
+
+	for applicant in GameData.applicant_pool:
+		var row: ApplicantRow = _applicant_rows.get(applicant)
+		if row == null:
+			row = _create_applicant_row()
+			_applicant_rows[applicant] = row
+			hire_list.add_child(row.container)
+		_update_applicant_row(row, applicant)
+
+	refresh_applicants_button.text = "Refresh Applicants (%d gems)" % GameData.APPLICANT_REFRESH_COST
+	refresh_applicants_button.disabled = not GameData.can_afford_applicant_refresh()
+	_update_refresh_countdown()
 
 
-func _on_hire_pressed(tier: Technician.SkillTier) -> void:
-	GameData.hire_technician(tier)
+func _create_applicant_row() -> ApplicantRow:
+	var row := ApplicantRow.new()
+	row.container = VBoxContainer.new()
+
+	row.header = Label.new()
+	row.header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.container.add_child(row.header)
+
+	row.skill_row = HBoxContainer.new()
+	row.container.add_child(row.skill_row)
+
+	var bottom_row := HBoxContainer.new()
+	row.cost_label = Label.new()
+	row.cost_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.cost_label.custom_minimum_size = Vector2(160.0, 0.0)
+	bottom_row.add_child(row.cost_label)
+
+	row.hire_button = Button.new()
+	row.hire_button.text = "Hire"
+	row.hire_button.pressed.connect(_on_hire_applicant_pressed.bind(row))
+	bottom_row.add_child(row.hire_button)
+	row.container.add_child(bottom_row)
+
+	row.container.add_child(HSeparator.new())
+	return row
+
+
+## A given Technician resource's role (and therefore departments()) never
+## changes after it's generated, so the skill_row's labels only ever need
+## building once per row, the first time it's paired with a real applicant -
+## same lazy-build-once pattern as RosterRow's station checkboxes below.
+func _update_applicant_row(row: ApplicantRow, applicant: Technician) -> void:
+	row.applicant = applicant
+	# Not "%s %s" % [tier_label, role_label] - Technician.SkillTier.TECHNICIAN's
+	# own label ("Technician") collides with StaffRole.TECHNICIAN's, producing
+	# genuinely ambiguous text like "Technician Engineer" for an Engineer at
+	# the Technician skill tier (caught by a headless UI test, not assumed).
+	row.header.text = "%s - %s, %s Tier" % [applicant.technician_name, applicant.role_label, applicant.tier_label]
+
+	if row.skill_labels.is_empty():
+		for department in applicant.departments():
+			var label := Label.new()
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			label.custom_minimum_size = Vector2(90.0, 0.0)
+			row.skill_row.add_child(label)
+			row.skill_labels[department] = label
+	for department in row.skill_labels:
+		var stars: int = applicant.department_skill.get(department, 0)
+		row.skill_labels[department].text = "%s %d/5" % [DEPARTMENT_LABEL.get(department, department), stars]
+
+	row.cost_label.text = "Hire %dg (wage %dg)" % [applicant.hire_cost, applicant.wage]
+	row.hire_button.disabled = not GameData.can_afford_with_gems(applicant.hire_cost)
+
+
+func _on_hire_applicant_pressed(row: ApplicantRow) -> void:
+	GameData.hire_applicant(row.applicant)
 	_refresh.call_deferred()
+
+
+func _on_refresh_applicants_pressed() -> void:
+	GameData.refresh_applicant_pool()
+	_refresh.call_deferred()
+
+
+func _format_time(seconds: float) -> String:
+	var total := int(seconds)
+	return "%d:%02d" % [total / 60, total % 60]
 
 
 ## Bug fix (carried over from ShopOverlay): the roster used to be torn down
@@ -255,7 +388,8 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 			assignment_text += " - at %s" % _display_name_for(tech.current_station_id)
 			if tech.is_interacting:
 				assignment_text += ", interacting"
-	row.header.text = "%s (%s) - %s" % [tech.technician_name, tech.tier_label, assignment_text]
+	# Same tier/role-label collision fix as the applicant card above.
+	row.header.text = "%s (%s, %s Tier) - %s" % [tech.technician_name, tech.role_label, tech.tier_label, assignment_text]
 
 	# Always visible now - blank rather than hidden when not carrying
 	# anything, so the row's height never pops.
