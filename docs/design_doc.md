@@ -108,13 +108,13 @@ Every station follows the same shape: queue it, optionally set a batch size, the
 
 **Standard Shop Floor:** every new player starts on a preset floor modeled on a real shop layout, so nobody has to design anything before they can start playing.
 
-**Layout, revised this session into a four-corners-plus-center arrangement** (design request: "print room top left, shell room top right, burnout bottom right, post processing in the bottom left, and then the VIM and air melter in the center"), replacing the previous scattered room placement:
-- **Print Room** (top-left): Printing (multiple printer units), Clean, UV Cure, Structured Light Scan, Patching
-- **Shelling Room** (top-right): Shelling, Pour Cup Attach
-- **Furnace Room** (bottom-right): Burnout, Mold Prep
-- **Post Processing Room** (bottom-left): Deshell, Abrasive Blast, Ship
-- **VIM Bay** (center): Pour/VIM today, and eventually a second melting station - see "Air Melter" below. Replaces the old "Pour Room (High Bay)"/Casting Area pairing - Casting Area never held a station and is dropped from the layout entirely; the gantry-crane/high-bay flavor folds into this same central room instead of a separate one.
-- **Hallway**: connects everything - implemented as one full-floor base layer under all five room zones rather than a hand-drawn spine-and-branch shape, since the four corners only meet the center at single pinwheel-style points, not shared edges
+**Layout, originally revised into a four-corners-plus-center arrangement** (design request: "print room top left, shell room top right, burnout bottom right, post processing in the bottom left, and then the VIM and air melter in the center"), replacing the previous scattered room placement, **then reshaped again into a true pinwheel** (direct follow-up: "make the rooms surrounding the pour room in the center expand and touch each other meeting at the middle point") so the four corner rooms actually border each other instead of only touching VIM Bay diagonally:
+- **Print Room** (top arm): Printing (multiple printer units), Clean, UV Cure, Structured Light Scan, Patching
+- **Shelling Room** (right arm): Shelling, Pour Cup Attach
+- **Furnace Room** (bottom arm): Burnout, Mold Prep
+- **Post Processing Room** (left arm): Deshell, Abrasive Blast, Ship
+- **VIM Bay** (a small island at the exact center, where all four arms meet): Pour/VIM today, with room to spare for a second melting station - see "Air Melter" below. Replaces the old "Pour Room (High Bay)"/Casting Area pairing - Casting Area never held a station and is dropped from the layout entirely; the gantry-crane/high-bay flavor folds into this same central room instead of a separate one.
+- **Hallway**: the thin margin ring around the whole floor - implemented as a continuous tile grid covering every cell not claimed by one of the 5 rooms above, rather than a hand-drawn spine-and-branch shape. The four corner rooms now border each other directly (each pair shares a real edge, not just a point) all around VIM Bay's own small perimeter, so there's no longer a hallway gap *between* rooms the way there briefly was.
 
 Anyone who doesn't want to design their own floor just plays on this from day one, with a reset to standard layout option always available if a custom layout stops working out.
 

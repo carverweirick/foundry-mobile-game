@@ -80,36 +80,45 @@ const FLOOR_LABEL_OFFSET: Vector2 = Vector2(-20.0, 66.0) # matches station.tscn'
 # Room zones: rect (x, y, width, height), fill color, border color, label.
 # Colors loosely follow the Art Style section's room palettes.
 #
-# Reworked this session (design request): four corner rooms - Print (top-
-# left), Shelling (top-right), Post Processing (bottom-left), Furnace/Burnout
-# (bottom-right) - around a central VIM Bay housing Pour and, eventually, a
-# new "Air Melter" alternate-melt station (design idea only so far, not a
-# real Station yet - see GameData/design doc Section 24 for status; no
-# STATION_POSITIONS entry exists for it until it's actually built). The old
-# scattered layout (Shelling/Print stacked on the left, Furnace lower-middle,
-# Pour/Casting Area on the right, Post Processing upper-right) is gone,
-# along with the Casting Area zone itself (still no station ever lived
-# there) and the old spine-plus-branch Hallway shape. Floor bounds
-# (FLOOR_MIN/FLOOR_MAX) are UNCHANGED - the four 480x300 corners plus the
-# 680x280 center hub, with the existing 40px margin, sum to exactly the
-# existing 1720x960 floor, so MIN_ZOOM/camera-clamp math needed no retuning.
-const PRINT_ROOM := Rect2(40, 40, 480, 300)
-const SHELLING_ROOM := Rect2(1200, 40, 480, 300)
-const POST_PROCESSING_ROOM := Rect2(40, 620, 480, 300)
-const FURNACE_ROOM := Rect2(1200, 620, 480, 300)
-## The center hub - still named POUR_ROOM in code (Pour is the one real
-## Station there today) even though its on-floor label now reads "VIM Bay"
-## to match the new framing; GameData's own StationDef.room_name for Pour
-## stays the unrelated string "Pour Room" (used for Overview/Staff grouping
-## elsewhere), so renaming this floor label didn't need any GameData changes.
-const POUR_ROOM := Rect2(520, 340, 680, 280)
+# Pinwheel layout, this session's redesign of the earlier "four 480x300
+# corners around a 680x280 center hub" version (design request: "make the
+# rooms surrounding the pour room in the center expand and touch each other
+# meeting at the middle point"). The old corner rooms only ever touched the
+# center hub at single diagonal points, never each other - four true
+# rectangles now wrap pinwheel-style around a small central Pour Room
+# square, each one sharing a real edge segment with both of its neighbors,
+# and every one of those shared segments starts right at a corner of the
+# central square - i.e. at "the middle point." Each room is still a plain
+# rectangle (not an L-shape) - the classic "4 rectangles + 1 square tile a
+# bigger rectangle" construction - so the existing rect-based zone/tile
+# system (ZONES, _zone_index_for_cell(), _edge_tile_for()) needed no new
+# cases, just new numbers. Every old STATION_POSITIONS entry already falls
+# inside its room's new (larger) bounds without needing to move - verified
+# below and with a headless test - since each new room is a strict superset
+# of its old rect. Floor bounds (FLOOR_MIN/FLOOR_MAX) are UNCHANGED; the
+# pinwheel's own center (860, 480) is both the geometric center of the full
+# 1720x960 floor and the exact midpoint of the 40px-inset margins on every
+# side, so nothing needed re-deriving from scratch.
+const PRINT_ROOM := Rect2(40, 40, 960, 300)             # top arm
+const SHELLING_ROOM := Rect2(1000, 40, 680, 580)        # right arm
+const FURNACE_ROOM := Rect2(720, 620, 960, 300)         # bottom arm
+const POST_PROCESSING_ROOM := Rect2(40, 340, 680, 580)  # left arm
+## The small central island every arm above wraps around - still named
+## POUR_ROOM in code (Pour is the one real Station there today) even though
+## its on-floor label reads "VIM Bay"; GameData's own StationDef.room_name
+## for Pour stays the unrelated string "Pour Room" (used for Overview/Staff
+## grouping elsewhere), so this floor label was never tied to that anyway.
+## Sized 280x280 - plenty for the single Pour station, with room to spare
+## for the still-unbuilt "Air Melter" idea from the same design conversation.
+const POUR_ROOM := Rect2(720, 340, 280, 280)
 
-## Since the four corners only meet the center hub at single pinwheel-style
-## corner points (not shared edges), every cell of the floor's continuous
-## tile grid that isn't inside one of the room rects below gets tinted this
-## color instead (see _zone_tint_for_point()) - the whole floor is one tiled
-## surface, this is just the "hallway" zone's own tint, not a separate
-## background layer underneath it.
+## Every cell of the floor's continuous tile grid that isn't inside one of
+## the 5 room rects above gets tinted this color instead (see
+## _zone_index_for_cell()) - the whole floor is one tiled surface, this is
+## just the "hallway" zone's own tint, not a separate background layer.
+## Since the pinwheel's 4 arms plus the central island now tile the entire
+## floor (margins aside), there's no hallway "between" rooms left at all -
+## this only ever shows up in the 40px margin ring around the outside.
 const HALLWAY_FILL := Color(0.7, 0.7, 0.68)
 const SHELLING_FILL := Color(0.87, 0.8, 0.66)
 const SHELLING_BORDER := Color(0.65, 0.55, 0.4)
@@ -129,8 +138,12 @@ const POST_BORDER := Color(0.5, 0.55, 0.6)
 # below instead of a single fixed spot. Deplate is gone entirely (Section
 # 21.3); Clean, Scan, Patching now share printing's old row/column area,
 # Mold Prep sits alongside Burnout in the Furnace Room (Section 21.4/21.5).
-# Repositioned this session into the new four-corners-plus-center layout
-# above - same station groupings as before, new coordinates.
+# Every position below predates this session's pinwheel room-rect rework
+# and was kept as-is rather than re-centered - each room only ever grew
+# (every new room rect is a strict superset of its old one), so every one
+# of these still lands comfortably inside its own room, just no longer
+# centered in it the way it once was. "pour" is the one exception, moved to
+# the new small POUR_ROOM island's own center.
 const STATION_POSITIONS := {
 	"shelling": Vector2(1300, 160),
 	"pour_cup_attach": Vector2(1480, 160),
@@ -140,7 +153,7 @@ const STATION_POSITIONS := {
 	"patching": Vector2(460, 260),
 	"burnout": Vector2(1300, 720),
 	"mold_prep": Vector2(1480, 720),
-	"pour": Vector2(740, 480), # nudged from 750 to land exactly on a GRID_CELL_SIZE (20) multiple
+	"pour": Vector2(860, 480), # re-centered on the new, smaller POUR_ROOM island
 	"deshell": Vector2(120, 720),
 	"abrasive_blast": Vector2(280, 720),
 	"ship": Vector2(440, 720),
