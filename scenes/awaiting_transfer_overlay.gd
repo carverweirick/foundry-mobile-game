@@ -97,7 +97,7 @@ func _refresh() -> void:
 		var contract := GameData.get_contract(contract_id)
 		var header := Label.new()
 		header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		header.add_theme_color_override("font_color", Color(0.55, 0.2, 0.08))
+		header.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
 		header.add_theme_font_size_override("font_size", 16)
 		header.text = "%s (%d)" % [contract.customer_name if contract != null else "No Contract", parts.size()]
 		transfer_list.add_child(header)
@@ -128,7 +128,7 @@ func _add_transfer_row(part: Part) -> void:
 		var defect_label := Label.new()
 		defect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		defect_label.custom_minimum_size = Vector2(70.0, 0.0)
-		defect_label.add_theme_color_override("font_color", Color(0.75, 0.25, 0.1))
+		defect_label.add_theme_color_override("font_color", Color(0.88, 0.35, 0.22))
 		defect_label.text = GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
 		row.add_child(defect_label)
 

@@ -2,21 +2,27 @@
 
 [ext_resource type="FontFile" path="res://assets/fonts/m5x7.ttf" id="1_font"]
 
-; Shared UI chrome (design doc Section 16): chunky pixel-bordered panels and
-; buttons, sharp corners, a warm tan/parchment base pulled from the Shelling
-; Room palette, with the Pour Room's glow and Furnace Room's ember used as the
-; hover/pressed accent states so buttons feel like they're "heating up" when
-; touched. Applied project-wide via project.godot's gui/theme/custom rather
-; than per-scene, so the pixel font and palette stay consistent everywhere,
-; not just in the three menu popups.
+; Shared UI chrome (design doc Section 16), reskinned this session (direct
+; request: "mimic the style of this ui" - a Game-Dev-Tycoon-style dark
+; industrial look) from the original light/parchment theme to a dark
+; charcoal base with gold/amber accents. Same shape language as before -
+; sharp corners, no anti-aliasing, chunky borders, the same m5x7 pixel font -
+; only the colors moved. Gold now plays the "hover/selected" accent role the
+; Pour Room's glow used to play, and ember orange still plays "pressed" (the
+; original "heating up" color metaphor from Section 16 is kept intentionally,
+; just recolored to read against a dark background instead of parchment).
+; Applied project-wide via project.godot's gui/theme/custom, same as before -
+; this one resource is the only Theme in the project (no scene sets its own
+; local override), so every default-styled Panel/Button/Label/TabContainer/
+; LineEdit picks this up automatically.
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
-bg_color = Color(0.94, 0.88, 0.74, 1)
+bg_color = Color(0.11, 0.11, 0.13, 1)
 border_width_left = 4
 border_width_top = 4
 border_width_right = 4
 border_width_bottom = 4
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -28,7 +34,7 @@ content_margin_bottom = 10.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tabcontainer_panel"]
-bg_color = Color(0.94, 0.88, 0.74, 1)
+bg_color = Color(0.11, 0.11, 0.13, 1)
 border_width_left = 0
 border_width_top = 0
 border_width_right = 0
@@ -44,12 +50,12 @@ content_margin_bottom = 10.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_normal"]
-bg_color = Color(0.8, 0.68, 0.48, 1)
+bg_color = Color(0.2, 0.2, 0.23, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -61,12 +67,12 @@ content_margin_bottom = 6.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_hover"]
-bg_color = Color(0.95, 0.78, 0.25, 1)
+bg_color = Color(0.85, 0.64, 0.16, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.55, 0.32, 0.06, 1)
+border_color = Color(0.5, 0.35, 0.05, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -78,12 +84,12 @@ content_margin_bottom = 6.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_pressed"]
-bg_color = Color(0.8, 0.35, 0.18, 1)
+bg_color = Color(0.78, 0.36, 0.12, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.32, 0.1, 0.05, 1)
+border_color = Color(0.32, 0.12, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -95,12 +101,12 @@ content_margin_bottom = 6.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_disabled"]
-bg_color = Color(0.68, 0.66, 0.62, 1)
+bg_color = Color(0.23, 0.23, 0.25, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.42, 0.4, 0.37, 1)
+border_color = Color(0.14, 0.14, 0.15, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -117,7 +123,7 @@ border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.25, 0.55, 0.9, 1)
+border_color = Color(0.3, 0.6, 0.95, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -125,12 +131,12 @@ corner_radius_bottom_left = 0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lineedit_normal"]
-bg_color = Color(0.98, 0.95, 0.87, 1)
+bg_color = Color(0.17, 0.17, 0.19, 1)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -142,12 +148,12 @@ content_margin_bottom = 4.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lineedit_focus"]
-bg_color = Color(0.98, 0.95, 0.87, 1)
+bg_color = Color(0.17, 0.17, 0.19, 1)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.25, 0.55, 0.9, 1)
+border_color = Color(0.3, 0.6, 0.95, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -159,12 +165,12 @@ content_margin_bottom = 4.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tab_selected"]
-bg_color = Color(0.95, 0.78, 0.25, 1)
+bg_color = Color(0.85, 0.64, 0.16, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -176,12 +182,12 @@ content_margin_bottom = 4.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tab_unselected"]
-bg_color = Color(0.78, 0.72, 0.58, 1)
+bg_color = Color(0.17, 0.17, 0.2, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -193,12 +199,12 @@ content_margin_bottom = 4.0
 anti_aliasing = false
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tab_hovered"]
-bg_color = Color(0.87, 0.8, 0.64, 1)
+bg_color = Color(0.26, 0.26, 0.29, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.16, 0.11, 0.08, 1)
+border_color = Color(0.03, 0.03, 0.04, 1)
 corner_radius_top_left = 0
 corner_radius_top_right = 0
 corner_radius_bottom_right = 0
@@ -218,25 +224,25 @@ Button/styles/hover = SubResource("StyleBoxFlat_btn_hover")
 Button/styles/pressed = SubResource("StyleBoxFlat_btn_pressed")
 Button/styles/disabled = SubResource("StyleBoxFlat_btn_disabled")
 Button/styles/focus = SubResource("StyleBoxFlat_btn_focus")
-Button/colors/font_color = Color(0.16, 0.11, 0.08, 1)
-Button/colors/font_hover_color = Color(0.16, 0.11, 0.08, 1)
-Button/colors/font_pressed_color = Color(0.96, 0.93, 0.88, 1)
-Button/colors/font_disabled_color = Color(0.45, 0.43, 0.4, 1)
-Button/colors/font_focus_color = Color(0.16, 0.11, 0.08, 1)
+Button/colors/font_color = Color(0.86, 0.83, 0.77, 1)
+Button/colors/font_hover_color = Color(0.12, 0.09, 0.05, 1)
+Button/colors/font_pressed_color = Color(0.97, 0.94, 0.9, 1)
+Button/colors/font_disabled_color = Color(0.5, 0.48, 0.45, 1)
+Button/colors/font_focus_color = Color(0.86, 0.83, 0.77, 1)
 Button/font_sizes/font_size = 16
-Label/colors/font_color = Color(0.16, 0.11, 0.08, 1)
+Label/colors/font_color = Color(0.86, 0.83, 0.77, 1)
 Label/font_sizes/font_size = 16
 LineEdit/styles/normal = SubResource("StyleBoxFlat_lineedit_normal")
 LineEdit/styles/focus = SubResource("StyleBoxFlat_lineedit_focus")
-LineEdit/colors/font_color = Color(0.16, 0.11, 0.08, 1)
+LineEdit/colors/font_color = Color(0.86, 0.83, 0.77, 1)
 LineEdit/font_sizes/font_size = 16
 TabContainer/styles/panel = SubResource("StyleBoxFlat_tabcontainer_panel")
 TabContainer/styles/tab_selected = SubResource("StyleBoxFlat_tab_selected")
 TabContainer/styles/tab_unselected = SubResource("StyleBoxFlat_tab_unselected")
 TabContainer/styles/tab_hovered = SubResource("StyleBoxFlat_tab_hovered")
-TabContainer/colors/font_selected_color = Color(0.16, 0.11, 0.08, 1)
-TabContainer/colors/font_unselected_color = Color(0.3, 0.24, 0.18, 1)
-TabContainer/colors/font_hovered_color = Color(0.16, 0.11, 0.08, 1)
+TabContainer/colors/font_selected_color = Color(0.12, 0.09, 0.05, 1)
+TabContainer/colors/font_unselected_color = Color(0.62, 0.6, 0.56, 1)
+TabContainer/colors/font_hovered_color = Color(0.86, 0.83, 0.77, 1)
 TabContainer/font_sizes/font_size = 16
 TabContainer/constants/side_margin = 10
 VBoxContainer/constants/separation = 8

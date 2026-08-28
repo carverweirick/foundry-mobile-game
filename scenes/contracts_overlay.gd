@@ -265,7 +265,7 @@ func _build_offer_detail_section() -> void:
 	_detail_header_label = Label.new()
 	_detail_header_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_detail_header_label.add_theme_font_size_override("font_size", 18)
-	_detail_header_label.add_theme_color_override("font_color", Color(0.55, 0.2, 0.08))
+	_detail_header_label.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
 	_detail_section.add_child(_detail_header_label)
 
 	_detail_badge_label = Label.new()
@@ -278,7 +278,7 @@ func _build_offer_detail_section() -> void:
 
 	_detail_line_items_header = Label.new()
 	_detail_line_items_header.text = "Line Items:"
-	_detail_line_items_header.add_theme_color_override("font_color", Color(0.55, 0.2, 0.08))
+	_detail_line_items_header.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
 	_detail_section.add_child(_detail_line_items_header)
 
 	_detail_line_items_list = VBoxContainer.new()
@@ -333,15 +333,15 @@ func _refresh_offer_detail() -> void:
 	# real behind them to explain.
 	if weakest_percent >= 80:
 		badge_text = "MASTERED - SAFE CONTRACT"
-		badge_color = Color(0.25, 0.6, 0.3)
+		badge_color = Color(0.35, 0.78, 0.42)
 		footer_text = "HIGH FAMILIARITY • LOW RISK"
 	elif weakest_percent >= 40:
 		badge_text = "MODERATE RISK"
-		badge_color = Color(0.75, 0.55, 0.15)
+		badge_color = Color(0.82, 0.62, 0.2)
 		footer_text = "MODERATE FAMILIARITY • MODERATE RISK"
 	else:
 		badge_text = "UNFAMILIAR - HIGH RISK"
-		badge_color = Color(0.75, 0.25, 0.15)
+		badge_color = Color(0.88, 0.35, 0.22)
 		footer_text = "LOW FAMILIARITY • HIGH RISK"
 	_detail_badge_label.text = badge_text
 	_detail_badge_label.add_theme_color_override("font_color", badge_color)
@@ -435,7 +435,7 @@ func _make_geometry_icon(geometry_name: String) -> Control:
 	style.border_width_right = 2
 	style.border_width_top = 2
 	style.border_width_bottom = 2
-	style.border_color = Color(0.15, 0.1, 0.05)
+	style.border_color = Color(0.03, 0.03, 0.04)
 	style.anti_aliasing = false
 	box.add_theme_stylebox_override("panel", style)
 

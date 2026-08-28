@@ -53,7 +53,7 @@ size_flags_horizontal = 3
 [node name="HireHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
 autowrap_mode = 3
 layout_mode = 2
-theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
 theme_override_font_sizes/font_size = 18
 text = "Hire"
 
@@ -64,7 +64,7 @@ layout_mode = 2
 [node name="RosterHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
 autowrap_mode = 3
 layout_mode = 2
-theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
 theme_override_font_sizes/font_size = 18
 text = "Roster"
 
@@ -89,7 +89,7 @@ size_flags_horizontal = 3
 [node name="SpecialistHeader" type="Label" parent="Panel/TabContainer/Specialists/SpecialistScroll/SpecialistContent"]
 autowrap_mode = 3
 layout_mode = 2
-theme_override_colors/font_color = Color(0.55, 0.2, 0.08, 1)
+theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
 theme_override_font_sizes/font_size = 18
 text = "Specialists"
 

@@ -629,7 +629,7 @@ func _refresh_inventory_list() -> void:
 			var defect_label := Label.new()
 			defect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			defect_label.custom_minimum_size = Vector2(70.0, 0.0)
-			defect_label.add_theme_color_override("font_color", Color(0.75, 0.25, 0.1))
+			defect_label.add_theme_color_override("font_color", Color(0.88, 0.35, 0.22))
 			defect_label.text = _defect_marker(part).trim_prefix(" - DEFECT: ")
 			row.add_child(defect_label)
 

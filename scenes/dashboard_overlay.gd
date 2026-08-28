@@ -102,7 +102,7 @@ func _refresh_stations_tab() -> void:
 			if header == null:
 				header = Label.new()
 				header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				header.add_theme_color_override("font_color", Color(0.55, 0.2, 0.08))
+				header.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
 				header.add_theme_font_size_override("font_size", 16)
 				header.text = room_name
 				stations_list.add_child(header)
