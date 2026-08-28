@@ -9,7 +9,6 @@ extends Node2D
 const StationScene: PackedScene = preload("res://scenes/station.tscn")
 
 const VIEWPORT_SIZE: Vector2 = Vector2(480.0, 270.0)
-const ROOM_BORDER_WIDTH: float = 4.0
 
 # Overall floor bounds, a little outside the outermost room edges so there's
 # breathing room at max zoom-out. Drives camera pan/zoom clamping.
@@ -366,45 +365,19 @@ func _build_floor() -> void:
 	# request, this session: "i want the factory to act as all one big shop
 	# floor with the designated zones but the tileset across the entire
 	# floor so theres no dead areas" - the previous per-room-only tiling left
-	# the hallway between rooms as flat dead space). Zones are still visually
-	# designated - see _zone_tint_for_point() - but by tinting this one
-	# continuous grid, not by separate per-room ColorRect fills.
+	# the hallway between rooms as flat dead space). Zones are still clearly
+	# outlined - direct follow-up feedback: "it doesnt have to all be 1 tile
+	# you can still outline the different zones" - but the outline is now
+	# real tile art (the same accent-lined edge/corner tiles used at the
+	# outer floor boundary) drawn along each room's own perimeter cells, tinted
+	# to that room's palette, rather than a flat ColorRect line on top of the
+	# tiles. See _build_full_floor_tiles()/_edge_tile_for() below.
 	_build_full_floor_tiles()
-	# A thin outline (not a filled rect - that would cover the tiles under
-	# it) plus a name label is all each zone still needs on top of the tiles
-	# to read as "a room."
-	_add_zone_outline(PRINT_ROOM, PRINT_BORDER)
 	_add_room_label(PRINT_ROOM, "Print Room")
-	_add_zone_outline(SHELLING_ROOM, SHELLING_BORDER)
 	_add_room_label(SHELLING_ROOM, "Shelling Room")
-	_add_zone_outline(POST_PROCESSING_ROOM, POST_BORDER)
 	_add_room_label(POST_PROCESSING_ROOM, "Post Processing Room")
-	_add_zone_outline(FURNACE_ROOM, FURNACE_BORDER)
 	_add_room_label(FURNACE_ROOM, "Furnace Room")
-	_add_zone_outline(POUR_ROOM, POUR_BORDER)
 	_add_room_label(POUR_ROOM, "VIM Bay")
-
-
-func _add_zone_outline(rect: Rect2, border_color: Color) -> void:
-	# Four thin strips tracing the rect's perimeter rather than one filled
-	# ColorRect - a filled rect would hide the tiles drawn under it, same
-	# mistake as this session's earlier draw-order bug.
-	var strips := [
-		Rect2(rect.position, Vector2(rect.size.x, ROOM_BORDER_WIDTH)),
-		Rect2(rect.position + Vector2(0.0, rect.size.y - ROOM_BORDER_WIDTH), Vector2(rect.size.x, ROOM_BORDER_WIDTH)),
-		Rect2(rect.position, Vector2(ROOM_BORDER_WIDTH, rect.size.y)),
-		Rect2(rect.position + Vector2(rect.size.x - ROOM_BORDER_WIDTH, 0.0), Vector2(ROOM_BORDER_WIDTH, rect.size.y)),
-	]
-	for strip: Rect2 in strips:
-		var outline := ColorRect.new()
-		outline.position = strip.position
-		outline.size = strip.size
-		outline.color = border_color
-		# Control defaults to MOUSE_FILTER_STOP - without IGNORE, this purely
-		# decorative outline would silently swallow clicks meant for the
-		# floor beneath it.
-		outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(outline)
 
 
 func _add_room_label(rect: Rect2, label_text: String) -> void:
@@ -419,22 +392,24 @@ func _add_room_label(rect: Rect2, label_text: String) -> void:
 ## that left the hallway between rooms untiled). Only one tile sheet exists
 ## on disk (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png,
 ## a 5x5 grid of 180x180 tiles - generic industrial floor art, not
-## Print-Room-specific despite the filename). Every cell uses the SAME plain
-## interior tile (TILE_PLAIN) - an earlier version of this pass used a
-## weighted-random mix of vents/hazard stripes/markers for variety, but that
-## read as cluttered/messy once actually seen on screen (direct feedback:
-## "get rid of your attempt of livening the shop floor up it looks messy"),
-## so it's gone - uniform and clean instead. Zones are still visually
-## distinct via a per-cell modulate tint (_zone_tint_for_point()) rather
-## than needing separate art per zone.
+## Print-Room-specific despite the filename). Every interior cell (room or
+## hallway alike) uses the same plain tile (TILE_PLAIN) - an earlier version
+## of this pass used a weighted-random mix of vents/hazard stripes/markers
+## for variety, but that read as cluttered/messy once actually seen on
+## screen (direct feedback: "get rid of your attempt of livening the shop
+## floor up it looks messy"), so it's gone. **Zone boundaries are still real
+## tile art, not just a tint** - every cell along a room's own perimeter
+## (not just the outer floor boundary) gets the accent-lined edge/corner
+## tile instead of the plain one, tinted to that room's own palette - "you
+## can still outline the different zones" doesn't require every zone to
+## look identical, just the interior filler tile.
 ##
 ## One Sprite2D per grid cell (a plain Sprite2D + AtlasTexture region, the
 ## same mechanism every station sprite already uses), using rotation to get
-## 4 sides/corners of the outer floor boundary out of just two source tiles
-## (a straight edge and a corner, blue accent-lined) rather than needing a
-## separate tile per direction - both tiles happen to point their accent
-## line in a direction that rotates cleanly in 90-degree steps to cover
-## every other side/corner.
+## 4 sides/corners out of just two source tiles (a straight edge and a
+## corner, blue accent-lined) rather than needing a separate tile per
+## direction - both tiles happen to point their accent line in a direction
+## that rotates cleanly in 90-degree steps to cover every other side/corner.
 const ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
 const ROOM_TILE_SOURCE_SIZE: int = 180
 
@@ -443,22 +418,61 @@ const TILE_EDGE := Vector2i(0, 1)     # straight edge, accent line on the left b
 const TILE_CORNER := Vector2i(1, 1)   # corner, accent line forming a top-left L by default
 const TILE_PLAIN := Vector2i(1, 2)    # plain, no accents - the sole interior tile now
 
+## Every designated zone that gets its own perimeter outline and tint - the
+## hallway isn't in this list, it's just whatever cell belongs to none of
+## these (see _zone_index_for_cell()).
+const ZONES: Array[Dictionary] = [
+	{"rect": PRINT_ROOM, "fill": PRINT_FILL},
+	{"rect": SHELLING_ROOM, "fill": SHELLING_FILL},
+	{"rect": POST_PROCESSING_ROOM, "fill": POST_FILL},
+	{"rect": FURNACE_ROOM, "fill": FURNACE_FILL},
+	{"rect": POUR_ROOM, "fill": POUR_FILL},
+]
 
-## Which zone a given world point falls in, for per-cell tinting - a room's
-## own FILL color if inside that room's rect, HALLWAY_FILL otherwise. Rooms
-## don't overlap (verified elsewhere), so at most one of these ever matches.
-func _zone_tint_for_point(point: Vector2) -> Color:
-	if PRINT_ROOM.has_point(point):
-		return PRINT_FILL
-	if SHELLING_ROOM.has_point(point):
-		return SHELLING_FILL
-	if POST_PROCESSING_ROOM.has_point(point):
-		return POST_FILL
-	if FURNACE_ROOM.has_point(point):
-		return FURNACE_FILL
-	if POUR_ROOM.has_point(point):
-		return POUR_FILL
-	return HALLWAY_FILL
+
+## Index into ZONES a given whole-floor cell (cx, cy) falls in, or -1 for
+## the hallway. Rooms don't overlap (verified elsewhere), so at most one
+## ever matches.
+func _zone_index_for_cell(cx: int, cy: int) -> int:
+	for i in ZONES.size():
+		var rect: Rect2 = ZONES[i]["rect"]
+		var start_cx := int(round((rect.position.x - FLOOR_MIN.x) / GRID_CELL_SIZE))
+		var start_cy := int(round((rect.position.y - FLOOR_MIN.y) / GRID_CELL_SIZE))
+		var cells_wide := int(round(rect.size.x / GRID_CELL_SIZE))
+		var cells_tall := int(round(rect.size.y / GRID_CELL_SIZE))
+		if cx >= start_cx and cx < start_cx + cells_wide and cy >= start_cy and cy < start_cy + cells_tall:
+			return i
+	return -1
+
+
+## Shared edge/corner/plain decision, used both for the outer floor boundary
+## (against the hallway's own local_cx/local_cy == cx/cy) and for each
+## room's own perimeter (against that room's local cell coordinates) - same
+## rotation logic either way, just applied at a different scale.
+func _edge_tile_for(local_cx: int, local_cy: int, cells_wide: int, cells_tall: int) -> Dictionary:
+	var is_top := local_cy == 0
+	var is_bottom := local_cy == cells_tall - 1
+	var is_left := local_cx == 0
+	var is_right := local_cx == cells_wide - 1
+
+	if (is_top or is_bottom) and (is_left or is_right):
+		var rot := 0.0 # top-left, the tile's own default orientation
+		if is_top and is_right:
+			rot = 90.0
+		elif is_bottom and is_right:
+			rot = 180.0
+		elif is_bottom and is_left:
+			rot = 270.0
+		return {"atlas": TILE_CORNER, "rotation": rot}
+	if is_top:
+		return {"atlas": TILE_EDGE, "rotation": 90.0}
+	if is_bottom:
+		return {"atlas": TILE_EDGE, "rotation": 270.0}
+	if is_left:
+		return {"atlas": TILE_EDGE, "rotation": 0.0} # left is the default orientation
+	if is_right:
+		return {"atlas": TILE_EDGE, "rotation": 180.0}
+	return {"atlas": TILE_PLAIN, "rotation": 0.0}
 
 
 func _build_full_floor_tiles() -> void:
@@ -468,37 +482,24 @@ func _build_full_floor_tiles() -> void:
 
 	for cy in cells_tall:
 		for cx in cells_wide:
-			var is_top := cy == 0
-			var is_bottom := cy == cells_tall - 1
-			var is_left := cx == 0
-			var is_right := cx == cells_wide - 1
+			var zone_index := _zone_index_for_cell(cx, cy)
+			var tint: Color
+			var edge: Dictionary
 
-			var atlas_coords: Vector2i
-			var rotation_degrees_value := 0.0
-			if (is_top or is_bottom) and (is_left or is_right):
-				atlas_coords = TILE_CORNER
-				if is_top and is_right:
-					rotation_degrees_value = 90.0
-				elif is_bottom and is_right:
-					rotation_degrees_value = 180.0
-				elif is_bottom and is_left:
-					rotation_degrees_value = 270.0
-				# else top-left, the tile's own default orientation, 0 degrees
-			elif is_top:
-				atlas_coords = TILE_EDGE
-				rotation_degrees_value = 90.0
-			elif is_bottom:
-				atlas_coords = TILE_EDGE
-				rotation_degrees_value = 270.0
-			elif is_left:
-				atlas_coords = TILE_EDGE
-				# left is the tile's own default orientation, 0 degrees
-			elif is_right:
-				atlas_coords = TILE_EDGE
-				rotation_degrees_value = 180.0
+			if zone_index >= 0:
+				var rect: Rect2 = ZONES[zone_index]["rect"]
+				tint = ZONES[zone_index]["fill"]
+				var start_cx := int(round((rect.position.x - FLOOR_MIN.x) / GRID_CELL_SIZE))
+				var start_cy := int(round((rect.position.y - FLOOR_MIN.y) / GRID_CELL_SIZE))
+				var room_cells_wide := int(round(rect.size.x / GRID_CELL_SIZE))
+				var room_cells_tall := int(round(rect.size.y / GRID_CELL_SIZE))
+				edge = _edge_tile_for(cx - start_cx, cy - start_cy, room_cells_wide, room_cells_tall)
 			else:
-				atlas_coords = TILE_PLAIN
+				tint = HALLWAY_FILL
+				edge = _edge_tile_for(cx, cy, cells_wide, cells_tall)
 
+			var atlas_coords: Vector2i = edge["atlas"]
+			var rotation_degrees_value: float = edge["rotation"]
 			var cell_position := FLOOR_MIN + Vector2(cx, cy) * GRID_CELL_SIZE + Vector2(half_cell, half_cell)
 
 			var atlas_tex := AtlasTexture.new()
@@ -515,7 +516,7 @@ func _build_full_floor_tiles() -> void:
 			tile.position = cell_position
 			tile.scale = Vector2.ONE * (GRID_CELL_SIZE / float(ROOM_TILE_SOURCE_SIZE))
 			tile.rotation_degrees = rotation_degrees_value
-			tile.modulate = _zone_tint_for_point(cell_position)
+			tile.modulate = tint
 			# Same zoomed-out-pixelation fix as every other real sprite this
 			# session - the tile texture also has mipmaps enabled (see its
 			# own .import file).
