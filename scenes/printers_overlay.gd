@@ -16,6 +16,7 @@ class_name PrintersOverlay
 const REFRESH_INTERVAL: float = 0.25
 
 @onready var printer_status_label: Label = %PrinterStatusLabel
+@onready var factory_exp_label: Label = %FactoryExpLabel
 @onready var buy_printer_button: Button = %BuyPrinterButton
 
 var _refresh_elapsed: float = 0.0
@@ -24,6 +25,10 @@ var _refresh_elapsed: float = 0.0
 func _on_ready() -> void:
 	buy_printer_button.pressed.connect(_on_buy_printer_pressed)
 	GameData.currency_changed.connect(func(_c): _refresh.call_deferred())
+	# Factory Level EXP (this session) doesn't move currency at all, so it
+	# needs its own signal for an immediate refresh rather than waiting on
+	# the next 0.25s poll.
+	GameData.factory_progress_changed.connect(func(): _refresh.call_deferred())
 
 
 func _process(delta: float) -> void:
@@ -50,6 +55,13 @@ func _refresh() -> void:
 	printer_status_label.text = "%d/%d printers owned (Factory Level %d)" % [
 		GameData.owned_printer_count, cap, GameData.factory_level
 	]
+	if GameData.is_factory_level_maxed():
+		factory_exp_label.text = "Factory Level %d (max) - %d EXP earned" % [GameData.factory_level, GameData.factory_exp]
+	else:
+		var next_level := GameData.factory_level + 1
+		factory_exp_label.text = "%d/%d EXP to Factory Level %d - completing contracts earns EXP" % [
+			GameData.factory_exp, GameData.factory_exp_for_level(next_level), next_level
+		]
 	if GameData.can_buy_printer():
 		var cost := GameData.printer_purchase_cost()
 		buy_printer_button.text = "Buy Printer (%dg)" % cost

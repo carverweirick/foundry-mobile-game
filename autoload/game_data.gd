@@ -9,6 +9,11 @@ signal contract_offers_changed()
 signal held_parts_changed()
 signal technician_updated(tech: Technician)
 signal reputation_changed(new_amount: int)
+## Fires whenever factory_exp changes, and again (in addition) whenever that
+## pushes factory_level up - PrintersOverlay listens for this the same way
+## it already listens for currency_changed, since factory progress doesn't
+## otherwise correlate with any existing signal.
+signal factory_progress_changed()
 
 ## Tier 1 numbers for every station, pulled from the design doc's
 ## "Starting Timer and Batch Numbers" and "Station Mechanics" sections.
@@ -730,6 +735,10 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 	if contract.is_complete:
 		currency += contract.payout
 		currency_changed.emit(currency)
+		# Factory Level EXP (this session): awarded for completing the
+		# contract at all, regardless of on-time status - a broader
+		# condition than Reputation's own on-time-only gate just below.
+		_award_factory_exp(contract.tier)
 		# Design doc Section 8: "finishing contracts on time with a low
 		# defect rate raises your reputation." A contract that already
 		# tripped the missed-deadline penalty in _process_contracts() below
@@ -1334,15 +1343,69 @@ func get_station(id: String) -> StationDef:
 var owned_printer_count: int = 1
 
 ## "the number of printers a player is allowed to own is capped by factory
-## level... a Level 1 factory allows 2 printers" (Section 21.2) - no further
-## levels given, so only Level 1 is populated. What actually raises
-## factory_level isn't specified anywhere in Section 21 either; there's no
-## purchase or milestone wired up for it yet, it just sits at 1.
+## level... a Level 1 factory allows 2 printers" (Section 21.2) - the only
+## concrete number given; levels 2-5 are a first-pass placeholder extending
+## the same +1-per-level shape, matching PRINTER_PURCHASE_COST's own
+## existing headroom for up to 5 owned printers (see its own comment).
 var factory_level: int = 1
-const FACTORY_LEVEL_PRINTER_CAP := {1: 2}
+const FACTORY_LEVEL_MAX: int = 5
+const FACTORY_LEVEL_PRINTER_CAP := {1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
 
 func printer_cap() -> int:
 	return FACTORY_LEVEL_PRINTER_CAP.get(factory_level, FACTORY_LEVEL_PRINTER_CAP[1])
+
+
+## Design request (this session): "i want you to gain exp from completing
+## contracts. no currency to upgrade factory level" - Factory Level now
+## rises purely from a lifetime EXP total awarded whenever a contract fully
+## ships, never spent and with no currency step at all (unlike literally
+## every other upgrade in the game - stations, printers, rack capacity,
+## specialists, technicians). This directly answers design doc Section 20
+## item 5 ("decide what actually raises factory level").
+var factory_exp: int = 0
+
+## First-pass placeholder EXP-per-tier table, scaled the same direction as
+## every other tier-keyed table in this file (CONTRACT_PAYOUT_PER_UNIT,
+## CONTRACT_QUANTITY_RANGE) - a bigger, harder-to-land contract is worth
+## more EXP. Section 8/21 give no numbers for this since the mechanic didn't
+## exist before this session.
+const FACTORY_EXP_PER_CONTRACT_TIER := {
+	Contract.ContractTier.LOCAL_SHOPS: 10,
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 25,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 60,
+	Contract.ContractTier.FLAGSHIP: 150,
+}
+
+## Cumulative lifetime EXP required to BE at a given level - level N is
+## reached the moment factory_exp crosses this table's entry for N. A
+## first-pass placeholder curve, same invented-but-reasonable spirit as
+## every other cost/threshold table in this file.
+const FACTORY_LEVEL_EXP_THRESHOLD := {
+	1: 0,
+	2: 150,
+	3: 400,
+	4: 900,
+	5: 1800,
+}
+
+func factory_exp_for_level(level: int) -> int:
+	return FACTORY_LEVEL_EXP_THRESHOLD.get(level, FACTORY_LEVEL_EXP_THRESHOLD[FACTORY_LEVEL_MAX])
+
+
+func is_factory_level_maxed() -> bool:
+	return factory_level >= FACTORY_LEVEL_MAX
+
+
+## Called once per fully-shipped contract (see credit_contract_shipment()) -
+## awards EXP regardless of whether the contract was on time, since
+## "completing" a contract is a broader condition than the on-time-only gate
+## Reputation itself uses. A single big contract can cross more than one
+## level's threshold at once, so this loops rather than checking once.
+func _award_factory_exp(tier: Contract.ContractTier) -> void:
+	factory_exp += FACTORY_EXP_PER_CONTRACT_TIER.get(tier, FACTORY_EXP_PER_CONTRACT_TIER[Contract.ContractTier.LOCAL_SHOPS])
+	while not is_factory_level_maxed() and factory_exp >= factory_exp_for_level(factory_level + 1):
+		factory_level += 1
+	factory_progress_changed.emit()
 
 
 func can_buy_printer() -> bool:
