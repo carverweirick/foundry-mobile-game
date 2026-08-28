@@ -393,7 +393,7 @@ func _add_room_label(rect: Rect2, label_text: String) -> void:
 ## on disk (assets/sprites/floor_tiles/print_room_floor_tileset_packed.png,
 ## a 5x5 grid of 180x180 tiles - generic industrial floor art, not
 ## Print-Room-specific despite the filename). Every interior cell (room or
-## hallway alike) uses the same plain tile (TILE_PLAIN) - an earlier version
+## hallway alike) uses the same plain tile (TILE_MAIN) - an earlier version
 ## of this pass used a weighted-random mix of vents/hazard stripes/markers
 ## for variety, but that read as cluttered/messy once actually seen on
 ## screen (direct feedback: "get rid of your attempt of livening the shop
@@ -413,10 +413,15 @@ func _add_room_label(rect: Rect2, label_text: String) -> void:
 const ROOM_TILE_TEXTURE: Texture2D = preload("res://assets/sprites/floor_tiles/print_room_floor_tileset_packed.png")
 const ROOM_TILE_SOURCE_SIZE: int = 180
 
-## Atlas coordinates (col, row), 0-indexed, matching the 5x5 sheet.
-const TILE_EDGE := Vector2i(0, 1)     # straight edge, accent line on the left by default
-const TILE_CORNER := Vector2i(1, 1)   # corner, accent line forming a top-left L by default
-const TILE_PLAIN := Vector2i(1, 2)    # plain, no accents - the sole interior tile now
+## Atlas coordinates (col, row), 0-indexed, matching the 5x5 sheet - picked
+## by number this session (direct request: "use tile 1 for the main floor
+## sections, use tile 8 for the corners, and use tile 11 for the outlines of
+## zones"; floor_tile_NN.png files on disk are numbered 1-25 row-major,
+## confirmed by an exact pixel-diff match against print_room_floor_tileset_
+## packed.png's own 5x5 grid - tile N is atlas coords ((N-1)%5, (N-1)/5)).
+const TILE_MAIN := Vector2i(0, 0)     # tile 1 - plain bolted panel, the main/interior floor tile
+const TILE_CORNER := Vector2i(2, 1)   # tile 8 - corner, accent line forming a bottom-left L by default
+const TILE_EDGE := Vector2i(0, 2)     # tile 11 - straight edge, accent line on the left by default
 
 ## Every designated zone that gets its own perimeter outline and tint - the
 ## hallway isn't in this list, it's just whatever cell belongs to none of
@@ -456,12 +461,15 @@ func _edge_tile_for(local_cx: int, local_cy: int, cells_wide: int, cells_tall: i
 	var is_right := local_cx == cells_wide - 1
 
 	if (is_top or is_bottom) and (is_left or is_right):
-		var rot := 0.0 # top-left, the tile's own default orientation
-		if is_top and is_right:
+		# TILE_CORNER's own accent defaults to a bottom-left L, not top-left -
+		# rotation mapping is BL=0/TL=90/TR=180/BR=270, verified against the
+		# tile's actual corner-point position under Godot's rotation matrix.
+		var rot := 0.0 # bottom-left, the tile's own default orientation
+		if is_top and is_left:
 			rot = 90.0
-		elif is_bottom and is_right:
+		elif is_top and is_right:
 			rot = 180.0
-		elif is_bottom and is_left:
+		elif is_bottom and is_right:
 			rot = 270.0
 		return {"atlas": TILE_CORNER, "rotation": rot}
 	if is_top:
@@ -472,7 +480,7 @@ func _edge_tile_for(local_cx: int, local_cy: int, cells_wide: int, cells_tall: i
 		return {"atlas": TILE_EDGE, "rotation": 0.0} # left is the default orientation
 	if is_right:
 		return {"atlas": TILE_EDGE, "rotation": 180.0}
-	return {"atlas": TILE_PLAIN, "rotation": 0.0}
+	return {"atlas": TILE_MAIN, "rotation": 0.0}
 
 
 func _build_full_floor_tiles() -> void:
