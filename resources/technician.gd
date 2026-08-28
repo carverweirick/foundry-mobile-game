@@ -55,6 +55,111 @@ const STATION_COUNT_PRODUCTIVITY := {
 }
 const MIN_PRODUCTIVITY: float = 0.55
 
+## Design request, this session: "printing, shelling, and pour will be
+## engineer skills" - Engineer is a new role on this same class (not a new
+## class, and not a repurposing of the separate one-time Specialist hire -
+## Engineers are hired/wagd/assigned/walk-around exactly like a Technician
+## does today; `role` only changes which departments they roll skill in and
+## which stations that skill actually protects). `SkillTier` and its hire
+## cost/wage/defect-multiplier tables above are shared by both roles - tier
+## is orthogonal to role, a "Senior" can be either a Technician or an
+## Engineer with the exact same hire cost/wage/base defect multiplier.
+enum StaffRole { TECHNICIAN, ENGINEER }
+@export var role: StaffRole = StaffRole.TECHNICIAN
+
+const ROLE_LABEL := {
+	StaffRole.TECHNICIAN: "Technician",
+	StaffRole.ENGINEER: "Engineer",
+}
+
+## Burnout and Mold Prep are deliberately absent - the user named exactly
+## these 5 departments; Burnout/Mold Prep keep today's existing tier-only
+## defect_multiplier + shop-wide GameData.geometry_familiarity behavior
+## completely unchanged (see GameData.department_for_station()).
+## "post_process" covers Deshell/Abrasive Blast/Ship and the new Grinding
+## station as one skill, matching the mockup's own 3-department grouping
+## once Pour moves under Engineer instead.
+const ENGINEER_DEPARTMENTS: Array[String] = ["printing", "shelling", "pour"]
+const TECHNICIAN_DEPARTMENTS: Array[String] = ["patching", "post_process"]
+
+func departments() -> Array[String]:
+	return ENGINEER_DEPARTMENTS if role == StaffRole.ENGINEER else TECHNICIAN_DEPARTMENTS
+
+
+## First-pass placeholder tier-scaled roll range for department_skill below -
+## a higher tier is *usually* better but not deterministically uniform
+## (design request: "i want the technicians to be random in the skills they
+## possess") - each department gets its own independent roll within this
+## range, so e.g. an Apprentice can still roll a genuinely strong department
+## alongside a weak one, same shape as the reference mockup's own uneven
+## per-department spreads even within one tier.
+const TIER_SKILL_ROLL_RANGE := {
+	SkillTier.APPRENTICE: Vector2i(0, 2),
+	SkillTier.TECHNICIAN: Vector2i(1, 3),
+	SkillTier.SENIOR_TECHNICIAN: Vector2i(2, 4),
+	SkillTier.MASTER: Vector2i(3, 5),
+}
+
+## department_name -> 0-5 stars, one independent roll per entry in
+## departments() at hire time (see roll_department_skills() below) - never
+## re-rolled afterward. This is the hire's "skill rating" shown before
+## they've worked on anything, and doubles as their STARTING per-geometry
+## familiarity baseline - see familiarity_for_geometry() below ("the skill
+## rating you see is the familiarity baseline they have of all geometries").
+var department_skill: Dictionary = {}
+
+
+## Called once, right after this Technician resource is created (a direct
+## hire or a rolled applicant-pool candidate - see GameData) - one
+## independent roll per department this role actually has.
+func roll_department_skills() -> void:
+	var skill_range: Vector2i = TIER_SKILL_ROLL_RANGE[skill_tier]
+	for department in departments():
+		department_skill[department] = randi_range(skill_range.x, skill_range.y)
+
+
+## The shop-wide familiarity summary (GameData.average_familiarity_stars()/
+## weakest_familiarity_stars()) needs one number per worker per geometry
+## without knowing which specific station/department is relevant - a
+## contract's geometry can touch several of this worker's stations. Falls
+## back to the average of every department this worker actually has a
+## skill in, rather than any one specific department.
+func average_department_skill() -> float:
+	if department_skill.is_empty():
+		return 0.0
+	var total := 0.0
+	for value in department_skill.values():
+		total += value
+	return total / department_skill.size()
+
+
+func shopwide_familiarity_for_geometry(geometry_name: String) -> float:
+	if geometry_familiarity.has(geometry_name):
+		return float(geometry_familiarity[geometry_name])
+	return average_department_skill()
+
+## geometry_name -> 0-5 stars, starts empty. Personal, hands-on familiarity -
+## "each time they process a part of a certain geometry they gain some
+## amount of familiarity with that geometry" - distinct from the flat
+## department_skill baseline above, which never changes after hire.
+var geometry_familiarity: Dictionary = {}
+
+## Falls back to this worker's department_skill baseline until real
+## hands-on experience with this specific geometry has actually been
+## recorded (gain_experience() below) - a brand new hire is only ever as
+## good as their rolled department skill at every geometry they haven't
+## touched yet, exactly matching "the skill rating you see IS the
+## familiarity baseline."
+func familiarity_for_geometry(geometry_name: String, department_name: String) -> int:
+	if geometry_familiarity.has(geometry_name):
+		return geometry_familiarity[geometry_name]
+	return department_skill.get(department_name, 0)
+
+
+func gain_experience(geometry_name: String, department_name: String, amount: int) -> void:
+	var current := familiarity_for_geometry(geometry_name, department_name)
+	geometry_familiarity[geometry_name] = clampi(current + amount, 0, 5)
+
 ## Design doc Section 7, "Routing strategy": which of this technician's OTHER
 ## assigned stations they head to next once there's nothing left to do at
 ## the current one - see pick_next_station() below. Switchable per-technician
@@ -164,6 +269,9 @@ var defect_multiplier: float:
 
 var tier_label: String:
 	get: return TIER_LABEL[skill_tier]
+
+var role_label: String:
+	get: return ROLE_LABEL[role]
 
 var is_assigned: bool:
 	get: return not assigned_station_ids.is_empty()

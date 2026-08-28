@@ -157,6 +157,7 @@ const STATION_POSITIONS := {
 	"deshell": Vector2(120, 720),
 	"abrasive_blast": Vector2(280, 720),
 	"ship": Vector2(440, 720),
+	"grinding": Vector2(600, 720), # new this session, room to spare on the same row
 }
 
 ## Printers sit in their own row within the Print Room (top of the area

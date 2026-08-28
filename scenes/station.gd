@@ -1138,10 +1138,29 @@ func _resolve_patching(part: Part) -> void:
 ## Reputation consequence lands for real at Ship if it's still unresolved by
 ## then (see _ship_part() / GameData.report_lost_defective_shipment()).
 func _maybe_flag_defect(part: Part) -> void:
+	_gain_worker_experience(part)
 	var category := _roll_defect_outcome(part)
 	if category == GameData.DefectCategory.NONE:
 		return
 	part.flag_defect(category, station_id, GameData.grace_period_seconds_for(station_id))
+
+
+## Design request, this session: "each time they process a part of a certain
+## geometry they gain some amount of familiarity with that geometry" - fires
+## once per completed run at a department-mapped station (see
+## GameData.department_for_station()), regardless of whether a defect gets
+## flagged - Patching included, even though Patching itself never rolls a
+## defect (no entry in STATION_BASE_DEFECT_RISK), since it's still one of
+## the two Technician departments. A no-op if nobody's physically running it
+## right now (no specific worker to credit) or if this station has no
+## department mapping at all (Burnout/Mold Prep stay on the old shop-wide
+## GameData.raise_familiarity() system, untouched - see _resolve_push_through()
+## below for their own path).
+func _gain_worker_experience(part: Part) -> void:
+	var department := GameData.department_for_station(station_id)
+	if department == "" or active_worker == null:
+		return
+	active_worker.gain_experience(GameData.geometry_name_for_part(part), department, GameData.EXPERIENCE_GAIN_PER_RUN)
 
 
 ## Shared by _maybe_flag_defect() (normal run) and _resolve_push_through()
@@ -1157,8 +1176,16 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 	var base_risk := GameData.base_defect_risk_for(station_id)
 	if base_risk <= 0.0:
 		return GameData.DefectCategory.NONE
-	var familiarity_mult := GameData.familiarity_multiplier_for(
-		GameData.geometry_name_for_part(part), station_id
+	var geometry_name := GameData.geometry_name_for_part(part)
+	var department := GameData.department_for_station(station_id)
+	# Department-mapped stations (Printing/Shelling/Pour/Grinding - Patching
+	# never reaches here, its base_risk is 0.0 above) read the specific
+	# active worker's own familiarity now, not a shop-wide per-station
+	# number - Burnout/Mold Prep have no mapping and stay on the old path.
+	var familiarity_mult := (
+		GameData.familiarity_multiplier_for_worker(geometry_name, department, active_worker)
+		if department != ""
+		else GameData.familiarity_multiplier_for(geometry_name, station_id)
 	)
 	var tech_mult := (
 		active_worker.defect_multiplier if active_worker != null else 1.0
@@ -1194,6 +1221,11 @@ func _resolve_push_through(part: Part) -> void:
 	GameData.raise_familiarity(
 		GameData.geometry_name_for_part(part), station_id, GameData.FAMILIARITY_GAIN_PUSH_THROUGH
 	)
+	# _maybe_flag_defect() isn't called on this path (Push Through bypasses
+	# it entirely - see _on_station_timer_timeout()), so the per-worker
+	# experience hook needs its own call here too, same reasoning as there:
+	# "each time they process a part" still applies to a push-through part.
+	_gain_worker_experience(part)
 	var outcome := _roll_defect_outcome(part)
 
 	if is_parallel_shelling():

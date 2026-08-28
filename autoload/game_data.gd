@@ -99,11 +99,15 @@ const DEFECT_CATEGORY_LABEL := {
 ## longer has entries for them. Every other station (Clean, UV Cure, Scan,
 ## Patching, Pour Cup Attach, Mold Prep, Ship) never rolls a defect at all,
 ## discards it on arrival.
+## "grinding" added this session (design request: "i want to add grinding to
+## the post process room. grinding can cause a defect") - a first-pass
+## placeholder risk between Printing's and Burnout's.
 const STATION_BASE_DEFECT_RISK := {
 	"printing": 0.05,
 	"shelling": 0.20,
 	"burnout": 0.15,
 	"pour": 0.20,
+	"grinding": 0.12,
 }
 
 ## Design doc Section 21.6: "Push Through is generalized beyond Pour... it now
@@ -120,11 +124,18 @@ const PUSH_THROUGH_ELIGIBLE_STATIONS: Array[String] = ["shelling", "burnout", "m
 ## relative weighting between them to justify anything else. Deshell and
 ## Abrasive Blast are gone from here per Section 21.6 - see
 ## STATION_BASE_DEFECT_RISK's comment above.
+## "grinding" (this session) is the first and only station to roll
+## INCLUSION - a category that's existed in the enum since before this
+## session but no station ever actually rolled it (Deshell/Abrasive Blast,
+## its only past sources, lost their defect risk entirely per the comment
+## above). Note there's no Specialist covering Inclusion (see
+## SPECIALIST_CATEGORIES below) - a known, pre-existing gap, not new.
 const STATION_DEFECT_CATEGORIES := {
 	"printing": [DefectCategory.WARPING],
 	"shelling": [DefectCategory.SHELL_CRACK],
 	"burnout": [DefectCategory.WARPING, DefectCategory.SHELL_CRACK],
 	"pour": [DefectCategory.POROSITY, DefectCategory.MISRUN],
+	"grinding": [DefectCategory.INCLUSION],
 }
 
 ## Real minutes from Section 9's grace period table, converted to
@@ -139,6 +150,7 @@ const STATION_GRACE_PERIOD_MINUTES := {
 	"burnout": 40.0,
 	"shelling": 45.0,
 	"pour": 20.0,
+	"grinding": 25.0,
 }
 
 ## Familiarity star (0-5) -> risk multiplier, Section 9's table. 5 stars
@@ -328,9 +340,12 @@ var contract_offers: Array[Contract] = []
 ## station_by_id for routing purposes - see GameData.printer_station_ids for
 ## the real per-instance ids, and Station._try_send_to_next_station()/
 ## next_station for how a printer instance's own outgoing link is wired.
+## "grinding" inserted this session between Deshell and Abrasive Blast -
+## matches the real investment-casting order (shell removal -> grind off
+## gates/sprues -> final surface blast -> ship).
 const PIPELINE_ORDER: Array[String] = [
 	"printing", "clean", "uv_cure", "scan", "patching", "pour_cup_attach",
-	"shelling", "burnout", "mold_prep", "pour", "deshell", "abrasive_blast", "ship",
+	"shelling", "burnout", "mold_prep", "pour", "deshell", "grinding", "abrasive_blast", "ship",
 ]
 
 ## Every Part currently alive anywhere in the shop (in a station or held),
@@ -1065,10 +1080,14 @@ func _process_contracts(delta: float) -> void:
 ## Deducts hire_cost, adds the new Technician to the roster, and returns it -
 ## or null if currency is short. This only hires; assigning them to a
 ## station (or several) is a separate step, see assign_technician() below.
-func hire_technician(tier: Technician.SkillTier, technician_name: String = "") -> Technician:
+func hire_technician(
+	tier: Technician.SkillTier, technician_name: String = "", role: Technician.StaffRole = Technician.StaffRole.TECHNICIAN
+) -> Technician:
 	var tech := Technician.new()
 	tech.skill_tier = tier
+	tech.role = role
 	tech.technician_name = technician_name if technician_name != "" else Technician.TIER_LABEL[tier]
+	tech.roll_department_skills()
 
 	if not try_spend_with_gems(tech.hire_cost):
 		return null
@@ -1299,6 +1318,12 @@ func _init() -> void:
 
 		StationDef.new("deshell", "Deshell", Station.StationType.QUEUE,
 			5, "Post Processing", 5.0, 1),
+		# New this session (design request: "i want to add grinding to the
+		# post process room. grinding can cause a defect") - grinds off
+		# gates/sprues after shell removal, before the final surface blast.
+		# Single part at Tier 1 like Deshell, not batched.
+		StationDef.new("grinding", "Grinding", Station.StationType.QUEUE,
+			5, "Post Processing", 8.0, 1),
 		# Design doc Section 4 (revised this session): single part at Tier 1,
 		# batching unlocks Tier 2+ (see GameData.ABRASIVE_BLAST_TIER_BATCH_CAP).
 		StationDef.new("abrasive_blast", "Abrasive Blast", Station.StationType.BATCHED,
@@ -1545,13 +1570,64 @@ func familiarity_stars_for(geometry_name: String, station_id: String) -> int:
 
 
 ## 1.0 (no reduction at all) for any station_id not in
-## FAMILIARITY_TRACKED_STATIONS, so Station._roll_defect_outcome() can call
-## this unconditionally for every defect-rolling station (Printing included)
-## without special-casing which ones actually track familiarity.
+## FAMILIARITY_TRACKED_STATIONS. This is now only the OLD shop-wide path,
+## used by Station._roll_defect_outcome() specifically for the two stations
+## that stayed on it (Burnout, Mold Prep - see department_for_station()
+## below) - every other defect-rolling station reads familiarity_multiplier_for_worker()
+## instead now.
 func familiarity_multiplier_for(geometry_name: String, station_id: String) -> float:
 	if not FAMILIARITY_TRACKED_STATIONS.has(station_id):
 		return 1.0
 	return FAMILIARITY_MULTIPLIER[familiarity_stars_for(geometry_name, station_id)]
+
+
+## Which per-worker "department" a station belongs to for the new per-staff
+## familiarity system (design request, this session) - "" means no mapping,
+## i.e. this station stays on the OLD shop-wide familiarity_multiplier_for()
+## path above untouched. Burnout and Mold Prep are deliberately absent - the
+## user named exactly 5 departments; those two keep today's behavior exactly
+## as it was. Post Processing's four stations (only Grinding actually rolls
+## a defect; Deshell/Abrasive Blast/Ship are purely mechanical) all share one
+## "post_process" department, matching the mockup's own 3-department
+## grouping once Pour moved under Engineer.
+const STATION_DEPARTMENT := {
+	"printing": "printing",
+	"shelling": "shelling",
+	"pour": "pour",
+	"patching": "patching",
+	"deshell": "post_process",
+	"abrasive_blast": "post_process",
+	"ship": "post_process",
+	"grinding": "post_process",
+}
+
+func department_for_station(station_id: String) -> String:
+	return STATION_DEPARTMENT.get(station_id, "")
+
+
+## The new per-staff-member counterpart to familiarity_multiplier_for()
+## above - used for every station with a real department_for_station()
+## mapping. Staffed: the specific worker's own familiarity_for_geometry()
+## (the whole point - "each time they process a part... they gain some
+## amount of familiarity," and it's THEIR run, not a shop average).
+## Unstaffed: nobody specific is running it, so this falls back to the same
+## shop-wide average_familiarity_stars() shown on the contract, rather than
+## reading nobody's personal value.
+func familiarity_multiplier_for_worker(geometry_name: String, department_name: String, worker: Technician) -> float:
+	var stars: int
+	if worker != null:
+		stars = worker.familiarity_for_geometry(geometry_name, department_name)
+	else:
+		stars = average_familiarity_stars(geometry_name)
+	return FAMILIARITY_MULTIPLIER[stars]
+
+
+## First-pass placeholder per-run experience gain (design request: "each
+## time they process a part of a certain geometry they gain some amount of
+## familiarity with that geometry") - deliberately small, so meaningfully
+## raising a specific geometry's familiarity above a worker's flat
+## department_skill baseline takes genuine repeat work, not one lucky part.
+const EXPERIENCE_GAIN_PER_RUN: int = 1
 
 
 ## Bumps geometry_name's familiarity at station_id up by stars, capped at 5
@@ -1570,25 +1646,38 @@ func raise_familiarity(geometry_name: String, station_id: String, stars: int) ->
 	per_station[station_id] = clampi(per_station.get(station_id, 0) + stars, 0, 5)
 
 
-## Quick-glance summary (design doc Section 21.7): a single average across
-## every tracked station, as a star rating - "same visual language as the old
-## single score." Rounded to the nearest whole star for display; callers that
-## want the raw fractional average (e.g. for a half-star icon later) can
-## still read FAMILIARITY_TRACKED_STATIONS + familiarity_stars_for() directly.
+## Reworked this session (design request: "the familiarity rating you see on
+## the contract is the average familiarity of your technicians and engineers
+## as well as R&D eventually when we build that out") - was previously a
+## single average across the 4 FAMILIARITY_TRACKED_STATIONS (shop-wide, no
+## staff involved at all); now averages every hired Technician/Engineer's OWN
+## familiarity_stars_for_staff() below instead. Same signature/rounding as
+## before, so every existing call site (Contracts Offers screen, Station
+## Detail Menu tooltips) keeps working unchanged - only what the number
+## MEANS changed. Falls back to 0 if nobody's hired yet (can't average an
+## empty roster) - R&D's own contribution isn't built yet, noted for when it
+## is (Section 12).
 func average_familiarity_stars(geometry_name: String) -> int:
-	var total := 0
-	for station_id in FAMILIARITY_TRACKED_STATIONS:
-		total += familiarity_stars_for(geometry_name, station_id)
-	return roundi(float(total) / FAMILIARITY_TRACKED_STATIONS.size())
+	if technicians.is_empty():
+		return 0
+	var total := 0.0
+	for tech in technicians:
+		total += tech.shopwide_familiarity_for_geometry(geometry_name)
+	return roundi(total / technicians.size())
 
 
-## The single lowest per-station star rating for this geometry - design doc
-## Section 21.7: "an average could otherwise hide a real problem area."
+## The single lowest-familiarity staff member for this geometry, not the
+## lowest-familiarity STATION anymore (same rework as average_familiarity_stars()
+## above, same reasoning: Section 21.7's "an average could otherwise hide a
+## real problem area" now applies to your weakest-familiarity hire, not your
+## weakest-covered station).
 func weakest_familiarity_stars(geometry_name: String) -> int:
-	var weakest := 5
-	for station_id in FAMILIARITY_TRACKED_STATIONS:
-		weakest = min(weakest, familiarity_stars_for(geometry_name, station_id))
-	return weakest
+	if technicians.is_empty():
+		return 0
+	var weakest := 5.0
+	for tech in technicians:
+		weakest = min(weakest, tech.shopwide_familiarity_for_geometry(geometry_name))
+	return roundi(weakest)
 
 
 ## The weakest-link station's familiarity expressed as a percentage (0/5
