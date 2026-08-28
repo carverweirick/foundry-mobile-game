@@ -11,9 +11,14 @@ class_name ContractsOverlay
 ##
 ## - Offers: every contract GameData has rolled but the player hasn't
 ##   accepted yet. A compact row per offer (customer/payout/deadline/average
-##   familiarity), and tapping "View" pins a full detail card below - line
-##   items with per-geometry familiarity, a difficulty/alloy/volume tag row,
-##   a familiarity-based risk badge, and an Accept button.
+##   familiarity); tapping the row itself expands a full detail card directly
+##   beneath it, accordion-style (design request, this session: "when i
+##   click on a contract it expands like a dropdown instead of having a view
+##   button and showing it beneath the contract menu" - there's no separate
+##   View button anymore, and the shared detail widget now follows whichever
+##   row is selected instead of always sitting at the bottom of the list) -
+##   line items with per-geometry familiarity, a difficulty/alloy/volume tag
+##   row, a familiarity-based risk badge, and an Accept button.
 ## - Active: the original read-only list of already-accepted contracts in
 ##   progress (customer/relationship/progress/time), unchanged from before
 ##   this session except for the rename.
@@ -86,7 +91,6 @@ class OfferRow:
 	var payout_label: Label
 	var deadline_label: Label
 	var familiarity_label: Label
-	var select_button: Button
 	var offer: Contract = null
 
 var _offer_rows: Dictionary = {} # contract_id -> OfferRow
@@ -94,9 +98,16 @@ var _offers_empty_label: Label = null
 var _selected_offer_id: int = -1
 
 ## The one detail section (not per-offer - there's only ever one selected
-## offer at a time), built once in _on_ready() and always kept as the last
-## child of offers_root regardless of how many offer rows come and go above
-## it (see _refresh_offer_rows()'s move_child call).
+## offer at a time), built once in _on_ready(). Design request, this
+## session: "when i click on a contract it expands like a dropdown instead
+## of having a view button and showing it beneath the contract menu" - this
+## used to always sit as the last child of offers_root, one fixed detail
+## area below the whole list, with a separate "View" button per row.
+## Neither is true anymore: there's no View button (the row itself is the
+## click target, see _create_offer_row()), and _refresh_offer_rows() now
+## moves this same shared widget to sit immediately after whichever row is
+## currently selected, so it visually "drops down" right under that
+## specific contract instead of always appearing at the bottom of the list.
 var _detail_section: VBoxContainer = null
 var _detail_empty_label: Label = null
 var _detail_header_label: Label = null
@@ -145,39 +156,74 @@ func _refresh_offer_rows() -> void:
 			offers_root.add_child(row.container)
 		_update_offer_row(row, o)
 
-	# The detail section always renders last, no matter how many rows were
-	# just added/removed above it.
-	offers_root.move_child(_detail_section, offers_root.get_child_count() - 1)
+	_reposition_detail_section()
+
+
+## The detail section "drops down" directly beneath whichever row is
+## currently selected, rather than always sitting at the end of the list -
+## with nothing selected it just parks at the end (harmless, since it's
+## hidden in that state anyway - see _refresh_offer_detail()).
+##
+## Node.move_child()'s target index is interpreted in the array AFTER the
+## moved child has already been removed, not the array as it currently
+## stands - confirmed empirically with a headless test (moving detail from
+## before a target row to "target.get_index() + 1" landed it one slot too
+## far, since removing detail from earlier in the list had already shifted
+## the target row's own index down by one). Computing the target row's
+## index while explicitly skipping _detail_section itself sidesteps that
+## entirely, regardless of which side of the target row detail currently
+## sits on.
+func _reposition_detail_section() -> void:
+	var selected_row: OfferRow = _offer_rows.get(_selected_offer_id)
+	if selected_row == null:
+		offers_root.move_child(_detail_section, offers_root.get_child_count() - 1)
+		return
+	var index_excluding_detail := 0
+	for child in offers_root.get_children():
+		if child == _detail_section:
+			continue
+		if child == selected_row.container:
+			break
+		index_excluding_detail += 1
+	offers_root.move_child(_detail_section, index_excluding_detail + 1)
 
 
 func _create_offer_row() -> OfferRow:
 	var row := OfferRow.new()
 	row.container = HBoxContainer.new()
+	# The row itself is the click target now (no separate "View" button) -
+	# Control's default MOUSE_FILTER_STOP is exactly what's needed here so
+	# it actually receives gui_input rather than passing it through.
+	row.container.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.container.gui_input.connect(_on_offer_row_gui_input.bind(row))
 
 	row.customer_label = Label.new()
 	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.customer_label.custom_minimum_size = Vector2(140.0, 24.0)
+	# IGNORE so a click landing on the label text itself still reaches the
+	# row container above instead of being consumed here - same fix this
+	# codebase already uses for decorative Controls sitting over a click
+	# target (e.g. the room-zone ColorRects on the shop floor).
+	row.customer_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.container.add_child(row.customer_label)
 
 	row.payout_label = Label.new()
 	row.payout_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.payout_label.custom_minimum_size = Vector2(60.0, 24.0)
+	row.payout_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.container.add_child(row.payout_label)
 
 	row.deadline_label = Label.new()
 	row.deadline_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.deadline_label.custom_minimum_size = Vector2(90.0, 24.0)
+	row.deadline_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.container.add_child(row.deadline_label)
 
 	row.familiarity_label = Label.new()
 	row.familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.familiarity_label.custom_minimum_size = Vector2(45.0, 24.0)
+	row.familiarity_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.container.add_child(row.familiarity_label)
-
-	row.select_button = Button.new()
-	row.select_button.text = "View"
-	row.select_button.pressed.connect(_on_offer_row_selected.bind(row))
-	row.container.add_child(row.select_button)
 
 	return row
 
@@ -190,9 +236,20 @@ func _update_offer_row(row: OfferRow, offer: Contract) -> void:
 	row.familiarity_label.text = "%d/5" % _offer_average_familiarity_stars(offer)
 
 
+func _on_offer_row_gui_input(event: InputEvent, row: OfferRow) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_on_offer_row_selected(row)
+
+
+## Tapping the currently-expanded row again collapses it - standard
+## accordion behavior - tapping a different row switches which one is open.
 func _on_offer_row_selected(row: OfferRow) -> void:
-	_selected_offer_id = row.offer.contract_id
-	_refresh_offer_detail()
+	if _selected_offer_id == row.offer.contract_id:
+		_selected_offer_id = -1
+	else:
+		_selected_offer_id = row.offer.contract_id
+	_refresh_offer_detail.call_deferred()
+	_refresh_offer_rows.call_deferred()
 
 
 func _build_offer_detail_section() -> void:
@@ -202,7 +259,7 @@ func _build_offer_detail_section() -> void:
 
 	_detail_empty_label = Label.new()
 	_detail_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_empty_label.text = "Tap \"View\" on an offer above to see its full detail before accepting."
+	_detail_empty_label.text = "Tap a contract above to see its full detail before accepting."
 	_detail_section.add_child(_detail_empty_label)
 
 	_detail_header_label = Label.new()
