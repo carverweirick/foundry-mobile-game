@@ -211,7 +211,7 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 		var target := station.current_tier + 1
 		var cost := GameData.upgrade_cost_for_tier(target)
 		row.upgrade_button.text = "Upgrade to Tier %d (%dg)" % [target, cost]
-		row.upgrade_button.disabled = not GameData.can_afford(cost)
+		row.upgrade_button.disabled = not GameData.can_afford_with_gems(cost)
 
 
 ## Fraction complete (0.0-1.0) for whatever a station is currently doing.

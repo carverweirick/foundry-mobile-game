@@ -23,18 +23,25 @@ offset_right = 160.0
 offset_bottom = 26.0
 text = "Currency: 500g"
 
-[node name="ReputationLabel" type="Label" parent="HUD"]
+[node name="GemsLabel" type="Label" parent="HUD"]
 offset_left = 8.0
 offset_top = 26.0
 offset_right = 160.0
 offset_bottom = 46.0
-text = "Reputation: 0"
+text = "Gems: 0"
 
-[node name="FactoryLevelLabel" type="Label" parent="HUD"]
+[node name="ReputationLabel" type="Label" parent="HUD"]
 offset_left = 8.0
 offset_top = 46.0
 offset_right = 160.0
 offset_bottom = 66.0
+text = "Reputation: 0"
+
+[node name="FactoryLevelLabel" type="Label" parent="HUD"]
+offset_left = 8.0
+offset_top = 66.0
+offset_right = 160.0
+offset_bottom = 86.0
 text = "Factory Level: 1"
 
 [node name="FloorLabels" type="CanvasLayer" parent="."]

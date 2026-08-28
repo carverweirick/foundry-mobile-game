@@ -1,6 +1,7 @@
 extends Node
 
 signal currency_changed(new_amount: int)
+signal gems_changed(new_amount: int)
 signal contract_updated(contract: Contract)
 ## A new rolled offer joined contract_offers, or one was removed by
 ## acceptance - the Contract Offers screen listens for this rather than
@@ -274,6 +275,25 @@ class StationDef:
 ## Placeholder economy: no alloy stock or contract payouts yet, just a
 ## simple number so hiring has something to spend. Real economy later.
 var currency: int = 500
+
+## Second, "harder to get" currency (design request, this session: "there
+## will be an additional type of currency like the diamond that are harder
+## to get and will be used to finish upgrades, fill in for normal currency
+## if you dont have enough for a purchase") - a real first-pass build, not
+## just a documented idea. Earned far more sparingly than currency: the only
+## source right now is a small reward on every Factory Level gain (see
+## _award_factory_exp()) - a genuine milestone, not routine contract income.
+var gems: int = 0
+
+## First-pass placeholder exchange rate for "filling in" a currency
+## shortfall - 1 gem covers this much missing gold. No basis in the doc
+## since the mechanic didn't exist before this session; picked to sit
+## comfortably below the cheapest real purchases (a Tier 2 station upgrade)
+## so a small shortfall doesn't demand a huge gem spend.
+const GEM_TO_CURRENCY_VALUE: int = 50
+
+## First-pass placeholder reward per Factory Level gained.
+const FACTORY_LEVEL_UP_GEM_REWARD: int = 5
 
 var stations: Array[StationDef] = []
 var contracts: Array[Contract] = []
@@ -594,6 +614,18 @@ func can_afford(amount: int) -> bool:
 	return currency >= amount
 
 
+## Whether `amount` is affordable using gold alone OR gold topped up with
+## gems at GEM_TO_CURRENCY_VALUE each - the check every purchase UI should
+## use now, so a button doesn't stay disabled just because gold alone falls
+## short while gems could cover the rest.
+func can_afford_with_gems(amount: int) -> bool:
+	if can_afford(amount):
+		return true
+	var shortfall := amount - currency
+	var gems_needed := ceili(float(shortfall) / float(GEM_TO_CURRENCY_VALUE))
+	return gems >= gems_needed
+
+
 func upgrade_cost_for_tier(target_tier: int) -> int:
 	if target_tier < 0 or target_tier >= STATION_TIER_UPGRADE_COST.size():
 		return 0
@@ -607,12 +639,33 @@ func rack_upgrade_cost_for(target_capacity: int) -> int:
 
 
 ## Shared spend path: deducts and emits only if affordable. Returns whether
-## the spend happened.
+## the spend happened. Gold-only, no gem fallback - see try_spend_with_gems()
+## below for the general-purpose path every real purchase now uses.
 func try_spend(amount: int) -> bool:
 	if not can_afford(amount):
 		return false
 	currency -= amount
 	currency_changed.emit(currency)
+	return true
+
+
+## The real purchase path every spend call site now goes through (station
+## tier/rack upgrades, technician/specialist hires, printer purchases,
+## Mortar Patch/Redesign) - gold alone if it covers the cost, otherwise gold
+## plus just enough gems to cover the shortfall (rounded up), never spending
+## more gems than the shortfall actually requires. Fails cleanly (spends
+## nothing) if even gold+gems together can't cover it.
+func try_spend_with_gems(amount: int) -> bool:
+	if try_spend(amount):
+		return true
+	if not can_afford_with_gems(amount):
+		return false
+	var shortfall := amount - currency
+	var gems_needed := ceili(float(shortfall) / float(GEM_TO_CURRENCY_VALUE))
+	currency = 0
+	gems -= gems_needed
+	currency_changed.emit(currency)
+	gems_changed.emit(gems)
 	return true
 
 
@@ -1017,7 +1070,7 @@ func hire_technician(tier: Technician.SkillTier, technician_name: String = "") -
 	tech.skill_tier = tier
 	tech.technician_name = technician_name if technician_name != "" else Technician.TIER_LABEL[tier]
 
-	if not try_spend(tech.hire_cost):
+	if not try_spend_with_gems(tech.hire_cost):
 		return null
 
 	technicians.append(tech)
@@ -1409,8 +1462,15 @@ func is_factory_level_maxed() -> bool:
 ## level's threshold at once, so this loops rather than checking once.
 func _award_factory_exp(tier: Contract.ContractTier) -> void:
 	factory_exp += FACTORY_EXP_PER_CONTRACT_TIER.get(tier, FACTORY_EXP_PER_CONTRACT_TIER[Contract.ContractTier.LOCAL_SHOPS])
+	var levels_gained := 0
 	while not is_factory_level_maxed() and factory_exp >= factory_exp_for_level(factory_level + 1):
 		factory_level += 1
+		levels_gained += 1
+	if levels_gained > 0:
+		# The one gem source that exists so far - a genuine milestone reward,
+		# not routine contract income, matching "harder to get."
+		gems += levels_gained * FACTORY_LEVEL_UP_GEM_REWARD
+		gems_changed.emit(gems)
 	factory_progress_changed.emit()
 
 
@@ -1440,7 +1500,7 @@ signal printer_purchased(new_owned_count: int)
 func buy_printer() -> bool:
 	if not can_buy_printer():
 		return false
-	if not try_spend(printer_purchase_cost()):
+	if not try_spend_with_gems(printer_purchase_cost()):
 		return false
 	owned_printer_count += 1
 	printer_purchased.emit(owned_printer_count)
@@ -1600,7 +1660,7 @@ func is_specialist_hired(type: SpecialistType) -> bool:
 func hire_specialist(type: SpecialistType) -> bool:
 	if is_specialist_hired(type):
 		return false
-	if not try_spend(SPECIALIST_HIRE_COST):
+	if not try_spend_with_gems(SPECIALIST_HIRE_COST):
 		return false
 	specialists_hired.append(type)
 	var categories: Array = SPECIALIST_CATEGORIES.get(type, [])
@@ -1622,7 +1682,7 @@ func can_mortar_patch(part: Part) -> bool:
 func mortar_patch_defect(part: Part) -> bool:
 	if not can_mortar_patch(part):
 		return false
-	if not try_spend(MORTAR_PATCH_COST):
+	if not try_spend_with_gems(MORTAR_PATCH_COST):
 		return false
 	part.clear_defect()
 	return true
@@ -1634,7 +1694,7 @@ func mortar_patch_defect(part: Part) -> bool:
 func redesign_defect(part: Part) -> bool:
 	if not part.is_defective:
 		return false
-	if not try_spend(REDESIGN_COST):
+	if not try_spend_with_gems(REDESIGN_COST):
 		return false
 	_clear_defect_and_raise_familiarity(part, FAMILIARITY_GAIN_REDESIGN)
 	return true

@@ -709,7 +709,7 @@ func try_upgrade() -> bool:
 	if current_tier >= 5:
 		return false
 	var target := current_tier + 1
-	if not GameData.try_spend(GameData.upgrade_cost_for_tier(target)):
+	if not GameData.try_spend_with_gems(GameData.upgrade_cost_for_tier(target)):
 		return false
 	current_tier = target
 	_apply_tier_batch_effects()
@@ -723,7 +723,7 @@ func try_upgrade_rack() -> bool:
 	if rack_capacity >= MAX_RACK_CAPACITY:
 		return false
 	var target := rack_capacity + 1
-	if not GameData.try_spend(GameData.rack_upgrade_cost_for(target)):
+	if not GameData.try_spend_with_gems(GameData.rack_upgrade_cost_for(target)):
 		return false
 	rack_capacity = target
 	return true

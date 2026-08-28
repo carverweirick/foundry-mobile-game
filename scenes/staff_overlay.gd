@@ -60,6 +60,9 @@ func _on_ready() -> void:
 	# rebuild would reintroduce the exact same-timer click race on those
 	# sections that _refresh_live_only() exists to avoid.
 	GameData.currency_changed.connect(func(_c): _refresh.call_deferred())
+	# Hiring can now spend gems too (can_afford_with_gems()), so a gems-only
+	# change can flip a Hire button's affordability independent of currency.
+	GameData.gems_changed.connect(func(_g): _refresh.call_deferred())
 	GameData.technician_updated.connect(func(_t): _refresh_live_only.call_deferred())
 
 
@@ -132,7 +135,7 @@ func _refresh_hire_list() -> void:
 
 		var hire_button := Button.new()
 		hire_button.text = "Hire"
-		hire_button.disabled = not GameData.can_afford(Technician.TIER_HIRE_COST[tier])
+		hire_button.disabled = not GameData.can_afford_with_gems(Technician.TIER_HIRE_COST[tier])
 		hire_button.pressed.connect(_on_hire_pressed.bind(tier))
 		row.add_child(hire_button)
 
@@ -346,7 +349,7 @@ func _refresh_specialist_list() -> void:
 		else:
 			var hire_button := Button.new()
 			hire_button.text = "Hire"
-			hire_button.disabled = not GameData.can_afford(GameData.SPECIALIST_HIRE_COST)
+			hire_button.disabled = not GameData.can_afford_with_gems(GameData.SPECIALIST_HIRE_COST)
 			hire_button.pressed.connect(_on_hire_specialist_pressed.bind(type))
 			row.add_child(hire_button)
 

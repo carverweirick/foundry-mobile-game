@@ -184,6 +184,7 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 
 @onready var camera: Camera2D = $Camera2D
 @onready var currency_label: Label = $HUD/CurrencyLabel
+@onready var gems_label: Label = $HUD/GemsLabel
 @onready var reputation_label: Label = $HUD/ReputationLabel
 @onready var factory_level_label: Label = $HUD/FactoryLevelLabel
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
@@ -258,6 +259,10 @@ func _ready() -> void:
 
 	GameData.currency_changed.connect(_on_currency_changed)
 	_on_currency_changed(GameData.currency)
+	# Second "harder to get" currency (this session, design request: "there
+	# will be an additional type of currency like the diamond").
+	GameData.gems_changed.connect(_on_gems_changed)
+	_on_gems_changed(GameData.gems)
 	GameData.reputation_changed.connect(_on_reputation_changed)
 	_on_reputation_changed(GameData.reputation)
 	# Design request (this session): "i want to be able to see my factory
@@ -374,6 +379,10 @@ func _place_and_maybe_show_label(label: Label, screen_pos: Vector2, accepted_rec
 
 func _on_currency_changed(new_amount: int) -> void:
 	currency_label.text = "Currency: %dg" % new_amount
+
+
+func _on_gems_changed(new_amount: int) -> void:
+	gems_label.text = "Gems: %d" % new_amount
 
 
 func _on_reputation_changed(new_amount: int) -> void:

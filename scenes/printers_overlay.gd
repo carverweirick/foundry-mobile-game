@@ -29,6 +29,10 @@ func _on_ready() -> void:
 	# needs its own signal for an immediate refresh rather than waiting on
 	# the next 0.25s poll.
 	GameData.factory_progress_changed.connect(func(): _refresh.call_deferred())
+	# Buying a printer can now spend gems too (can_afford_with_gems()), so a
+	# gems-only change (e.g. a Factory Level-up reward) can flip the Buy
+	# button's affordability on its own, independent of currency.
+	GameData.gems_changed.connect(func(_g): _refresh.call_deferred())
 
 
 func _process(delta: float) -> void:
@@ -65,7 +69,7 @@ func _refresh() -> void:
 	if GameData.can_buy_printer():
 		var cost := GameData.printer_purchase_cost()
 		buy_printer_button.text = "Buy Printer (%dg)" % cost
-		buy_printer_button.disabled = not GameData.can_afford(cost)
+		buy_printer_button.disabled = not GameData.can_afford_with_gems(cost)
 	else:
 		buy_printer_button.text = "Factory level cap reached"
 		buy_printer_button.disabled = true

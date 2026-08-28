@@ -346,14 +346,14 @@ func _refresh() -> void:
 		var target := _station.current_tier + 1
 		var cost := GameData.upgrade_cost_for_tier(target)
 		upgrade_button.text = "Upgrade to Tier %d (%dg)" % [target, cost]
-		upgrade_button.disabled = not GameData.can_afford(cost)
+		upgrade_button.disabled = not GameData.can_afford_with_gems(cost)
 
 	upgrade_rack_button.visible = not is_automatic and _station.rack_capacity < Station.MAX_RACK_CAPACITY
 	if upgrade_rack_button.visible:
 		var rack_target := _station.rack_capacity + 1
 		var rack_cost := GameData.rack_upgrade_cost_for(rack_target)
 		upgrade_rack_button.text = "Upgrade Rack to %d slots (%dg)" % [rack_target, rack_cost]
-		upgrade_rack_button.disabled = not GameData.can_afford(rack_cost)
+		upgrade_rack_button.disabled = not GameData.can_afford_with_gems(rack_cost)
 
 
 ## Design doc Section 9's two per-Part fix paths (Mortar Patch, Shell Crack
@@ -403,13 +403,13 @@ func _add_defect_fix_buttons(row: Container, part: Part) -> void:
 	if GameData.can_mortar_patch(part) and _station.station_id == "mold_prep":
 		var mortar := Button.new()
 		mortar.text = "Mortar Patch (%dg)" % GameData.MORTAR_PATCH_COST
-		mortar.disabled = not GameData.can_afford(GameData.MORTAR_PATCH_COST)
+		mortar.disabled = not GameData.can_afford_with_gems(GameData.MORTAR_PATCH_COST)
 		mortar.pressed.connect(_on_fix_defect.bind(part, false))
 		row.add_child(mortar)
 
 	var redesign := Button.new()
 	redesign.text = "Redesign (%dg)" % GameData.REDESIGN_COST
-	redesign.disabled = not GameData.can_afford(GameData.REDESIGN_COST)
+	redesign.disabled = not GameData.can_afford_with_gems(GameData.REDESIGN_COST)
 	redesign.pressed.connect(_on_fix_defect.bind(part, true))
 	row.add_child(redesign)
 
