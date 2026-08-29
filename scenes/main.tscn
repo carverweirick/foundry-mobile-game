@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://scenes/contracts_overlay.tscn" id="8_contracts_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/staff_overlay.tscn" id="9_staff_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/printers_overlay.tscn" id="10_printers_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/settings_overlay.tscn" id="11_settings_overlay"]
 
 [node name="Main" type="Node2D" unique_id=1774776552]
 script = ExtResource("1_script")
@@ -59,3 +60,5 @@ text = "Factory Level: 1"
 [node name="PrintersOverlay" parent="." instance=ExtResource("10_printers_overlay")]
 
 [node name="DashboardOverlay" parent="." instance=ExtResource("5_dashboard_overlay")]
+
+[node name="SettingsOverlay" parent="." instance=ExtResource("11_settings_overlay")]

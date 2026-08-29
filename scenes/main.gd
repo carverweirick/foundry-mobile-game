@@ -196,6 +196,7 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var staff_overlay: StaffOverlay = $StaffOverlay
 @onready var printers_overlay: PrintersOverlay = $PrintersOverlay
 @onready var dashboard_overlay: Dashboard = $DashboardOverlay
+@onready var settings_overlay: SettingsOverlay = $SettingsOverlay
 
 ## Every top-level overlay panel that should ever be mutually exclusive with
 ## every other one - populated in _ready() once all the @onready vars above
@@ -287,7 +288,8 @@ func _ready() -> void:
 	# .connect() block per pair (see that array's own comment for why).
 	_overlays = [
 		overview_overlay, awaiting_transfer_overlay, contracts_overlay,
-		staff_overlay, printers_overlay, dashboard_overlay, station_detail_menu,
+		staff_overlay, printers_overlay, dashboard_overlay, settings_overlay,
+		station_detail_menu,
 	]
 	for overlay in _overlays:
 		overlay.opened.connect(_on_overlay_opened.bind(overlay))

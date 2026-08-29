@@ -1,0 +1,63 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/settings_overlay.gd" id="1_script"]
+
+[node name="SettingsOverlay" type="CanvasLayer"]
+script = ExtResource("1_script")
+
+[node name="ToggleButton" type="Button" parent="."]
+unique_name_in_owner = true
+offset_left = 8.0
+offset_top = 244.0
+offset_right = 98.0
+offset_bottom = 264.0
+text = "Settings"
+
+[node name="Backdrop" type="Control" parent="."]
+unique_name_in_owner = true
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+
+[node name="Panel" type="Panel" parent="."]
+unique_name_in_owner = true
+visible = false
+offset_left = 15.0
+offset_top = 54.0
+offset_right = 465.0
+offset_bottom = 258.0
+
+[node name="Content" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+
+[node name="SettingsHeader" type="Label" parent="Panel/Content"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
+theme_override_font_sizes/font_size = 18
+text = "Settings"
+
+[node name="ThemeHeader" type="Label" parent="Panel/Content"]
+autowrap_mode = 3
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
+theme_override_font_sizes/font_size = 18
+text = "Theme"
+
+[node name="ThemeStatusLabel" type="Label" parent="Panel/Content"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+text = "Current theme: Dark Industrial"
+
+[node name="SwitchThemeButton" type="Button" parent="Panel/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Switch to Parchment"

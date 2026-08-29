@@ -659,6 +659,42 @@ happens directly on `main` unless a new feature branch is called for.
   Menu. Refreshes off `currency_changed`/`factory_progress_changed` plus the
   0.25s poll, `_click_in_progress()`-guarded like every overlay.
 
+**Settings overlay** (`scenes/settings_overlay.gd` + `.tscn`, extends
+`OverlayBase`; `autoload/theme_manager.gd`, registered as the `ThemeManager`
+autoload)
+- First real occupant of design doc Section 19's planned Settings Menu -
+  scoped to just one option (switch the UI's visual theme) rather than the
+  full audio/text-size/haptics/etc. list Section 19 describes; establishes
+  the entry point/pattern later settings would slot into. Its own HUD toggle
+  button sits in the bottom-left corner (below the currency stack, clear of
+  the two main button rows) rather than taking a 7th slot in either row.
+- `ThemeManager` (autoload, not GameData - the game has no save/load system
+  of its own yet, and a UI preference shouldn't wait on one) holds
+  `current_theme: ThemeChoice` (`DARK`/`PARCHMENT`), persisted to its own
+  `user://settings.cfg` (independent of any future gameplay save file).
+  `set_theme()` swaps the single project-wide Theme by reassigning
+  `get_tree().root.theme` (the same mechanism `project.godot`'s
+  `gui/theme/custom` used to set the *initial* one, before this autoload's
+  `_ready()` runs and takes over), saves, and emits `theme_changed`.
+- `resources/theme/ui_theme_parchment.tres` is the original warm-parchment
+  palette from before the dark industrial reskin, recovered from git history
+  (it's a pure color diff off `ui_theme.tres` - same StyleBox structure,
+  shape language, and `m5x7` font) and kept alive as this second selectable
+  Theme resource rather than having been deleted.
+- Deliberately does NOT touch the ~16 hardcoded per-node/per-script gold
+  accent colors (header labels, risk badges, etc., see the UI theme section
+  above) - those stay gold under both themes. This is an accepted scope trim,
+  not an oversight: gold/amber was already the accent color in the original
+  parchment palette too (its own button hover/pressed colors), so it reads
+  fine unswapped under either theme.
+- Verified headless: `ThemeManager` applies the correct theme resource to
+  `get_tree().root.theme` on both a fresh boot and after `set_theme()`,
+  persists and reloads correctly across a simulated restart (a fresh process
+  reading a `settings.cfg` written by a prior one), re-selecting the current
+  theme is a no-op (no duplicate signal), and the Settings overlay's own
+  label/button text and click handler correctly reflect and drive
+  `ThemeManager`.
+
 **Shop floor** (`scenes/main.gd` + `scenes/main.tscn`)
 - **Pinwheel room layout**: 5 rooms tiling a 1720x960 floor around a small
   central Pour Room island (280x280, centered at (860,480)) - `PRINT_ROOM`
@@ -844,9 +880,10 @@ From the design doc, still pending:
   real art, 5 of 12). Zoomed-out label *text* legibility is fully solved
   (screen-space floor labels); this is the remaining "what station is this
   by silhouette alone" half of design doc Section 16.
-- **Settings Menu** (Section 19) - audio volume, station title visibility,
-  text size, reduce motion, offline progress/notification toggles, haptics,
-  reset save. Design-only, nothing built.
+- **Settings Menu** (Section 19) - a real Settings overlay now exists with
+  one option (UI theme, see Settings overlay above). Still not built: audio
+  volume, station title visibility, text size, reduce motion, offline
+  progress/notification toggles, haptics, reset save - all still design-only.
 - **The Staff/Printers overlays' list rows** (Hire/Roster/Specialist/
   Printer) weren't part of the columnar/grouped/filtered redesign that hit
   the Overview/Awaiting Transfer/Contracts overlays and the Station Detail
