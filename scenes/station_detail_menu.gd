@@ -87,6 +87,16 @@ func _ready() -> void:
 	upgrade_button.pressed.connect(_on_upgrade_pressed)
 	upgrade_rack_button.pressed.connect(_on_upgrade_rack_pressed)
 	_build_rack_slots()
+	# See ThemeManager's own header comment - panel/rack_panel are direct
+	# CanvasLayer children, so they need their own .theme set directly
+	# rather than relying on Window.theme (which doesn't reach them).
+	ThemeManager.theme_changed.connect(func(_choice): _apply_theme())
+	_apply_theme()
+
+
+func _apply_theme() -> void:
+	ThemeManager.apply_theme_to(panel)
+	ThemeManager.apply_theme_to(rack_panel)
 
 
 ## Builds the 10 slot Buttons once - see _rack_slot_buttons' comment above

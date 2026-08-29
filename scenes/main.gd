@@ -274,6 +274,12 @@ func _ready() -> void:
 	GameData.factory_progress_changed.connect(func(): _on_factory_progress_changed())
 	_on_factory_progress_changed()
 
+	# See ThemeManager's own header comment: the HUD labels are direct
+	# CanvasLayer children too, so they need their own .theme set directly -
+	# Window.theme alone never reaches them.
+	ThemeManager.theme_changed.connect(func(_choice): _apply_hud_theme())
+	_apply_hud_theme()
+
 	# Bug fix (originally this session's split of one bundled Menu/Shop panel
 	# into individual per-category overlays, later generalized): "the shop
 	# button is over different menu screens" / "when i select a station the
@@ -394,6 +400,14 @@ func _on_reputation_changed(new_amount: int) -> void:
 
 func _on_factory_progress_changed() -> void:
 	factory_level_label.text = "Factory Level: %d" % GameData.factory_level
+
+
+func _apply_hud_theme() -> void:
+	var theme: Theme = ThemeManager.get_current_theme_resource()
+	currency_label.theme = theme
+	gems_label.theme = theme
+	reputation_label.theme = theme
+	factory_level_label.theme = theme
 
 
 func _build_floor() -> void:

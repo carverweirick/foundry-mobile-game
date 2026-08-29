@@ -672,28 +672,47 @@ autoload)
   of its own yet, and a UI preference shouldn't wait on one) holds
   `current_theme: ThemeChoice` (`DARK`/`PARCHMENT`), persisted to its own
   `user://settings.cfg` (independent of any future gameplay save file).
-  `set_theme()` swaps the single project-wide Theme by reassigning
-  `get_tree().root.theme` (the same mechanism `project.godot`'s
-  `gui/theme/custom` used to set the *initial* one, before this autoload's
-  `_ready()` runs and takes over), saves, and emits `theme_changed`.
+  `set_theme()` swaps the theme, saves, and emits `theme_changed`.
 - `resources/theme/ui_theme_parchment.tres` is the original warm-parchment
   palette from before the dark industrial reskin, recovered from git history
   (it's a pure color diff off `ui_theme.tres` - same StyleBox structure,
   shape language, and `m5x7` font) and kept alive as this second selectable
   Theme resource rather than having been deleted.
+- **Applying the theme requires setting `.theme` directly on each overlay's
+  own top-level Panel/Button, not just `get_tree().root.theme` - a real bug,
+  caught only by a real (non-headless) rendered run, not by headless
+  testing.** `project.godot`'s `gui/theme/custom` sets Godot's *project
+  default theme* (`ThemeDB.get_project_theme()`) once at boot - a separate
+  mechanism from `Window.theme`, with no runtime setter exposed to scripts
+  in this Godot build. A Control only falls back to its nearest ancestor
+  Window's `.theme` if it can reach that Window by walking actual Control
+  ancestors (`get_parent_control()`); every overlay panel/button in this
+  project is a direct child of a `CanvasLayer` (not a Control), which breaks
+  that chain immediately - so reassigning `get_tree().root.theme` alone
+  silently did nothing visually, confirmed by comparing a live Button's
+  queried `get_theme_stylebox()` color against `Window.theme`'s own
+  `resource_path` across a real switch (they never matched, even 10+ frames
+  and a manual `queue_redraw()` later). `ThemeManager.apply_theme_to(control)`
+  sets `.theme` directly on one Control, which correctly re-themes its whole
+  Control-descendant subtree regardless of the CanvasLayer above it; every
+  `OverlayBase` subclass, `StationDetailMenu` (its `panel` and `rack_panel`),
+  and `main.gd`'s four HUD labels all call this once at `_ready()` and again
+  on every `theme_changed`. `ThemeManager._apply_theme()` still also sets
+  `get_tree().root.theme` as a harmless default for any future Control that
+  genuinely is a Control-ancestor descendant of the root.
 - Deliberately does NOT touch the ~16 hardcoded per-node/per-script gold
   accent colors (header labels, risk badges, etc., see the UI theme section
   above) - those stay gold under both themes. This is an accepted scope trim,
   not an oversight: gold/amber was already the accent color in the original
   parchment palette too (its own button hover/pressed colors), so it reads
   fine unswapped under either theme.
-- Verified headless: `ThemeManager` applies the correct theme resource to
-  `get_tree().root.theme` on both a fresh boot and after `set_theme()`,
-  persists and reloads correctly across a simulated restart (a fresh process
-  reading a `settings.cfg` written by a prior one), re-selecting the current
-  theme is a no-op (no duplicate signal), and the Settings overlay's own
-  label/button text and click handler correctly reflect and drive
-  `ThemeManager`.
+- Verified with a real (non-headless) windowed run, not just headless: a
+  live Button's queried StyleBox color, and a saved screenshot of the whole
+  running scene, both actually change from dark to parchment (and the HUD
+  labels' text color, and the Settings panel's own text) on switch. Also
+  verified headless: persistence across a simulated restart, a same-choice
+  reselect being a no-op, and the overlay's own label/button text correctly
+  reflecting `ThemeManager`.
 
 **Shop floor** (`scenes/main.gd` + `scenes/main.tscn`)
 - **Pinwheel room layout**: 5 rooms tiling a 1720x960 floor around a small

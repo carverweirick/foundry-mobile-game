@@ -27,7 +27,17 @@ signal opened()
 func _ready() -> void:
 	toggle_button.pressed.connect(_on_toggle_pressed)
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
+	# See ThemeManager's own header comment for why this direct per-Control
+	# assignment (not just relying on Window.theme) is actually necessary -
+	# every overlay's toggle_button/panel is a direct CanvasLayer child.
+	ThemeManager.theme_changed.connect(func(_choice): _apply_theme())
+	_apply_theme()
 	_on_ready()
+
+
+func _apply_theme() -> void:
+	ThemeManager.apply_theme_to(toggle_button)
+	ThemeManager.apply_theme_to(panel)
 
 
 ## Subclasses override this instead of _ready() directly, so the toggle/
