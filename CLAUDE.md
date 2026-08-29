@@ -16,15 +16,12 @@ further rather than only appending. Also commit and push to GitHub (`origin`)
 after changes and at session end, without needing to ask first - see Working
 agreements below.
 
-**Current branch status (as of 2026-08-28):** `gdt-layout-experiment` is 4
-commits ahead of `main`, pushed to GitHub, not merged/PR'd. `main` is
-unchanged since the initial commits. Two fixes on this branch (sprite
-pixelation fix, real mobile pinch-to-zoom) are genuine bug fixes unrelated to
-the GDT experiment and got bundled in only by timing, not a deliberate call -
-whether to cherry-pick them onto `main` separately, merge the whole branch,
-or leave things as-is is still an open question for the user. Per-feature
-bullets below tagged `` `gdt-layout-experiment` branch only, not on `main` ``
-are not available on `main`.
+**Current branch status (as of 2026-08-28):** `gdt-layout-experiment` was
+fast-forward merged into `main` and pushed - the GDT-inspired rework (dark
+industrial theme, the entry-point-split overlays, the Dashboard overlay,
+multi-line-item contracts/Contract Offers, Gems, the staff rework) is no
+longer an experiment, it's the real game going forward. Active work now
+happens directly on `main` unless a new feature branch is called for.
 
 ## Working agreements
 
@@ -421,8 +418,7 @@ are not available on `main`.
   `REPUTATION_QUALITY_BONUS_MAX` (0.35) scales every generated contract's
   quantity/payout up continuously (not just at tier thresholds) as
   Reputation climbs from 0 to `REPUTATION_MAX`.
-- **Contract Offers screen - `gdt-layout-experiment` branch only, not on
-  `main`** (design doc Section 24.1/24.9). `GameData.contract_offers` is a
+- **Contract Offers screen** (design doc Section 24.1/24.9). `GameData.contract_offers` is a
   pool of rolled-but-unaccepted contracts, separate from `contracts` (the
   active/working list); an offer's deadline doesn't start until
   `accept_contract_offer()` moves it over. Lives as an "Offers" tab on the
@@ -560,8 +556,8 @@ are not available on `main`.
   A miss destroys the part outright (never flagged, never reaches Ship)
   rather than just flagging it.
 
-**Overview / Awaiting Transfer / Contracts overlays - entry-point split,
-`gdt-layout-experiment` branch only, not on `main`** (Section 6)
+**Overview / Awaiting Transfer / Contracts overlays - entry-point split**
+(Section 6)
 - Three separate always-visible HUD toggle buttons (Overview/Transfer/
   Contracts), each its own `Panel`, no tabs/bundling - split out of what was
   originally one `Menu` button's `TabContainer`. `MenuOverlay` itself is
@@ -595,9 +591,8 @@ are not available on `main`.
   station's own Batch Picker" entry point - only Awaiting Transfer's route
   exists.
 
-**Staff overlay - entry-point split/regroup, `gdt-layout-experiment` branch
-only, not on `main`** (`scenes/staff_overlay.gd` + `.tscn`, extends
-`OverlayBase`, Section 6)
+**Staff overlay - entry-point split/regroup** (`scenes/staff_overlay.gd` +
+`.tscn`, extends `OverlayBase`, Section 6)
 - Split from the old `Shop` overlay: Technicians + Specialists stayed
   together under one `Staff` HUD button (both hiring actions); Printers (an
   equipment purchase) split into its own overlay. `ShopOverlay` is deleted.
@@ -653,9 +648,8 @@ only, not on `main`** (`scenes/staff_overlay.gd` + `.tscn`, extends
   (~40px/2 lines), or it reflows every sibling row below it - same
   recurring-gotcha note as above, for height instead of width.
 
-**Printers overlay - entry-point split, `gdt-layout-experiment` branch only,
-not on `main`** (`scenes/printers_overlay.gd` + `.tscn`, extends
-`OverlayBase`, Section 6)
+**Printers overlay - entry-point split** (`scenes/printers_overlay.gd` +
+`.tscn`, extends `OverlayBase`, Section 6)
 - Standalone HUD button (row 2). No tabs/roster - just
   `printer_cap()`/`owned_printer_count`/`factory_level` status text, a Buy
   button (`can_buy_printer()`/`printer_purchase_cost()`/`buy_printer()`),
@@ -735,8 +729,7 @@ not on `main`** (`scenes/printers_overlay.gd` + `.tscn`, extends
   signal (`currency_changed`/`gems_changed`/(reputation has no dedicated
   signal, polled)/`factory_progress_changed`).
 
-**Dashboard overlay - experimental, `gdt-layout-experiment` branch only, not
-on `main`** (`scenes/dashboard_overlay.gd` + `.tscn`)
+**Dashboard overlay** (`scenes/dashboard_overlay.gd` + `.tscn`)
 - An alternate, additive UI lens inspired by Game Dev Tycoon's layout -
   "Stat/progress-bar dashboard" + "menu-driven interaction over clicking the
   world" specifically, not a full clone (the multi-room floor, free camera,
