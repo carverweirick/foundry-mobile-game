@@ -82,6 +82,12 @@ theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
 theme_override_font_sizes/font_size = 18
 text = "Roster"
 
+[node name="PayrollLabel" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+unique_name_in_owner = true
+autowrap_mode = 3
+layout_mode = 2
+text = "Payroll: 0g every payday"
+
 [node name="RosterList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
 unique_name_in_owner = true
 layout_mode = 2

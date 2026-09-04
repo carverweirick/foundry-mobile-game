@@ -15,6 +15,11 @@ signal reputation_changed(new_amount: int)
 ## it already listens for currency_changed, since factory progress doesn't
 ## otherwise correlate with any existing signal.
 signal factory_progress_changed()
+## Fires every payday (see _process_wages()), whether or not it was fully
+## covered - StaffOverlay uses this to show a live "last payday" readout
+## instead of just inferring it from currency_changed (which also fires for
+## every unrelated purchase/sale).
+signal payday(total_wages: int, went_into_debt: bool)
 
 ## Tier 1 numbers for every station, pulled from the design doc's
 ## "Starting Timer and Batch Numbers" and "Station Mechanics" sections.
@@ -361,6 +366,61 @@ var held_parts: Array[Part] = []
 ## Every technician ever hired, whether or not they're currently assigned
 ## anywhere - the Shop's Technicians tab roster (design doc Section 6/7).
 var technicians: Array[Technician] = []
+
+## Wage economy tick (design doc Section 6/7's wage numbers existed on
+## Technician from the start, but nothing ever spent them - see
+## Technician.wage). A hired technician/engineer draws wage every payday
+## REGARDLESS of whether they're currently assigned anywhere, matching the
+## comment on Specialist hiring ("no ongoing wage, unlike a station
+## Technician") - the wage is the cost of having them on payroll at all, not
+## a per-station operating cost.
+##
+## Cadence is a flat real-seconds constant, same style as
+## CONTRACT_GENERATION_COOLDOWN_SECONDS/APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS
+## rather than run through PROTOTYPE_SECONDS_PER_MINUTE - payroll is a
+## meta/economy-layer cadence, not a compressed real-world station timer.
+const WAGE_PAYMENT_INTERVAL_SECONDS: float = 90.0
+var _wage_payment_timer: float = 0.0
+
+
+func total_wage_payroll() -> int:
+	var total := 0
+	for tech in technicians:
+		total += tech.wage
+	return total
+
+
+## Force-deducts payroll every WAGE_PAYMENT_INTERVAL_SECONDS - deliberately
+## NOT routed through try_spend_with_gems(): wages are gold-only and always
+## go through even if currency can't cover them (currency goes negative,
+## real debt) rather than silently draining gems the player earned as a
+## harder-won milestone reward, or blocking payday outright. Going negative
+## already organically blocks every other purchase (can_afford/
+## can_afford_with_gems both compare against currency, and a bigger
+## shortfall just means more gems are required), so debt is a real, felt
+## consequence without needing a separate lockout flag.
+func _process_wages(delta: float) -> void:
+	if technicians.is_empty():
+		return
+	_wage_payment_timer += delta
+	if _wage_payment_timer < WAGE_PAYMENT_INTERVAL_SECONDS:
+		return
+	_wage_payment_timer = 0.0
+	var total := total_wage_payroll()
+	if total <= 0:
+		return
+	currency -= total
+	currency_changed.emit(currency)
+	payday.emit(total, currency < 0)
+
+
+func is_in_wage_debt() -> bool:
+	return currency < 0
+
+
+func wage_payment_seconds_left() -> float:
+	return WAGE_PAYMENT_INTERVAL_SECONDS - _wage_payment_timer
+
 
 ## Rotating applicant pool (design request, this session: "build the rotating
 ## applicant pool" - replacing "hire any tier, any time"), mirroring the
@@ -1316,6 +1376,7 @@ func _process(delta: float) -> void:
 	_check_defect_escalations()
 	_process_contracts(delta)
 	_process_applicant_pool(delta)
+	_process_wages(delta)
 
 
 ## Design doc Section 9, escalation: sweeps every live Part (wherever it

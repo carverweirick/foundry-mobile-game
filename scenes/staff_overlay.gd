@@ -69,6 +69,7 @@ const DEPARTMENT_LABEL := {
 @onready var specialist_list: VBoxContainer = %SpecialistList
 @onready var refresh_applicants_button: Button = %RefreshApplicantsButton
 @onready var refresh_countdown_label: Label = %RefreshCountdownLabel
+@onready var payroll_label: Label = %PayrollLabel
 
 ## Set by main.gd right after all Station nodes are spawned - needed to list
 ## which stations a technician can be assigned to and to read/write their
@@ -104,6 +105,11 @@ func _on_ready() -> void:
 	# passive auto-refill all fire this.
 	GameData.applicant_pool_changed.connect(func(): _refresh.call_deferred())
 	refresh_applicants_button.pressed.connect(_on_refresh_applicants_pressed)
+	# Wage economy tick - roster hires/fires nobody automatically, so a full
+	# _refresh() would be overkill here; _refresh_live_only() already updates
+	# the payroll label every poll, this just gets that update onto the
+	# screen the instant a payday actually lands instead of up to 0.25s late.
+	GameData.payday.connect(func(_total, _debt): _refresh_live_only.call_deferred())
 
 
 func _process(delta: float) -> void:
@@ -155,6 +161,7 @@ func _refresh_live_only() -> void:
 		return
 	_refresh_roster_list()
 	_update_refresh_countdown()
+	_update_payroll_label()
 
 
 ## The "new applicants in: X" countdown is a continuously-ticking number, not
@@ -162,6 +169,21 @@ func _refresh_live_only() -> void:
 ## eating a click since this only ever assigns .text on an existing Label.
 func _update_refresh_countdown() -> void:
 	refresh_countdown_label.text = "New applicants in: %s" % _format_time(GameData.applicant_pool_refresh_seconds_left())
+
+
+## Wage economy tick (this session) - every hired technician/engineer draws
+## their wage every payday regardless of assignment (GameData._process_wages()).
+## Turns red in wage debt (currency negative) as the same visible-consequence
+## cue as the HUD CurrencyLabel's own red tint (main.gd._on_currency_changed()).
+func _update_payroll_label() -> void:
+	var total := GameData.total_wage_payroll()
+	payroll_label.text = "Payroll: %dg every payday (next in %s)" % [
+		total, _format_time(GameData.wage_payment_seconds_left())
+	]
+	if GameData.is_in_wage_debt():
+		payroll_label.add_theme_color_override("font_color", Color(0.85, 0.2, 0.2))
+	else:
+		payroll_label.remove_theme_color_override("font_color")
 
 
 func _any_strategy_popup_open() -> bool:
@@ -388,8 +410,13 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 			assignment_text += " - at %s" % _display_name_for(tech.current_station_id)
 			if tech.is_interacting:
 				assignment_text += ", interacting"
-	# Same tier/role-label collision fix as the applicant card above.
-	row.header.text = "%s (%s, %s Tier) - %s" % [tech.technician_name, tech.role_label, tech.tier_label, assignment_text]
+	# Same tier/role-label collision fix as the applicant card above. Wage
+	# shown here too now (this session's wage economy tick) - it's an ongoing
+	# cost for as long as they're on the roster, not just a one-time hire fee,
+	# so it belongs on the persistent row, not only the pre-hire applicant card.
+	row.header.text = "%s (%s, %s Tier, wage %dg) - %s" % [
+		tech.technician_name, tech.role_label, tech.tier_label, tech.wage, assignment_text
+	]
 
 	# Always visible now - blank rather than hidden when not carrying
 	# anything, so the row's height never pops.

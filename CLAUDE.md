@@ -647,6 +647,33 @@ happens directly on `main` unless a new feature branch is called for.
   a toggled-visibility label) needs an explicit `custom_minimum_size.y`
   (~40px/2 lines), or it reflows every sibling row below it - same
   recurring-gotcha note as above, for height instead of width.
+- **Wage economy tick** (`GameData._process_wages()`, this session) - closes
+  the gap where `Technician.wage` was stored but never spent. Every hired
+  technician/engineer draws their `wage` every payday
+  (`WAGE_PAYMENT_INTERVAL_SECONDS` = 90s, a flat real-seconds cadence like
+  `CONTRACT_GENERATION_COOLDOWN_SECONDS`/`APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS`,
+  not run through the compressed per-station `PROTOTYPE_SECONDS_PER_MINUTE`
+  scale) **regardless of whether they're currently assigned anywhere** -
+  matching the existing comment on Specialist hiring ("no ongoing wage,
+  unlike a station Technician"). Payroll is gold-only and force-deducted
+  (`currency -= total_wage_payroll()`), deliberately NOT routed through
+  `try_spend_with_gems()` - an automatic recurring cost shouldn't silently
+  drain the harder-earned Gems currency the way a deliberate purchase can.
+  If gold can't cover it, `currency` goes negative (real debt) rather than
+  blocking payday or firing anyone - nothing currently un-hires a
+  technician. Debt already organically blocks every other purchase for free
+  (`can_afford`/`can_afford_with_gems` both compare against `currency`, so a
+  bigger shortfall just demands more Gems), so no separate lockout flag was
+  needed. `GameData.is_in_wage_debt()` (`currency < 0`) drives two visible
+  cues: the HUD `CurrencyLabel` (`main.gd`) and the Staff overlay's new
+  `PayrollLabel` both turn red. `PayrollLabel` (`%PayrollLabel` in
+  `staff_overlay.tscn`, between the Roster header and list) shows total
+  payroll and a live countdown to the next payday
+  (`GameData.wage_payment_seconds_left()`); each roster row's header also
+  now shows that technician's own wage. A `payday(total_wages,
+  went_into_debt)` signal fires every payment (whether or not it was fully
+  covered) for StaffOverlay's live readout, separate from `currency_changed`
+  (which also fires for every unrelated purchase/sale).
 
 **Printers overlay - entry-point split** (`scenes/printers_overlay.gd` +
 `.tscn`, extends `OverlayBase`, Section 6)
@@ -876,8 +903,6 @@ From the design doc, still pending:
   geometry art exists.
 - **Distinct technician art per tier** - all four tiers share
   `technician_L1.png`, static sprite, no walk-cycle frames.
-- **Wage deduction** - stored on the Technician resource but never spent,
-  no economy tick exists yet.
 - **The Floor Editor** (Section 5) - grid-based custom room/equipment
   placement, room-size-as-capacity, anchored equipment, hallway-distance-
   as-mechanic. The whole-floor grid system (`GRID_CELL_SIZE`, the tile

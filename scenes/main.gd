@@ -388,6 +388,13 @@ func _place_and_maybe_show_label(label: Label, screen_pos: Vector2, accepted_rec
 
 func _on_currency_changed(new_amount: int) -> void:
 	currency_label.text = "Currency: %dg" % new_amount
+	# Wage debt (GameData._process_wages() can push currency negative when
+	# payroll can't be covered) needs a visible signal beyond the number
+	# itself going negative - easy to miss at a glance otherwise.
+	if new_amount < 0:
+		currency_label.add_theme_color_override("font_color", Color(0.85, 0.2, 0.2))
+	else:
+		currency_label.remove_theme_color_override("font_color")
 
 
 func _on_gems_changed(new_amount: int) -> void:
