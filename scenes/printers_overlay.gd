@@ -12,11 +12,20 @@ class_name PrintersOverlay
 ## each printer's own Station Detail Menu (they're just ordinary Stations
 ## once spawned) exactly like every other station's Upgrade/Upgrade Rack
 ## buttons, not from here.
+##
+## Design request, this session: "change how you get to the next factory
+## level by paying a price." LevelUpButton is the one place
+## GameData.level_up_factory() gets called from - reaching the EXP threshold
+## only makes the player eligible (GameData.can_level_up_factory()), leveling
+## up itself is this deliberate paid action, previewing both the price and
+## the payroll bill it triggers before the player commits.
 
 const REFRESH_INTERVAL: float = 0.25
 
 @onready var printer_status_label: Label = %PrinterStatusLabel
 @onready var factory_exp_label: Label = %FactoryExpLabel
+@onready var level_up_button: Button = %LevelUpButton
+@onready var process_speed_label: Label = %ProcessSpeedLabel
 @onready var buy_printer_button: Button = %BuyPrinterButton
 
 var _refresh_elapsed: float = 0.0
@@ -24,6 +33,7 @@ var _refresh_elapsed: float = 0.0
 
 func _on_ready() -> void:
 	buy_printer_button.pressed.connect(_on_buy_printer_pressed)
+	level_up_button.pressed.connect(_on_level_up_pressed)
 	GameData.currency_changed.connect(func(_c): _refresh.call_deferred())
 	# Factory Level EXP (this session) doesn't move currency at all, so it
 	# needs its own signal for an immediate refresh rather than waiting on
@@ -61,11 +71,24 @@ func _refresh() -> void:
 	]
 	if GameData.is_factory_level_maxed():
 		factory_exp_label.text = "Factory Level %d (max) - %d EXP earned" % [GameData.factory_level, GameData.factory_exp]
+		level_up_button.text = "Factory Level maxed"
+		level_up_button.disabled = true
 	else:
 		var next_level := GameData.factory_level + 1
 		factory_exp_label.text = "%d/%d EXP to Factory Level %d - completing contracts earns EXP" % [
 			GameData.factory_exp, GameData.factory_exp_for_level(next_level), next_level
 		]
+		if GameData.can_level_up_factory():
+			var price := GameData.factory_level_up_price()
+			var payroll := GameData.total_wage_payroll()
+			level_up_button.text = "Level Up to %d (%dg price + %dg payroll)" % [next_level, price, payroll]
+			level_up_button.disabled = not GameData.can_afford_factory_level_up()
+		else:
+			level_up_button.text = "Level Up (need more EXP)"
+			level_up_button.disabled = true
+	process_speed_label.text = "Process speed: +%d%% (Factory Level %d)" % [
+		roundi((GameData.factory_process_speed_multiplier() - 1.0) * 100.0), GameData.factory_level
+	]
 	if GameData.can_buy_printer():
 		var cost := GameData.printer_purchase_cost()
 		buy_printer_button.text = "Buy Printer (%dg)" % cost
@@ -77,4 +100,9 @@ func _refresh() -> void:
 
 func _on_buy_printer_pressed() -> void:
 	GameData.buy_printer()
+	_refresh.call_deferred()
+
+
+func _on_level_up_pressed() -> void:
+	GameData.level_up_factory()
 	_refresh.call_deferred()

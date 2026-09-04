@@ -388,7 +388,7 @@ func _place_and_maybe_show_label(label: Label, screen_pos: Vector2, accepted_rec
 
 func _on_currency_changed(new_amount: int) -> void:
 	currency_label.text = "Currency: %dg" % new_amount
-	# Wage debt (GameData._process_wages() can push currency negative when
+	# Wage debt (GameData.level_up_factory() can push currency negative when
 	# payroll can't be covered) needs a visible signal beyond the number
 	# itself going negative - easy to miss at a glance otherwise.
 	if new_amount < 0:

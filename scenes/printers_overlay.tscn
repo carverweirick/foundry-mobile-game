@@ -56,6 +56,17 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "0/0 EXP to Factory Level 2"
 
+[node name="LevelUpButton" type="Button" parent="Panel/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Level Up"
+
+[node name="ProcessSpeedLabel" type="Label" parent="Panel/Content"]
+autowrap_mode = 3
+unique_name_in_owner = true
+layout_mode = 2
+text = "Process speed: +0% (Factory Level 1)"
+
 [node name="BuyPrinterButton" type="Button" parent="Panel/Content"]
 unique_name_in_owner = true
 layout_mode = 2

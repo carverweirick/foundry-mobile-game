@@ -86,7 +86,7 @@ text = "Roster"
 unique_name_in_owner = true
 autowrap_mode = 3
 layout_mode = 2
-text = "Payroll: 0g every payday"
+text = "Payroll: 0g - paid out whenever you level up the factory"
 
 [node name="RosterList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
 unique_name_in_owner = true

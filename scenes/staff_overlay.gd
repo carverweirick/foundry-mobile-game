@@ -105,10 +105,10 @@ func _on_ready() -> void:
 	# passive auto-refill all fire this.
 	GameData.applicant_pool_changed.connect(func(): _refresh.call_deferred())
 	refresh_applicants_button.pressed.connect(_on_refresh_applicants_pressed)
-	# Wage economy tick - roster hires/fires nobody automatically, so a full
-	# _refresh() would be overkill here; _refresh_live_only() already updates
-	# the payroll label every poll, this just gets that update onto the
-	# screen the instant a payday actually lands instead of up to 0.25s late.
+	# Wage economy - payday now fires from GameData.level_up_factory()
+	# (Printers overlay), not a timer here; a full _refresh() would be
+	# overkill for it, so this just gets the payroll/wage/tenure text current
+	# the instant it lands rather than waiting up to 0.25s for the next poll.
 	GameData.payday.connect(func(_total, _debt): _refresh_live_only.call_deferred())
 
 
@@ -171,15 +171,16 @@ func _update_refresh_countdown() -> void:
 	refresh_countdown_label.text = "New applicants in: %s" % _format_time(GameData.applicant_pool_refresh_seconds_left())
 
 
-## Wage economy tick (this session) - every hired technician/engineer draws
-## their wage every payday regardless of assignment (GameData._process_wages()).
-## Turns red in wage debt (currency negative) as the same visible-consequence
-## cue as the HUD CurrencyLabel's own red tint (main.gd._on_currency_changed()).
+## Wage economy (design request, this session: "have wages be an addition to
+## the factory level") - payroll is no longer a standing real-time drain,
+## it's paid out in one lump sum as part of every factory level-up (see
+## GameData.level_up_factory(), triggered from the Printers overlay). This
+## label is now a preview of that upcoming bill, not a countdown. Turns red
+## in wage debt (currency negative) as the same visible-consequence cue as
+## the HUD CurrencyLabel's own red tint (main.gd._on_currency_changed()).
 func _update_payroll_label() -> void:
 	var total := GameData.total_wage_payroll()
-	payroll_label.text = "Payroll: %dg every payday (next in %s)" % [
-		total, _format_time(GameData.wage_payment_seconds_left())
-	]
+	payroll_label.text = "Payroll: %dg - paid out whenever you level up the factory" % total
 	if GameData.is_in_wage_debt():
 		payroll_label.add_theme_color_override("font_color", Color(0.85, 0.2, 0.2))
 	else:
@@ -411,11 +412,16 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 			if tech.is_interacting:
 				assignment_text += ", interacting"
 	# Same tier/role-label collision fix as the applicant card above. Wage
-	# shown here too now (this session's wage economy tick) - it's an ongoing
-	# cost for as long as they're on the roster, not just a one-time hire fee,
-	# so it belongs on the persistent row, not only the pre-hire applicant card.
-	row.header.text = "%s (%s, %s Tier, wage %dg) - %s" % [
-		tech.technician_name, tech.role_label, tech.tier_label, tech.wage, assignment_text
+	# shown here too - an ongoing cost for as long as they're on the roster,
+	# not just a one-time hire fee, so it belongs on the persistent row, not
+	# only the pre-hire applicant card. Tenure ("stuck with you") is new this
+	# session too - both wage and defect_multiplier/seniority_speed_multiplier
+	# grow off this same counter (see Technician's own comment on it), so
+	# it's worth surfacing directly rather than leaving it implicit in a
+	# wage number alone.
+	row.header.text = "%s (%s, %s Tier, wage %dg, %d level-ups with you) - %s" % [
+		tech.technician_name, tech.role_label, tech.tier_label, tech.wage,
+		tech.factory_levels_stuck_with_you, assignment_text
 	]
 
 	# Always visible now - blank rather than hidden when not carrying

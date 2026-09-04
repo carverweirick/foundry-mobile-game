@@ -44,6 +44,36 @@ const TIER_DEFECT_MULTIPLIER := {
 	SkillTier.MASTER: 0.55,
 }
 
+## Seniority (design request, this session: "technician salary also
+## increases the more amount of factory levels they have stuck with you and
+## also get skill level ups like faster processing time and skill experience
+## for defect prevention") - factory_levels_stuck_with_you (below) counts how
+## many times GameData.level_up_factory() has fired while this specific
+## technician was already on the roster; a technician hired after a level-up
+## starts at 0 and only accrues from their own next level-up onward, so
+## seniority is genuinely earned by sticking around, not backfilled.
+##
+## Three first-pass placeholder curves off that one counter, all uncapped by
+## season/anything except their own multiplier caps below:
+## - Wage grows (a raise per level, see wage below) - the actual cost side
+##   of "salary increases."
+## - defect_multiplier decays further below its tier baseline (see
+##   defect_multiplier below) - "skill experience for defect prevention,"
+##   reusing the exact lever Station._roll_defect_outcome() already reads,
+##   rather than inventing a parallel stat.
+## - A new seniority_speed_multiplier (>1.0) stacks with the existing
+##   productivity_multiplier walking penalty in Station._effective_timer_duration()
+##   - "faster processing time."
+const WAGE_TENURE_GROWTH_RATE: float = 0.15
+const SENIORITY_DEFECT_MULTIPLIER_DECAY: float = 0.95
+const SENIORITY_DEFECT_MULTIPLIER_FLOOR: float = 0.25
+const SENIORITY_SPEED_BONUS_PER_LEVEL: float = 0.06
+const SENIORITY_SPEED_MULTIPLIER_CAP: float = 1.6
+
+## Never reset, never decremented (no fire/layoff mechanic exists) - see the
+## constants block above for what this actually drives.
+var factory_levels_stuck_with_you: int = 0
+
 ## First-pass placeholder walking penalty (Section 7) - deliberately reuses
 ## the same 100/85/70/55 shape as TIER_DEFECT_MULTIPLIER above, keyed by
 ## station count instead of skill tier. One station is full productivity;
@@ -261,11 +291,23 @@ var _interact_elapsed: float = 0.0
 var hire_cost: int:
 	get: return TIER_HIRE_COST[skill_tier]
 
+## Grows with tenure - see WAGE_TENURE_GROWTH_RATE's own comment above.
 var wage: int:
-	get: return TIER_WAGE[skill_tier]
+	get: return roundi(TIER_WAGE[skill_tier] * (1.0 + WAGE_TENURE_GROWTH_RATE * factory_levels_stuck_with_you))
 
+## Shrinks (better) with tenure, floored at SENIORITY_DEFECT_MULTIPLIER_FLOOR
+## so a long-tenured worker still isn't literally risk-free.
 var defect_multiplier: float:
-	get: return TIER_DEFECT_MULTIPLIER[skill_tier]
+	get:
+		var decayed: float = TIER_DEFECT_MULTIPLIER[skill_tier] * pow(SENIORITY_DEFECT_MULTIPLIER_DECAY, factory_levels_stuck_with_you)
+		return max(decayed, SENIORITY_DEFECT_MULTIPLIER_FLOOR)
+
+## "Faster processing time" from sticking around - stacks multiplicatively
+## with productivity_multiplier in Station._effective_timer_duration(), not
+## in place of it (that one's about station-count split-attention, this one's
+## about getting better at the job over time).
+var seniority_speed_multiplier: float:
+	get: return min(1.0 + SENIORITY_SPEED_BONUS_PER_LEVEL * factory_levels_stuck_with_you, SENIORITY_SPEED_MULTIPLIER_CAP)
 
 var tier_label: String:
 	get: return TIER_LABEL[skill_tier]

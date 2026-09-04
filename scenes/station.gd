@@ -1078,10 +1078,19 @@ func _start_running() -> void:
 	station_timer.start()
 
 
+## Design request, this session: "when you upgrade to the next factory level
+## your processes get faster" - GameData.factory_process_speed_multiplier()
+## applies shop-wide, staffed or not (an unstaffed/automatic station still
+## benefits). A staffed station additionally divides by the active worker's
+## own productivity_multiplier (station-count walking penalty, unchanged)
+## and seniority_speed_multiplier (new this session - "faster processing
+## time" from sticking around through level-ups).
 func _effective_timer_duration() -> float:
+	var base_duration: float = timer_duration / GameData.factory_process_speed_multiplier()
 	if active_worker == null:
-		return max(timer_duration, 0.01)
-	return max(timer_duration / active_worker.productivity_multiplier, 0.01)
+		return max(base_duration, 0.01)
+	var worker_speed := active_worker.productivity_multiplier * active_worker.seniority_speed_multiplier
+	return max(base_duration / worker_speed, 0.01)
 
 
 func _on_station_timer_timeout() -> void:

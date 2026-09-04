@@ -382,14 +382,32 @@ happens directly on `main` unless a new feature branch is called for.
   defective-discard branch applies `REPUTATION_LOSS_DEFECTIVE_SHIP`. All
   three also move `GameData.company_relationships`
   (`customer_name -> 0-5 stars`), shown per-contract.
-- **Factory Level** rises from lifetime EXP earned by completing contracts,
-  never spent currency. `GameData.factory_exp` +=
+- **Factory Level** is a two-step eligibility-then-purchase flow (design
+  request, this session: "change how you get to the next factory level by
+  paying a price" - reverses an earlier session's explicit "no currency to
+  upgrade factory level" decision), same shape as `contract_offers`/
+  `applicant_pool` elsewhere in this file. `GameData.factory_exp` +=
   `FACTORY_EXP_PER_CONTRACT_TIER` (10/25/60/150 by tier) on every contract
-  shipment (regardless of on-time status), looping to raise `factory_level`
-  across `FACTORY_LEVEL_EXP_THRESHOLD` for as long as it clears (so one big
-  contract can jump multiple levels). `FACTORY_LEVEL_PRINTER_CAP` populated
-  through Level 5 (`{1:2, 2:3, 3:4, 4:5, 5:6}`) - a placeholder ceiling, not
-  a deliberate cap. `factory_progress_changed` signal fires on every award.
+  shipment (regardless of on-time status) and never resets/spends, but
+  crossing `FACTORY_LEVEL_EXP_THRESHOLD` only flips
+  `can_level_up_factory()` true - it no longer auto-levels.
+  `GameData.level_up_factory()` is the deliberate paid action (a "Level Up"
+  button on the Printers overlay, next to the EXP progress row): spends
+  `FACTORY_LEVEL_UP_PRICE` (400/800/1400/2200 for levels 2-5, gold-first-
+  then-gems via `try_spend_with_gems()` - a hard affordability gate, disables
+  the button), THEN raises `factory_level`, THEN pays every hired
+  Technician/Engineer's current wage as a lump sum ("you have to pay your
+  technicians salary when you level up") - gold-only, force-deducted, can
+  push `currency` negative (see Wage economy below) rather than blocking the
+  level-up itself. `FACTORY_LEVEL_PRINTER_CAP` populated through Level 5
+  (`{1:2, 2:3, 3:4, 4:5, 5:6}`) - a placeholder ceiling, not a deliberate
+  cap. **Leveling up also speeds up every process shop-wide** -
+  `GameData.factory_process_speed_multiplier()` (+8%/level, so 1.32x at
+  Level 5) divides every station's effective timer duration
+  (`Station._effective_timer_duration()`), staffed or not - the one
+  factory-level effect that isn't gated behind having a technician present.
+  `factory_progress_changed` signal fires on every EXP award and on every
+  successful level-up.
 - **Gems** (`GameData.gems`, starts at 0) are a second, harder-to-get
   currency. The only source is `FACTORY_LEVEL_UP_GEM_REWARD` (5) gems per
   Factory Level gained - a milestone reward, not routine income. **Every
@@ -647,33 +665,51 @@ happens directly on `main` unless a new feature branch is called for.
   a toggled-visibility label) needs an explicit `custom_minimum_size.y`
   (~40px/2 lines), or it reflows every sibling row below it - same
   recurring-gotcha note as above, for height instead of width.
-- **Wage economy tick** (`GameData._process_wages()`, this session) - closes
-  the gap where `Technician.wage` was stored but never spent. Every hired
-  technician/engineer draws their `wage` every payday
-  (`WAGE_PAYMENT_INTERVAL_SECONDS` = 90s, a flat real-seconds cadence like
-  `CONTRACT_GENERATION_COOLDOWN_SECONDS`/`APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS`,
-  not run through the compressed per-station `PROTOTYPE_SECONDS_PER_MINUTE`
-  scale) **regardless of whether they're currently assigned anywhere** -
-  matching the existing comment on Specialist hiring ("no ongoing wage,
-  unlike a station Technician"). Payroll is gold-only and force-deducted
+- **Wage economy, paid at Factory Level-up, not on a timer** (design request,
+  this session: "have wages be an addition to the factory level" - replaces
+  a same-session first pass that used a flat 90s real-time payday clock,
+  since removed). Every hired technician/engineer draws their `wage`
+  **regardless of whether they're currently assigned anywhere** - matching
+  the existing comment on Specialist hiring ("no ongoing wage, unlike a
+  station Technician") - but the payment moment is now
+  `GameData.level_up_factory()` (see Factory Level above), not a standing
+  clock. Payroll is gold-only and force-deducted
   (`currency -= total_wage_payroll()`), deliberately NOT routed through
-  `try_spend_with_gems()` - an automatic recurring cost shouldn't silently
-  drain the harder-earned Gems currency the way a deliberate purchase can.
-  If gold can't cover it, `currency` goes negative (real debt) rather than
-  blocking payday or firing anyone - nothing currently un-hires a
-  technician. Debt already organically blocks every other purchase for free
+  `try_spend_with_gems()` - an automatic cost triggered by leveling up
+  shouldn't silently drain the harder-earned Gems currency the way the
+  level-up's own price (a deliberate, hard-gated purchase) can. If gold
+  can't cover it, `currency` goes negative (real debt) rather than blocking
+  the level-up or firing anyone - nothing currently un-hires a technician.
+  Debt already organically blocks every other purchase for free
   (`can_afford`/`can_afford_with_gems` both compare against `currency`, so a
-  bigger shortfall just demands more Gems), so no separate lockout flag was
-  needed. `GameData.is_in_wage_debt()` (`currency < 0`) drives two visible
-  cues: the HUD `CurrencyLabel` (`main.gd`) and the Staff overlay's new
-  `PayrollLabel` both turn red. `PayrollLabel` (`%PayrollLabel` in
-  `staff_overlay.tscn`, between the Roster header and list) shows total
-  payroll and a live countdown to the next payday
-  (`GameData.wage_payment_seconds_left()`); each roster row's header also
-  now shows that technician's own wage. A `payday(total_wages,
-  went_into_debt)` signal fires every payment (whether or not it was fully
-  covered) for StaffOverlay's live readout, separate from `currency_changed`
-  (which also fires for every unrelated purchase/sale).
+  bigger shortfall just demands more Gems). `GameData.is_in_wage_debt()`
+  (`currency < 0`) drives two visible cues: the HUD `CurrencyLabel`
+  (`main.gd`) and the Staff overlay's `PayrollLabel` both turn red.
+  `PayrollLabel` (`%PayrollLabel` in `staff_overlay.tscn`, between the
+  Roster header and list) previews total standing payroll ("paid out
+  whenever you level up the factory"); each roster row's header also shows
+  that technician's own wage and tenure. A `payday(total_wages,
+  went_into_debt)` signal fires on every level-up-triggered payment for
+  StaffOverlay's live readout, separate from `currency_changed` (which also
+  fires for every unrelated purchase/sale).
+- **Technician seniority** (`Technician.factory_levels_stuck_with_you`,
+  design request, this session: "technician salary also increases the more
+  amount of factory levels they have stuck with you and also get skill
+  level ups like faster processing time and skill experience for defect
+  prevention") - a per-technician counter incremented once per technician on
+  every successful `level_up_factory()` call, so someone hired after a
+  level-up starts at 0 and only earns tenure from their own next level-up
+  onward (never backfilled, never decremented - no fire/layoff mechanic
+  exists). Three tenure-scaled effects, all first-pass placeholder curves:
+  `wage` grows (+15%/tenure level, compounding is linear not exponential -
+  the actual "salary increases" mechanic); `defect_multiplier` shrinks
+  further below its skill-tier baseline (×0.95/tenure level, floored at
+  0.25) - "skill experience for defect prevention," reusing the exact lever
+  `Station._roll_defect_outcome()` already reads rather than a new stat; and
+  a new `seniority_speed_multiplier` (+6%/tenure level, capped at 1.6x)
+  stacks multiplicatively with the existing `productivity_multiplier`
+  walking-penalty in `Station._effective_timer_duration()` - "faster
+  processing time."
 
 **Printers overlay - entry-point split** (`scenes/printers_overlay.gd` +
 `.tscn`, extends `OverlayBase`, Section 6)
@@ -685,6 +721,16 @@ happens directly on `main` unless a new feature branch is called for.
   are still managed per-instance from that printer's own Station Detail
   Menu. Refreshes off `currency_changed`/`factory_progress_changed` plus the
   0.25s poll, `_click_in_progress()`-guarded like every overlay.
+- **LevelUpButton** (`%LevelUpButton`, this session) is the sole place
+  `GameData.level_up_factory()` gets called - see Factory Level under
+  Contracts above for the full price+payroll mechanics. Its own text
+  previews both numbers before commit (`"Level Up to N (Xg price + Yg
+  payroll)"`), disabled whenever `can_level_up_factory()` is false (not
+  enough EXP yet) or `can_afford_factory_level_up()` is false (price alone
+  unaffordable - payroll never gates this button, it can push into debt
+  instead, see Wage economy under Staff overlay). `ProcessSpeedLabel`
+  (`%ProcessSpeedLabel`) shows the live shop-wide speed bonus
+  (`GameData.factory_process_speed_multiplier()`) as a flat percentage.
 
 **Settings overlay** (`scenes/settings_overlay.gd` + `.tscn`, extends
 `OverlayBase`; `autoload/theme_manager.gd`, registered as the `ThemeManager`

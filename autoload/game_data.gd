@@ -15,8 +15,9 @@ signal reputation_changed(new_amount: int)
 ## it already listens for currency_changed, since factory progress doesn't
 ## otherwise correlate with any existing signal.
 signal factory_progress_changed()
-## Fires every payday (see _process_wages()), whether or not it was fully
-## covered - StaffOverlay uses this to show a live "last payday" readout
+## Fires every payday - now specifically the wage payment bundled into every
+## factory level-up (see level_up_factory()) - whether or not it was fully
+## covered. StaffOverlay uses this to show a live "last payday" readout
 ## instead of just inferring it from currency_changed (which also fires for
 ## every unrelated purchase/sale).
 signal payday(total_wages: int, went_into_debt: bool)
@@ -367,22 +368,16 @@ var held_parts: Array[Part] = []
 ## anywhere - the Shop's Technicians tab roster (design doc Section 6/7).
 var technicians: Array[Technician] = []
 
-## Wage economy tick (design doc Section 6/7's wage numbers existed on
-## Technician from the start, but nothing ever spent them - see
-## Technician.wage). A hired technician/engineer draws wage every payday
-## REGARDLESS of whether they're currently assigned anywhere, matching the
-## comment on Specialist hiring ("no ongoing wage, unlike a station
-## Technician") - the wage is the cost of having them on payroll at all, not
-## a per-station operating cost.
-##
-## Cadence is a flat real-seconds constant, same style as
-## CONTRACT_GENERATION_COOLDOWN_SECONDS/APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS
-## rather than run through PROTOTYPE_SECONDS_PER_MINUTE - payroll is a
-## meta/economy-layer cadence, not a compressed real-world station timer.
-const WAGE_PAYMENT_INTERVAL_SECONDS: float = 90.0
-var _wage_payment_timer: float = 0.0
-
-
+## Wage economy (design doc Section 6/7's wage numbers existed on Technician
+## from the start, but nothing ever spent them - see Technician.wage).
+## Design request, this session: "have wages be an addition to the factory
+## level" - payday is no longer a standing real-time clock (that first-pass
+## version is gone); wages are now paid out as part of leveling up the
+## factory itself (see level_up_factory() below), a deliberate, escalating
+## milestone cost instead of ambient background drain. total_wage_payroll()
+## stays a standalone query - it's also what the Printers overlay previews
+## before the player commits to a level-up, and what StaffOverlay shows as
+## the roster's current standing cost.
 func total_wage_payroll() -> int:
 	var total := 0
 	for tech in technicians:
@@ -390,36 +385,8 @@ func total_wage_payroll() -> int:
 	return total
 
 
-## Force-deducts payroll every WAGE_PAYMENT_INTERVAL_SECONDS - deliberately
-## NOT routed through try_spend_with_gems(): wages are gold-only and always
-## go through even if currency can't cover them (currency goes negative,
-## real debt) rather than silently draining gems the player earned as a
-## harder-won milestone reward, or blocking payday outright. Going negative
-## already organically blocks every other purchase (can_afford/
-## can_afford_with_gems both compare against currency, and a bigger
-## shortfall just means more gems are required), so debt is a real, felt
-## consequence without needing a separate lockout flag.
-func _process_wages(delta: float) -> void:
-	if technicians.is_empty():
-		return
-	_wage_payment_timer += delta
-	if _wage_payment_timer < WAGE_PAYMENT_INTERVAL_SECONDS:
-		return
-	_wage_payment_timer = 0.0
-	var total := total_wage_payroll()
-	if total <= 0:
-		return
-	currency -= total
-	currency_changed.emit(currency)
-	payday.emit(total, currency < 0)
-
-
 func is_in_wage_debt() -> bool:
 	return currency < 0
-
-
-func wage_payment_seconds_left() -> float:
-	return WAGE_PAYMENT_INTERVAL_SECONDS - _wage_payment_timer
 
 
 ## Rotating applicant pool (design request, this session: "build the rotating
@@ -1376,7 +1343,6 @@ func _process(delta: float) -> void:
 	_check_defect_escalations()
 	_process_contracts(delta)
 	_process_applicant_pool(delta)
-	_process_wages(delta)
 
 
 ## Design doc Section 9, escalation: sweeps every live Part (wherever it
@@ -1611,13 +1577,15 @@ func printer_cap() -> int:
 	return FACTORY_LEVEL_PRINTER_CAP.get(factory_level, FACTORY_LEVEL_PRINTER_CAP[1])
 
 
-## Design request (this session): "i want you to gain exp from completing
-## contracts. no currency to upgrade factory level" - Factory Level now
-## rises purely from a lifetime EXP total awarded whenever a contract fully
-## ships, never spent and with no currency step at all (unlike literally
-## every other upgrade in the game - stations, printers, rack capacity,
-## specialists, technicians). This directly answers design doc Section 20
-## item 5 ("decide what actually raises factory level").
+## Originally "no currency to upgrade factory level" (an earlier session's
+## design request) - reversed this session ("change how you get to the next
+## factory level by paying a price"). factory_exp is now a lifetime,
+## never-spent ELIGIBILITY total, still awarded whenever a contract fully
+## ships - crossing a level's threshold (FACTORY_LEVEL_EXP_THRESHOLD below)
+## no longer levels up by itself, it just unlocks the ABILITY to pay for that
+## level (can_level_up_factory()/level_up_factory() below), same two-step
+## shape contract_offers/applicant_pool already use elsewhere in this file
+## (roll/unlock first, a separate deliberate spend actually claims it).
 var factory_exp: int = 0
 
 ## First-pass placeholder EXP-per-tier table, scaled the same direction as
@@ -1655,20 +1623,84 @@ func is_factory_level_maxed() -> bool:
 ## Called once per fully-shipped contract (see credit_contract_shipment()) -
 ## awards EXP regardless of whether the contract was on time, since
 ## "completing" a contract is a broader condition than the on-time-only gate
-## Reputation itself uses. A single big contract can cross more than one
-## level's threshold at once, so this loops rather than checking once.
+## Reputation itself uses. No longer auto-levels on its own (design request,
+## this session: "change how you get to the next factory level by paying a
+## price") - crossing a threshold now only makes the player ELIGIBLE
+## (can_level_up_factory() below); level_up_factory() is the one place
+## factory_level actually moves, and it's a deliberate, paid player action.
+## EXP itself keeps accumulating past the next threshold with no cap, so a
+## big contract that clears two levels' worth at once just leaves the player
+## able to immediately pay for a second level-up right after the first.
 func _award_factory_exp(tier: Contract.ContractTier) -> void:
 	factory_exp += FACTORY_EXP_PER_CONTRACT_TIER.get(tier, FACTORY_EXP_PER_CONTRACT_TIER[Contract.ContractTier.LOCAL_SHOPS])
-	var levels_gained := 0
-	while not is_factory_level_maxed() and factory_exp >= factory_exp_for_level(factory_level + 1):
-		factory_level += 1
-		levels_gained += 1
-	if levels_gained > 0:
-		# The one gem source that exists so far - a genuine milestone reward,
-		# not routine contract income, matching "harder to get."
-		gems += levels_gained * FACTORY_LEVEL_UP_GEM_REWARD
-		gems_changed.emit(gems)
 	factory_progress_changed.emit()
+
+
+func can_level_up_factory() -> bool:
+	return not is_factory_level_maxed() and factory_exp >= factory_exp_for_level(factory_level + 1)
+
+
+## First-pass placeholder "factory expansion" price, keyed by the level being
+## bought INTO (2..5) - Section 20 gives no numbers since paying to level up
+## didn't exist before this session. Priced above PRINTER_PURCHASE_COST's own
+## top end since leveling the whole factory (faster processes shop-wide, a
+## higher printer cap) is a bigger deal than any single purchase.
+const FACTORY_LEVEL_UP_PRICE := {2: 400, 3: 800, 4: 1400, 5: 2200}
+
+func factory_level_up_price() -> int:
+	if is_factory_level_maxed():
+		return 0
+	return FACTORY_LEVEL_UP_PRICE.get(factory_level + 1, 0)
+
+
+func can_afford_factory_level_up() -> bool:
+	return can_level_up_factory() and can_afford_with_gems(factory_level_up_price())
+
+
+## Design request, this session: leveling up now costs real currency (the
+## "price" above, gold-first-then-gems like every other real purchase) AND
+## triggers a full payroll payment - "you have to pay your technicians
+## salary when you level up." Order matters: tenure/skill first, THEN
+## payroll, so the payout reflects the raise this exact level-up just
+## granted (Technician.wage grows with factory_levels_stuck_with_you) -
+## narratively, leveling up is a promotion event, and everyone who stuck
+## around gets both a raise and their bonus check in the same moment. The
+## price itself is a hard affordability gate (can_afford_factory_level_up()
+## above); the payroll portion is NOT - it force-deducts the same
+## debt-capable way the old standing wage tick did (see
+## is_in_wage_debt()), since "you have to pay" shouldn't itself block the
+## level-up that triggered it.
+func level_up_factory() -> bool:
+	if not can_afford_factory_level_up():
+		return false
+	if not try_spend_with_gems(factory_level_up_price()):
+		return false
+	factory_level += 1
+	for tech in technicians:
+		tech.factory_levels_stuck_with_you += 1
+	var payroll := total_wage_payroll()
+	if payroll > 0:
+		currency -= payroll
+		currency_changed.emit(currency)
+		payday.emit(payroll, currency < 0)
+	# The one gem source that exists so far - a genuine milestone reward, not
+	# routine contract income, matching "harder to get."
+	gems += FACTORY_LEVEL_UP_GEM_REWARD
+	gems_changed.emit(gems)
+	factory_progress_changed.emit()
+	return true
+
+
+## "Your processes get faster" (design request, this session) - a shop-wide
+## timer speed-up applied on top of everything station-specific
+## (Technician.productivity_multiplier, Technician.seniority_speed_multiplier),
+## read by Station._effective_timer_duration() regardless of staffing, so it
+## benefits unstaffed/automatic stations too. First-pass placeholder rate;
+## tops out at FACTORY_LEVEL_MAX (5) => 1.0 + 0.08*4 = 1.32x.
+const FACTORY_LEVEL_SPEED_BONUS_PER_LEVEL: float = 0.08
+
+func factory_process_speed_multiplier() -> float:
+	return 1.0 + FACTORY_LEVEL_SPEED_BONUS_PER_LEVEL * (factory_level - 1)
 
 
 func can_buy_printer() -> bool:
