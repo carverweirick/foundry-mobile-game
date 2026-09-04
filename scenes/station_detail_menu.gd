@@ -11,9 +11,16 @@ signal opened()
 ## single Station now that the floor itself is display-only: Queue, Collect,
 ## batch size, inserting a held Part (the design doc's "next station's own
 ## Batch Picker" entry point, alongside the Menu Overlay's Awaiting Transfer
-## tab), and spending currency to upgrade the tier. Hiring/assigning a
-## technician happens in the Shop overlay's Technicians tab instead - this
-## popup only shows who's currently staffing the station, read-only.
+## tab), spending currency to upgrade the tier, and - design request, this
+## session: "when i tap on a station i want there to be an option where i
+## can select technicians and assign them to the station" - assigning or
+## unassigning any hired technician directly (see
+## TechnicianAssignList/_refresh_technician_assign_list() below). Hiring
+## itself (bringing a new applicant onto the roster at all) still only
+## happens from the Staff overlay - this popup works with whoever's already
+## hired, same as the Staff overlay's own per-station checkboxes, just
+## scoped to the one station the player is already looking at instead of
+## requiring a trip to a different overlay.
 
 const REFRESH_INTERVAL: float = 0.25
 
@@ -30,6 +37,7 @@ const REFRESH_INTERVAL: float = 0.25
 @onready var batch_spin_box: SpinBox = %BatchSpinBox
 @onready var inventory_list: VBoxContainer = %InventoryList
 @onready var technician_status_label: Label = %TechnicianStatusLabel
+@onready var technician_assign_list: VBoxContainer = %TechnicianAssignList
 @onready var upgrade_button: Button = %UpgradeButton
 @onready var upgrade_rack_button: Button = %UpgradeRackButton
 @onready var rack_panel: Panel = %RackPanel
@@ -349,7 +357,9 @@ func _refresh() -> void:
 			])
 		technician_status_label.text = "Staffed:\n" + "\n".join(PackedStringArray(lines))
 	else:
-		technician_status_label.text = "Unstaffed - hire and assign from the Shop"
+		technician_status_label.text = "Unstaffed - assign a technician below"
+
+	_refresh_technician_assign_list()
 
 	upgrade_button.visible = not is_automatic and _station.current_tier < 5
 	if upgrade_button.visible:
@@ -364,6 +374,78 @@ func _refresh() -> void:
 		var rack_cost := GameData.rack_upgrade_cost_for(rack_target)
 		upgrade_rack_button.text = "Upgrade Rack to %d slots (%dg)" % [rack_target, rack_cost]
 		upgrade_rack_button.disabled = not GameData.can_afford_with_gems(rack_cost)
+
+
+## Design request, this session: assign/unassign any hired technician right
+## from this popup instead of only from the Staff overlay's roster
+## checkboxes. Full rebuild every refresh (same pattern as inventory_list
+## below, guarded the same way by _process()'s _click_in_progress() check
+## and the deferred call in _on_toggle_technician_assignment()) rather than a
+## persistent-widget list - this one's short (one row per hired technician)
+## and doesn't churn every frame the way the rack grid does, so the extra
+## bookkeeping a persistent list needs isn't worth it here.
+func _refresh_technician_assign_list() -> void:
+	_clear_list(technician_assign_list)
+	if _station == null or _station.station_type == Station.StationType.AUTOMATIC:
+		return
+
+	if GameData.technicians.is_empty():
+		var empty_label := Label.new()
+		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty_label.text = "No technicians hired yet - hire from the Staff overlay."
+		technician_assign_list.add_child(empty_label)
+		return
+
+	# Printer instances can also be covered by the Staff overlay's "Printing
+	# (all)" group checkbox (GameData.assign_technician_to_printer_group()) -
+	# that's an all-or-nothing group membership, not a per-instance one, so
+	# unassigning from just THIS printer isn't a real operation the data
+	# model supports (GameData.unassign_technician() only ever erases a
+	# literal station id from assigned_station_ids, never the "printing"
+	# group entry a group member actually carries). Rather than silently do
+	# nothing or invent new partial-group-exclusion semantics, this shows a
+	# read-only note for a group-covered technician here and points at the
+	# Staff overlay, which is already the correct control surface for
+	# group membership.
+	var is_printer := _station.station_id.begins_with("printing_")
+
+	for tech: Technician in GameData.technicians:
+		var row := HBoxContainer.new()
+
+		var label := Label.new()
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.text = "%s (%s, %s Tier)" % [tech.technician_name, tech.role_label, tech.tier_label]
+		row.add_child(label)
+
+		var assigned_here := _station.assigned_technicians.has(tech)
+		var group_covered := is_printer and tech.assigned_station_ids.has("printing")
+
+		if assigned_here and group_covered:
+			var note := Label.new()
+			note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			note.text = "via 'Printing (all)' - manage from Staff"
+			row.add_child(note)
+		else:
+			var button := Button.new()
+			button.text = "Unassign" if assigned_here else "Assign"
+			button.pressed.connect(_on_toggle_technician_assignment.bind(tech, assigned_here))
+			row.add_child(button)
+
+		technician_assign_list.add_child(row)
+
+
+## Deferred for the same reason _on_insert_part() is: this rebuilds
+## technician_assign_list, which destroys the very button this handler is
+## still running because of.
+func _on_toggle_technician_assignment(tech: Technician, was_assigned: bool) -> void:
+	if _station == null:
+		return
+	if was_assigned:
+		GameData.unassign_technician(tech, _station)
+	else:
+		GameData.assign_technician(tech, _station)
+	_refresh.call_deferred()
 
 
 ## Design doc Section 9's two per-Part fix paths (Mortar Patch, Shell Crack

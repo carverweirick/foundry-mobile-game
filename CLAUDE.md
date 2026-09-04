@@ -319,9 +319,42 @@ happens directly on `main` unless a new feature branch is called for.
   stations), batch size `SpinBox` (batched, unstaffed), **Insert Part From
   Inventory** (held_parts bound for this station, real Part#/Contract/
   Familiarity/Defect columns, defective sorted first), a staffing line
-  (name/tier, productivity %, physical location, carried-parts summary), and
-  an Upgrade button (`GameData.upgrade_cost_for_tier()`, spent via
-  `try_spend_with_gems()`).
+  (name/tier, productivity %, physical location, carried-parts summary), an
+  **Assign Technician list**, and an Upgrade button
+  (`GameData.upgrade_cost_for_tier()`, spent via `try_spend_with_gems()`).
+- **Assign Technician list** (`%TechnicianAssignList`, design request, this
+  session: "when i tap on a station i want there to be an option where i can
+  select technicians and assign them to the station") - one row per hired
+  technician (`GameData.technicians`, not per-applicant - hiring itself is
+  still Staff-overlay-only), each with an Assign/Unassign button calling the
+  same `GameData.assign_technician()`/`unassign_technician()` the Staff
+  overlay's roster checkboxes use, just scoped to the one station already
+  open instead of requiring a trip to a different overlay. Full rebuild every
+  `_refresh()` (not the persistent-widget pattern the rack grid uses - this
+  list is short and doesn't churn every frame), guarded by the same
+  `_click_in_progress()`/deferred-refresh pattern as every other button here.
+  A technician covered by the Staff overlay's "Printing (all)" group
+  checkbox shows a read-only "via 'Printing (all)' - manage from Staff" note
+  instead of an Unassign button at any individual printer instance - the
+  group is all-or-nothing membership (`Technician.assigned_station_ids`
+  holds the literal string `"printing"`, never a specific instance id, for a
+  group member), so unassigning from just one printer here isn't an
+  operation the data model actually supports; this avoids either silently
+  no-oping or inventing new partial-exclusion semantics.
+- **Staffed-but-idle now explains why** (player report, this session: "the
+  technicians aren't starting their machine they're assigned to" - a real
+  headless run confirmed the assign -> act -> run pipeline itself works
+  correctly end to end, so the far more likely real cause was a staffed
+  entry station legitimately idle for a reason the player had no way to
+  see). `Station._idle_status_text()` (shared by the floor's own status
+  label and `get_overview_status()`, so the floor, Overview tab, and this
+  popup's status line all agree) reads "Idle - no active contracts (accept
+  one from Contract Offers)" or "Idle - blocked, clear the backlog first"
+  for a staffed pipeline-entry station instead of a bare "Idle" - the two
+  real reasons `_auto_queue_if_possible()`/`can_start_new_work()` would
+  refuse to start anything. Also changed a non-entry idle station's
+  `get_overview_status()`/popup text from "Idle" to "Waiting for part",
+  matching what the floor label already said, for the same reason.
 - **Visual Queue Rack panel**: a second `Panel` (`%RackPanel`) beside the
   main popup, opens/closes in lockstep with it. Shows `Station.queue_rack`
   as a persistent 5x2 grid of slot `Button`s (built once, updated in place

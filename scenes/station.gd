@@ -1297,7 +1297,7 @@ func _update_display() -> void:
 	match current_state:
 		State.IDLE:
 			_clear_timer_bar()
-			status_label.text = "Idle" if is_pipeline_entry else "Waiting for part"
+			status_label.text = _idle_status_text()
 		State.RUNNING:
 			status_label.text = "Running"
 		State.READY:
@@ -1322,6 +1322,29 @@ func _parallel_shelling_status_text() -> String:
 	if not shelling_ready_parts.is_empty():
 		parts.append("%d ready" % shelling_ready_parts.size())
 	return ", ".join(PackedStringArray(parts))
+
+
+## Player report, this session: "the technicians aren't starting their
+## machine they're assigned to." A real headless run (assign a technician to
+## a staffed entry station with an active contract, let it tick for real)
+## showed the assign -> act -> run pipeline working correctly - the far more
+## likely real cause is a staffed entry station sitting genuinely idle for a
+## legible reason a bare "Idle" gives the player no way to see: no active
+## contract to build for yet (a fresh game starts with zero - see
+## GameData.contract_offers), or the can_start_new_work() backpressure gate.
+## Shared by the floor's own status label (_update_display()) and
+## get_overview_status() (Overview tab / Station Detail Menu) so both stay in
+## sync rather than drifting into two different "Idle" messages.
+func _idle_status_text() -> String:
+	if not is_pipeline_entry:
+		return "Waiting for part"
+	if assigned_technicians.is_empty():
+		return "Idle"
+	if GameData.get_active_contracts().is_empty():
+		return "Idle - no active contracts (accept one from Contract Offers)"
+	if not can_start_new_work():
+		return "Idle - blocked, clear the backlog first"
+	return "Idle"
 
 
 ## " (+N waiting)" when the queue rack has Parts buffered behind the active
@@ -1380,7 +1403,7 @@ func get_overview_status() -> String:
 	var status: String
 	match current_state:
 		State.IDLE:
-			status = "Idle"
+			status = _idle_status_text()
 		State.RUNNING:
 			status = "Running (%.1fs left)" % station_timer.time_left
 		State.READY:
