@@ -485,6 +485,22 @@ happens directly on `main` unless a new feature branch is called for.
   "BONUS QUALITY"/"FIRST ARTICLE" text), an info line with time/payout/
   `+N Factory EXP`, and an Accept button. Only one detail card is ever open
   at a time.
+- **Boxed rows** (design request, this session: "make each contract its own
+  box... just to differentiate them a little," off a screenshot showing
+  offer rows reading as one continuous block). Both `OfferRow` and the
+  Active tab's `ContractRow` wrap their existing `HBoxContainer` in a new
+  `PanelContainer` (`row.box` - the thing actually added to/removed from the
+  list now, `row.container` stays the inner label layout) styled by
+  `_row_box_style()`: a 2px border (lighter-weight than the outer overlay
+  `Panel`'s own 4px chrome, sized for a small row repeated many times, not
+  one big window) and a background one step lighter/darker than the
+  surrounding panel per theme, not identical to it, so each box actually
+  reads as a distinct card. Colors are a manual per-`ThemeChoice` literal
+  (matching this file's existing `FAMILY_ICON_COLOR`/risk-badge precedent for
+  small one-off widgets) rather than a Theme-resource lookup, so
+  `_restyle_all_rows()` re-applies the style to every existing row on
+  `ThemeManager.theme_changed` rather than relying on automatic propagation.
+  Verified with real (non-headless) screenshots in both themes.
 - **Multi-line-item contracts** - `Contract.line_items: Array[Contract.LineItem]`
   (each own geometry/alloy/quantity_required/quantity_shipped);
   `quantity_required`/`quantity_shipped`/`is_complete` are computed

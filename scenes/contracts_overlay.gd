@@ -42,6 +42,55 @@ func _on_ready() -> void:
 	GameData.contract_updated.connect(func(_c): _on_contract_updated())
 	GameData.contract_offers_changed.connect(func(): _on_offers_changed())
 	_build_offer_detail_section()
+	# Design request, this session: "make each contract its own box... just
+	# to differentiate them a little" - see _row_box_style()'s own comment.
+	# Its colors are a manual per-theme override (not automatic Theme-type
+	# lookup), so every existing row needs restyling on a live theme switch.
+	ThemeManager.theme_changed.connect(func(_choice): _restyle_all_rows())
+
+
+## Design request, this session: "make each contract its own box... just to
+## differentiate them a little" - both OfferRow and ContractRow used to be a
+## bare HBoxContainer sitting directly in the list with only the theme-wide
+## 8px VBoxContainer separation between them, easy to misread as one
+## continuous block at a glance (see the screenshot that prompted this).
+## Deliberately its own smaller stylebox rather than reusing
+## `Panel/styles/panel` (the outer overlay panel's own 4px-border/10px-margin
+## style) wholesale - that's tuned for one big window chrome, not a
+## repeated-many-times-in-a-scrollable-list row, and would read as
+## needlessly heavy stacked border-in-border. 2px border (matching this
+## theme's existing LineEdit/focus border weight, see CLAUDE.md's UI theme
+## notes) and a background one step lighter/darker than the surrounding
+## panel (rather than identical to it) so each box actually reads as a
+## distinct card. Picked manually per ThemeChoice rather than pulled from
+## the Theme resource, matching this file's existing FAMILY_ICON_COLOR/risk-
+## badge precedent of explicit one-off colors for small non-standard widgets.
+func _row_box_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	if ThemeManager.current_theme == ThemeManager.ThemeChoice.PARCHMENT:
+		style.bg_color = Color(0.885, 0.815, 0.63, 1)
+		style.border_color = Color(0.16, 0.11, 0.08, 1)
+	else:
+		style.bg_color = Color(0.155, 0.155, 0.18, 1)
+		style.border_color = Color(0.03, 0.03, 0.04, 1)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.content_margin_left = 8.0
+	style.content_margin_top = 6.0
+	style.content_margin_right = 8.0
+	style.content_margin_bottom = 6.0
+	style.anti_aliasing = false
+	return style
+
+
+func _restyle_all_rows() -> void:
+	var style := _row_box_style()
+	for row: OfferRow in _offer_rows.values():
+		row.box.add_theme_stylebox_override("panel", style)
+	for row: ContractRow in _contract_rows.values():
+		row.box.add_theme_stylebox_override("panel", style)
 
 
 func _process(delta: float) -> void:
@@ -86,6 +135,7 @@ func _refresh() -> void:
 ## when the underlying offer itself is gone - accepted or, in the future,
 ## rerolled).
 class OfferRow:
+	var box: PanelContainer
 	var container: HBoxContainer
 	var customer_label: Label
 	var payout_label: Label
@@ -132,7 +182,7 @@ func _refresh_offer_rows() -> void:
 	for cid in _offer_rows.keys().duplicate():
 		if not offer_ids.has(cid):
 			var stale: OfferRow = _offer_rows[cid]
-			stale.container.queue_free()
+			stale.box.queue_free()
 			_offer_rows.erase(cid)
 			if _selected_offer_id == cid:
 				_selected_offer_id = -1
@@ -153,7 +203,7 @@ func _refresh_offer_rows() -> void:
 		if row == null:
 			row = _create_offer_row()
 			_offer_rows[o.contract_id] = row
-			offers_root.add_child(row.container)
+			offers_root.add_child(row.box)
 		_update_offer_row(row, o)
 
 	_reposition_detail_section()
@@ -182,7 +232,7 @@ func _reposition_detail_section() -> void:
 	for child in offers_root.get_children():
 		if child == _detail_section:
 			continue
-		if child == selected_row.container:
+		if child == selected_row.box:
 			break
 		index_excluding_detail += 1
 	offers_root.move_child(_detail_section, index_excluding_detail + 1)
@@ -190,20 +240,28 @@ func _reposition_detail_section() -> void:
 
 func _create_offer_row() -> OfferRow:
 	var row := OfferRow.new()
-	row.container = HBoxContainer.new()
-	# The row itself is the click target now (no separate "View" button) -
+
+	row.box = PanelContainer.new()
+	row.box.add_theme_stylebox_override("panel", _row_box_style())
+	# The box itself is the click target now (no separate "View" button) -
 	# Control's default MOUSE_FILTER_STOP is exactly what's needed here so
 	# it actually receives gui_input rather than passing it through.
-	row.container.mouse_filter = Control.MOUSE_FILTER_STOP
-	row.container.gui_input.connect(_on_offer_row_gui_input.bind(row))
+	row.box.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.box.gui_input.connect(_on_offer_row_gui_input.bind(row))
+
+	row.container = HBoxContainer.new()
+	# IGNORE so a click anywhere in the row still reaches row.box above
+	# instead of being consumed by the inner HBoxContainer.
+	row.container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.box.add_child(row.container)
 
 	row.customer_label = Label.new()
 	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.customer_label.custom_minimum_size = Vector2(140.0, 24.0)
-	# IGNORE so a click landing on the label text itself still reaches the
-	# row container above instead of being consumed here - same fix this
-	# codebase already uses for decorative Controls sitting over a click
-	# target (e.g. the room-zone ColorRects on the shop floor).
+	# IGNORE so a click landing on the label text itself still reaches
+	# row.box above instead of being consumed here - same fix this codebase
+	# already uses for decorative Controls sitting over a click target
+	# (e.g. the room-zone ColorRects on the shop floor).
 	row.customer_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.container.add_child(row.customer_label)
 
@@ -521,6 +579,7 @@ func _clear_list(list: Container) -> void:
 ## change structurally (only when one completes), so this is worth doing the
 ## same persistent-widget way as the Overview overlay's rows.
 class ContractRow:
+	var box: PanelContainer
 	var container: HBoxContainer
 	var customer_label: Label
 	var relationship_label: Label
@@ -553,7 +612,7 @@ func _refresh_contracts_tab() -> void:
 	for contract_id in _contract_rows.keys().duplicate():
 		if not active_ids.has(contract_id):
 			var stale_row: ContractRow = _contract_rows[contract_id]
-			stale_row.container.queue_free()
+			stale_row.box.queue_free()
 			_contract_rows.erase(contract_id)
 
 	if active.is_empty():
@@ -572,7 +631,7 @@ func _refresh_contracts_tab() -> void:
 		if row == null:
 			row = _create_contract_row()
 			_contract_rows[c.contract_id] = row
-			contracts_list.add_child(row.container)
+			contracts_list.add_child(row.box)
 		var in_pipeline := GameData.count_parts_in_pipeline(c.contract_id)
 		var relationship := GameData.relationship_stars_for(c.customer_name)
 		row.customer_label.text = "%s (%s)" % [c.customer_name, c.tier_label]
@@ -600,7 +659,12 @@ func _reputation_summary_text() -> String:
 
 func _create_contract_row() -> ContractRow:
 	var row := ContractRow.new()
+
+	row.box = PanelContainer.new()
+	row.box.add_theme_stylebox_override("panel", _row_box_style())
+
 	row.container = HBoxContainer.new()
+	row.box.add_child(row.container)
 
 	row.customer_label = Label.new()
 	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
