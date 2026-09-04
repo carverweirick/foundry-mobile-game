@@ -212,11 +212,34 @@ happens directly on `main` unless a new feature branch is called for.
   don't compete to run the machine. `_effective_timer_duration()` and the
   defect-roll's `tech_mult` both read `active_worker` specifically.
   Coordination: `Technician._priority_tier_for()` skips a candidate station
-  if its `active_worker` already belongs to someone else, or if another
-  technician assigned there (cargo or not) is physically closer right now -
-  this is what keeps multiple technicians from all walking toward the same
-  station without reason, while still letting a cargo-carrier always
-  deliver and a closer non-carrier still visit for real work.
+  if its `active_worker` already belongs to someone else, or if
+  `Station.incoming_technician` already belongs to someone else - this is
+  what keeps multiple technicians from all walking toward the same station
+  without reason, while still letting a cargo-carrier always deliver (tier
+  0 bypasses both checks unconditionally).
+- **`Station.incoming_technician` - a route reservation, claimed the
+  instant a technician COMMITS to traveling somewhere, not on arrival**
+  (player report, this session: "id like there to be no point in time
+  where technicians are operating at the same station... they need to be
+  calculating ahead of time their route and making that known to other
+  technicians so they will not path to the same station"). Set in
+  `Station._travel_if_worthwhile()` the moment `pick_next_station()`
+  returns a real destination, cleared in `Technician.tick()`'s arrival
+  branch (or by `Station.unassign_technician()` if unassigned mid-walk
+  toward it). Replaced a first-pass real-time "whoever's physically closer
+  right now" distance race
+  (`GameData.closest_assigned_technician_distance()`, removed) that had a
+  genuine gap: a tie (equally distant - common when two technicians start
+  out parked together) resolved in nobody's favor under strict
+  less-than, so neither backed off and both could commit to the same open
+  station in the same frame - the actual mechanism behind a reported
+  "technicians bouncing between stations, not making progress" bug.
+  Verified headless: a constructed tie scenario (two technicians, each
+  assigned to a different home station plus one shared actionable target)
+  confirmed both technicians would independently pick the same target
+  before either commits, and that after one commits, the other's next
+  `pick_next_station()` call correctly falls back to "stay put" instead of
+  also traveling there.
 - **"Printing" is one assignable responsibility covering every owned
   printer**, not one checkbox per instance.
   `Technician.assigned_station_ids` can contain the virtual string

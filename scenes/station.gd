@@ -144,6 +144,30 @@ var assigned_technicians: Array[Technician] = []
 ## slot) is a mere visitor - see _technician_act_as_visitor() - they can
 ## still drop cargo into the rack, just don't compete to run the machine.
 var active_worker: Technician = null
+
+## Player report, this session: "the pathing algorithm for the technicians
+## is still messed up... id like there to be no point in time where
+## technicians are operating at the same station... maybe they need to be
+## calculating ahead of time their route and making that known to other
+## technicians so they will not path to the same station" - exactly this
+## field. Set the instant a technician COMMITS to traveling here
+## (_travel_if_worthwhile() below), not when they arrive - active_worker
+## alone only ever reflected who's already physically present, leaving a
+## real window where a second (or third) technician, evaluating their own
+## next move on some other station this same frame, had no way to see that
+## this one was already spoken for and could independently commit to the
+## exact same destination. The old defense against that
+## (GameData.closest_assigned_technician_distance(), a live real-time "who's
+## closer" race) had a real gap of its own: a tie (equally distant, common
+## when two technicians start out parked together) resolved in NOBODY's
+## favor, so neither backed off. A reservation claimed synchronously the
+## moment a decision is made closes that race outright, regardless of
+## processing order or distance ties - see Technician._priority_tier_for(),
+## which now treats a station with someone else already incoming exactly
+## like one with someone else already active_worker. Cleared the instant
+## that technician actually arrives (Technician.tick()'s arrival branch) or
+## gets unassigned from this specific station (unassign_technician() below).
+var incoming_technician: Technician = null
 var _has_tiered_art: bool = false
 var _has_state_art: bool = false
 
@@ -432,6 +456,13 @@ func _travel_if_worthwhile(tech: Technician) -> void:
 	if next_id != tech.current_station_id:
 		if active_worker == tech:
 			active_worker = null
+		# Claim the destination the instant the decision is made, not on
+		# arrival - see incoming_technician's own comment above for why this
+		# specifically is what closes the "two technicians pick the same
+		# open station" race.
+		var next_station: Station = GameData.station_by_id.get(next_id)
+		if next_station != null:
+			next_station.incoming_technician = tech
 		tech.start_traveling_to(next_id)
 
 
@@ -802,11 +833,16 @@ func _claim_held_parts_bound_here() -> bool:
 ## Low-level wiring only, see assign_technician() above - call
 ## GameData.unassign_technician() instead so the roster stays in sync. If
 ## tech happened to be the active_worker, releases that slot too so whoever
-## else is still assigned (and present) can claim it.
+## else is still assigned (and present) can claim it. Also releases a still-
+## pending incoming_technician claim (tech unassigned from this station
+## while already mid-walk toward it) - otherwise that claim would dangle
+## forever, since nothing else ever clears it besides a real arrival.
 func unassign_technician(tech: Technician) -> void:
 	assigned_technicians.erase(tech)
 	if active_worker == tech:
 		active_worker = null
+	if incoming_technician == tech:
+		incoming_technician = null
 	_update_display()
 
 

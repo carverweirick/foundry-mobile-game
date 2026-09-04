@@ -393,6 +393,17 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 			current_station_id = travel_target_station_id
 			travel_target_station_id = ""
 			is_traveling = false
+			# Release the reservation this technician claimed on committing
+			# to this destination (Station._travel_if_worthwhile()) - see
+			# Station.incoming_technician's own comment. Arrival is a strictly
+			# earlier point in this same frame than Station._process()'s own
+			# technician loop, so by the time anyone else's
+			# _priority_tier_for() runs this frame, this station already
+			# reads as "nobody incoming" again (station is instead now
+			# active_worker'd, or open, exactly as if this claim never
+			# existed once physically resolved).
+			if target is Station and target.incoming_technician == self:
+				target.incoming_technician = null
 			return true
 		current_position += to_target.normalized() * step
 		# Position moved but nothing UI-relevant changed - main.gd reads
@@ -486,12 +497,11 @@ func pick_next_station(station_by_id: Dictionary) -> String:
 	return best_id
 
 
-## Design request, this session: multiple technicians can now be assigned to
-## the same station (Station.assigned_technicians, plural), but "there
-## shouldn't be more than one technician working a station," and "there
-## shouldn't be multiple technicians ever walking toward a station unless
-## they have a reason to." Two coordination checks below implement the exact
-## rules given:
+## Design request: multiple technicians can be assigned to the same station
+## (Station.assigned_technicians, plural), but "there shouldn't be more than
+## one technician working a station," and "there shouldn't be multiple
+## technicians ever walking toward a station unless they have a reason to."
+## Two coordination checks below implement the exact rules given:
 ##
 ## 1. Carrying a part bound here is ALWAYS a valid, unconditional reason to
 ##    go (tier 0, checked first, bypasses everything below) - "they can
@@ -502,17 +512,26 @@ func pick_next_station(station_by_id: Dictionary) -> String:
 ##    station" - see Station._technician_act()'s active_worker claiming).
 ##
 ## 2. Without cargo, this is only a real "go do work here" reason if nobody
-##    else is going to beat this technician to it: skip entirely if
-##    station.active_worker already belongs to someone else (it's already
-##    being handled), or if GameData.closest_assigned_technician_distance()
-##    finds ANY other technician assigned here - cargo-carrying or not -
-##    physically closer right now. "Whoever is closest will continue to the
-##    station" covers both remaining cases this way for free: if the closer
-##    other technician has cargo, IT hit tier 0 above regardless of this
-##    check and is going anyway, while this (farther, cargo-less) technician
-##    correctly backs off since it has no reason to race a delivery that's
-##    already happening. If the closer other technician has no cargo either,
-##    the comparison is a fair distance race and only the nearer one proceeds.
+##    else is already working it (station.active_worker) or already headed
+##    there (station.incoming_technician - a reservation claimed the instant
+##    another technician commits to this exact destination, see that field's
+##    own comment on Station). This REPLACED a live "whoever is physically
+##    closest right now" real-time race
+##    (GameData.closest_assigned_technician_distance(), removed) - player
+##    report: "id like there to be no point in time where technicians are
+##    operating at the same station... they need to be calculating ahead of
+##    time their route and making that known to other technicians so they
+##    will not path to the same station." The distance race had a real gap a
+##    reservation doesn't: a tie (equally distant, common when two
+##    technicians start out parked together) resolved in NOBODY's favor
+##    under strict less-than, so neither backed off and both could commit to
+##    the same open station in the same frame - exactly the "technicians
+##    bouncing between stations, not making progress" symptom reported. A
+##    reservation claimed synchronously at decision time has no such gap:
+##    whichever technician's turn happens to come first in a given frame
+##    claims it, and every other technician evaluating the same candidate
+##    later that same frame (or any frame after) sees the claim and skips it,
+##    regardless of relative distance.
 func _priority_tier_for(station_id: String, station: Station) -> int:
 	for part in carried_parts:
 		if GameData.next_station_id_for(part) == station_id:
@@ -520,9 +539,7 @@ func _priority_tier_for(station_id: String, station: Station) -> int:
 
 	if station.active_worker != null and station.active_worker != self:
 		return NOTHING_TIER
-	var my_distance := current_position.distance_to(station.position)
-	var closest_other := GameData.closest_assigned_technician_distance(station_id, self)
-	if closest_other < my_distance:
+	if station.incoming_technician != null and station.incoming_technician != self:
 		return NOTHING_TIER
 
 	var is_ready := station.current_state == Station.State.READY

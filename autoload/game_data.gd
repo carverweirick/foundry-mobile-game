@@ -1296,24 +1296,6 @@ func unassign_technician_from_printer_group(tech: Technician) -> void:
 	technician_updated.emit(tech)
 
 
-## Design request, this session: coordination for multiple technicians
-## assigned to the same station - see Technician._priority_tier_for()'s own
-## comment for the full rule this supports. Distance is measured against
-## whichever concrete station currently sits at station_id in station_by_id;
-## returns INF if none found or no other technician is assigned there.
-func closest_assigned_technician_distance(station_id: String, excluding: Technician) -> float:
-	var station: Station = station_by_id.get(station_id)
-	if station == null:
-		return INF
-	var closest := INF
-	for tech in technicians:
-		if tech == excluding:
-			continue
-		if not tech.real_assigned_station_ids().has(station_id):
-			continue
-		closest = min(closest, tech.current_position.distance_to(station.position))
-	return closest
-
 
 ## Every real STAFFING TARGET a technician can be assigned to from the Shop
 ## roster - like all_real_station_ids() below, but collapses every printer
