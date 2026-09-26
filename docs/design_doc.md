@@ -949,3 +949,119 @@ Direct request, after a clarifying question about what Patching/Post-Process ski
 ### 25.3 Phase C: rotating applicant pool for hiring - built
 
 Replaces "hire any tier, any time" with `GameData.applicant_pool`, mirroring the existing `contract_offers` pattern exactly (roll into a pool, player accepts/hires, a `*_changed` signal, `_click_in_progress()`-guarded overlay refresh): a pool of `APPLICANT_POOL_SIZE` (4) randomly-generated named candidates (random role, a tier-weighted roll skewed toward lower tiers same shape as contract tier rolls, and per-department skill via Phase B's `roll_department_skills()`), a manual **gems-only** "Refresh Applicants" full reroll (`APPLICANT_REFRESH_COST`, deliberately not routed through the usual gold-first `try_spend_with_gems()` - the whole point is that this specific action costs the harder-to-get currency), and a passive top-up over time (`APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS`) that only ever fills a slot emptied by a hire, never discards an available candidate. `GameData.hire_technician()` (the old direct-hire entry point) is gone - `hire_applicant()` is the only way a new Technician/Engineer joins the roster now. The Staff overlay's Hire section is a persistent-widget-per-applicant list (name, role+tier, one star rating per department, hire cost/wage, Hire button) plus the refresh button and a live countdown, built directly in the Phase A dark theme. A real bug (a tier-label/role-label naming collision producing ambiguous text like "Technician Engineer") was caught by a headless UI test and fixed before this phase was considered done.
+
+---
+
+## 26. The MVP Pivot: Persistence, Timescale, and Scope (2026-09-25)
+
+*A deliberate change of development method, not just another feature session.
+The project up to this point grew breadth-first - each session added another
+system to the simulation. This section records the decision to stop doing that
+and build toward a playable MVP instead, plus the two changes already made
+toward it. Where this section and an earlier one disagree, this section is
+current.*
+
+### 26.1 The assessment that prompted this
+
+Reviewing everything built so far against what a stranger could actually play,
+the project was **past MVP in simulation depth and well short of it in
+playability**. Roughly 8,200 lines covered a 13-station pipeline, technicians as
+spatial agents with routing coordination, per-worker familiarity, defects with
+grace periods and three fix paths, multi-line-item contracts with reputation and
+relationships, two currencies, factory levels with payroll and seniority, and
+seven overlays - while four things that decide whether it is a game at all were
+missing entirely:
+
+1. **No save system.** Closing the app lost the entire shop. The only thing
+   persisted was the UI theme. For a game whose Section 2 pitch opens with
+   "progress accumulates even when the app is closed," this was the absence of
+   the genre, not a missing feature.
+2. **The game had never been run at a playable speed.** Timers ran at a 1/180
+   compression (a part went print-to-ship in ~101 seconds), so no deadline,
+   grace period, or wage cost had ever been observed at a pace anyone could
+   balance against.
+3. **Never built for a phone.** The only export preset was Xogot; no Android/iOS
+   target, no orientation lock, and the two-row seven-button HUD had never been
+   touched by a thumb at real DPI.
+4. **No onboarding and no audio.** No tutorial, no Traveler Card, no founder
+   handoff - a new player met 13 stations, 5 rooms, 7 overlays and six
+   simultaneous stats with no guidance.
+
+### 26.2 The MVP definition
+
+> A person who has never seen this game installs the build on an Android phone,
+> is walked through one part from print to ship by the founder, accepts and
+> completes a Tier 1 contract, closes the app, comes back later to finished work
+> and a summary, and buys one upgrade. Nothing else is reachable.
+
+The governing rule for everything already built that falls outside that
+sentence: **gate it, don't delete it.** Progressive disclosure is the cheapest
+possible use of work already done, and it is also how the project finds out
+which of its roughly twenty concepts a player actually perceives during play.
+
+**In MVP scope:** save/load, offline catch-up, a real timescale, an Android
+build, onboarding, progressive unlock gating, a balance pass, minimum viable
+audio.
+
+**Explicitly out of MVP scope:** R&D (Section 12), the Floor Editor (Section 5),
+mini-games (Section 2), alloy stock (Section 11), the whole tycoon retention
+layer (Section 23), recurring flagship contracts (Section 8), the real
+geometry/alloy system (Section 10), per-tier technician art, and the remaining
+station silhouettes (Section 16).
+
+### 26.3 Genre decision: this is a real-time factory sim, not an idle game
+
+`GameData.SECONDS_PER_GAME_MINUTE` is now **2.0** - a 1/30 compression of real
+time, chosen deliberately over two alternatives (true 1:1 idle, and a 1/6
+"compressed idle"). Section 17's station minutes sum to 302 for one part's full
+journey, which at this scale lands a single part at **~10 real minutes** and a
+Tier 1 contract inside one sitting.
+
+**This supersedes the "idle first" framing in Sections 2 and 14.** Those
+sections still describe a game whose background layer is the main way to
+progress; it isn't any more. Offline catch-up exists and is real, but is capped
+on purpose (`SaveManager.MAX_OFFLINE_CATCHUP_SECONDS`, currently one hour of
+simulated time) so that time away is a head start rather than the point.
+Sections 2 and 14 need their own revision pass; they have not been rewritten
+here, only contradicted.
+
+Two consequences worth recording, because both were near-misses:
+
+- **Contract deadlines were hardcoded in prototype seconds.** Slowing station
+  timers 6x while leaving deadlines fixed would have made every contract
+  instantly impossible. Deadlines are now expressed in *game minutes* and
+  converted through the same `GameData.game_minutes_to_seconds()` helper the
+  station timers and defect grace periods use, so the whole game's pacing
+  derives from one constant and cannot drift apart again.
+- **The Section 7 walking penalty would have quietly evaporated.** Technician
+  walk speed and interaction time were pinned to real seconds; against 6x longer
+  machine cycles, travel would have fallen from ~45% of a print cycle to ~8%,
+  deleting a designed mechanic without any code looking wrong. Both are now
+  expressed per game-minute, and the ratio is preserved (verified at 45.5%).
+
+### 26.4 Remaining MVP punch list, in dependency order
+
+1. ~~Save/load~~ - **done**, see Section 18.
+2. ~~Offline catch-up~~ - **done**, capped and clock-guarded.
+3. ~~Commit to a real timescale~~ - **done**, see 26.3.
+4. **Android export and one real on-device session.** Landscape lock, thumb-reach
+   audit on the two-row HUD, and verification that the existing pinch-zoom code
+   behaves on actual glass. Nothing below this is worth tuning before it happens.
+5. **Onboarding** - the founder handoff, the deliberately zero-risk first part,
+   and the Traveler Card (Section 6) as the tutorial's spine.
+6. **Progressive unlock gating** - hide every overlay and system not reachable in
+   the MVP sentence above.
+7. **Balance pass**, only meaningful after 4 and now possible after 3.
+8. **Minimum viable audio** - roughly six SFX and one ambient loop.
+
+### 26.5 The open risk
+
+The simulation may be too complex to communicate on a 480x270 phone screen. Rack
+capacity versus batch size, two familiarity systems with different owners, two
+staff roles across four skill tiers plus seniority, defect categories against
+three fix paths, Push Through, shop Reputation versus per-company Relationship,
+gold versus gems - each is well-reasoned alone; stacked, it is a great deal to
+make legible through a thumb. A specific thing the MVP should measure: whether
+the defect/familiarity loop, the designed heart of the game, is noticed at all
+during normal play. Current suspicion is that it is effectively invisible,
+because nothing announces it.

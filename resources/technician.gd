@@ -266,7 +266,34 @@ const CARRY_CAPACITY: int = 2
 ## current_station_id points is actually staffed at any given moment (see
 ## Station._technician_is_present()), and getting anywhere else takes real,
 ## distance-proportional time.
-const WALK_SPEED: float = 220.0 # pixels/sec, first-pass placeholder
+## Walking pace, expressed in pixels per GAME minute and converted to a real
+## per-second speed by walk_speed() below.
+##
+## Why not a plain pixels-per-real-second constant (which is what this was -
+## 220.0 px/sec): the multi-station walking penalty is a designed mechanic
+## (design doc Section 7 - splitting a technician's attention has to cost real
+## throughput). That only holds if travel time stays a meaningful fraction of a
+## machine cycle. Pinned to real seconds, the 30x slowdown of
+## GameData.SECONDS_PER_GAME_MINUTE would have cut walking from ~45% of a print
+## cycle to ~8%, quietly deleting the mechanic without any code looking wrong.
+## 73.33 px/game-minute is the old 220 px/sec restated at the old timescale, so
+## the ratio the game was tuned around carries over unchanged.
+const WALK_PIXELS_PER_GAME_MINUTE: float = 73.33
+
+## Handling time for one real interaction, in GAME minutes - same reasoning as
+## WALK_PIXELS_PER_GAME_MINUTE. 4.5 game-minutes is the old 1.5 real seconds
+## restated at the old timescale.
+const INTERACT_GAME_MINUTES: float = 4.5
+
+
+## Real pixels per real second at the current timescale.
+static func walk_speed() -> float:
+	return WALK_PIXELS_PER_GAME_MINUTE / (GameData.SECONDS_PER_GAME_MINUTE * GameData.time_scale_multiplier)
+
+
+## Real seconds one interaction takes at the current timescale.
+static func interact_seconds() -> float:
+	return GameData.game_minutes_to_seconds(INTERACT_GAME_MINUTES)
 
 ## Brief real pause after actually doing something at a station - depositing
 ## a carried part, picking one up, or loading the next part into the active
@@ -274,7 +301,7 @@ const WALK_SPEED: float = 220.0 # pixels/sec, first-pass placeholder
 ## it, not idle waiting. There's no fixed "stand around" timer at all: a
 ## technician assigned to more than one station leaves for the next one the
 ## moment there's genuinely nothing left to interact with here.
-const INTERACT_SECONDS: float = 1.5
+# (INTERACT_GAME_MINUTES / interact_seconds() above replaced INTERACT_SECONDS.)
 
 ## Station id this technician is physically standing at and actively working
 ## right now - "" if unassigned everywhere or currently mid-walk. While
@@ -375,7 +402,7 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 
 	if is_interacting:
 		_interact_elapsed += delta
-		if _interact_elapsed < INTERACT_SECONDS:
+		if _interact_elapsed < interact_seconds():
 			return false
 		is_interacting = false
 		_interact_elapsed = 0.0
@@ -387,7 +414,7 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 			return false
 		var to_target: Vector2 = target.position - current_position
 		var dist := to_target.length()
-		var step: float = WALK_SPEED * delta
+		var step: float = walk_speed() * delta
 		if dist <= step:
 			current_position = target.position
 			current_station_id = travel_target_station_id
@@ -559,3 +586,89 @@ func _priority_tier_for(station_id: String, station: Station) -> int:
 			return 2
 
 	return NOTHING_TIER
+
+
+# --- Persistence (save/load) ---------------------------------------------
+#
+# carried_parts saves only part ids: the Part instances themselves are
+# serialized once by GameData.active_parts (see Part.to_dict()'s note) and
+# handed back here by GameData.load_from_dict() so the technician carries the
+# same object the rest of the shop sees. Same reasoning applies in reverse for
+# Station.assigned_technicians/active_worker, which save a technician index
+# into GameData.technicians rather than a copy of the technician.
+
+
+func to_dict() -> Dictionary:
+	var carried_ids: Array = []
+	for part in carried_parts:
+		carried_ids.append(part.part_id)
+	return {
+		"technician_name": technician_name,
+		"role": int(role),
+		"skill_tier": int(skill_tier),
+		"routing_strategy": int(routing_strategy),
+		"assigned_station_ids": assigned_station_ids.duplicate(),
+		"department_skill": department_skill.duplicate(true),
+		"geometry_familiarity": geometry_familiarity.duplicate(true),
+		"factory_levels_stuck_with_you": factory_levels_stuck_with_you,
+		"current_station_id": current_station_id,
+		"travel_target_station_id": travel_target_station_id,
+		"is_traveling": is_traveling,
+		"position_x": current_position.x,
+		"position_y": current_position.y,
+		"is_interacting": is_interacting,
+		"interact_elapsed": _interact_elapsed,
+		"carried_part_ids": carried_ids,
+	}
+
+
+## Rebuilds everything except carried_parts, which GameData.load_from_dict()
+## resolves separately once every Part exists - see restore_carried_parts().
+static func from_dict(data: Dictionary) -> Technician:
+	var tech := Technician.new()
+	tech.technician_name = str(data.get("technician_name", "Technician"))
+	tech.role = data.get("role", StaffRole.TECHNICIAN) as StaffRole
+	tech.skill_tier = data.get("skill_tier", SkillTier.APPRENTICE) as SkillTier
+	tech.routing_strategy = data.get("routing_strategy", RoutingStrategy.MAXIMIZE_MACHINES) as RoutingStrategy
+	tech.factory_levels_stuck_with_you = int(data.get("factory_levels_stuck_with_you", 0))
+	tech.current_station_id = str(data.get("current_station_id", ""))
+	tech.travel_target_station_id = str(data.get("travel_target_station_id", ""))
+	tech.is_traveling = bool(data.get("is_traveling", false))
+	tech.current_position = Vector2(
+		float(data.get("position_x", 0.0)), float(data.get("position_y", 0.0)))
+	tech.is_interacting = bool(data.get("is_interacting", false))
+	tech._interact_elapsed = float(data.get("interact_elapsed", 0.0))
+
+	# Typed Array[String] - a plain .duplicate() off JSON would hand back an
+	# untyped Array and fail the assignment.
+	tech.assigned_station_ids.clear()
+	for id in data.get("assigned_station_ids", []):
+		tech.assigned_station_ids.append(str(id))
+
+	tech.department_skill = _int_valued_dict(data.get("department_skill", {}))
+	# geometry_familiarity is nested one level deeper: geometry -> {station: stars}
+	tech.geometry_familiarity = {}
+	for geometry in data.get("geometry_familiarity", {}):
+		tech.geometry_familiarity[str(geometry)] = _int_valued_dict(
+			data["geometry_familiarity"][geometry])
+	return tech
+
+
+## JSON round-trips every number as a float; skill/familiarity values are
+## whole stars and are compared/incremented as ints everywhere else, so they
+## get coerced back on load rather than silently becoming 3.0 == 3 floats.
+static func _int_valued_dict(raw: Dictionary) -> Dictionary:
+	var out := {}
+	for key in raw:
+		out[str(key)] = int(raw[key])
+	return out
+
+
+## Second load pass, called by GameData.load_from_dict() once every Part in
+## active_parts exists and can be looked up by id.
+func restore_carried_parts(data: Dictionary, parts_by_id: Dictionary) -> void:
+	carried_parts.clear()
+	for raw_id in data.get("carried_part_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			carried_parts.append(part)

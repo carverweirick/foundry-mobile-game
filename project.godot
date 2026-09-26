@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 GameData="*res://autoload/game_data.gd"
 ThemeManager="*res://autoload/theme_manager.gd"
+SaveManager="*res://autoload/save_manager.gd"
 
 [display]
 

@@ -26,10 +26,48 @@ signal payday(total_wages: int, went_into_debt: bool)
 ## "Starting Timer and Batch Numbers" and "Station Mechanics" sections.
 ## Tier 2-5 progressions aren't modeled yet, only current_tier's sprite swap is.
 
-## Real per-station minutes are compressed for prototyping (15 real min -> 5s),
-## matching the ratio the original PrintingStation prototype used.
-const PROTOTYPE_SECONDS_PER_MINUTE: float = 1.0 / 3.0
+## THE game's timescale: how many real seconds one in-fiction minute takes.
+## Every duration in the game derives from this, and nothing anywhere should
+## hardcode a real-seconds duration for shop-floor time - use
+## game_minutes_to_seconds() below.
+##
+## Set to 2.0 (a 1/30 compression of real time) as a deliberate genre decision:
+## design doc Section 17's station minutes sum to 302 for one part's full
+## journey, which lands a single part at ~10 real minutes end to end and a
+## Tier 1 contract inside one sitting. That makes this a real-time factory sim
+## you check in on, NOT the "idle first" game Section 2 and Section 14 still
+## describe - those sections are now out of date and need a pass (offline
+## catch-up exists and is capped deliberately, see
+## SaveManager.MAX_OFFLINE_CATCHUP_SECONDS, but time away is a head start
+## rather than the main way to progress).
+##
+## Was 1.0/3.0 (a 1/180 compression, one part in ~101 seconds) - a debug speed
+## nobody could actually balance the game at, since no contract deadline,
+## grace period, or wage cost had ever been observed at a playable pace.
+const SECONDS_PER_GAME_MINUTE: float = 2.0
+
+## Debug/testing override. Set from a scratch test or a future dev menu to run
+## the shop at the old 180x prototype speed without re-tuning every number:
+## every duration still derives from one place, so this stays honest.
+static var time_scale_multiplier: float = 1.0
+
 const MIN_TIMER_SECONDS: float = 2.0
+
+
+## The single conversion from in-fiction minutes to real seconds. Station
+## timers, defect grace periods, and contract deadlines all go through here, so
+## changing SECONDS_PER_GAME_MINUTE rescales the whole game coherently instead
+## of leaving some systems on the old scale - the exact trap the first attempt
+## at this hit, where station timers slowed 6x while contract deadlines stayed
+## put and every contract became instantly impossible.
+##
+## Deliberately NOT applied to: the contract-offer and applicant-pool refresh
+## cooldowns, which are real-world pacing for how often the player is offered
+## something new rather than shop-floor process time.
+static func game_minutes_to_seconds(minutes: float) -> float:
+	if minutes <= 0.0:
+		return 0.0
+	return max(minutes * SECONDS_PER_GAME_MINUTE * time_scale_multiplier, MIN_TIMER_SECONDS)
 
 const PRINTING_SPRITES: Array[String] = [
 	"res://assets/sprites/printing_station_L1.png",
@@ -287,7 +325,7 @@ class StationDef:
 	func get_prototype_timer_seconds() -> float:
 		if tier1_timer_minutes <= 0.0:
 			return 0.0
-		return max(tier1_timer_minutes * PROTOTYPE_SECONDS_PER_MINUTE, MIN_TIMER_SECONDS)
+		return GameData.game_minutes_to_seconds(tier1_timer_minutes)
 
 
 ## Placeholder economy: no alloy stock or contract payouts yet, just a
@@ -518,7 +556,7 @@ func hire_applicant(applicant: Technician) -> bool:
 ## station_id -> live Station node, set by main.gd right after spawning all
 ## 11 stations (same pattern as every overlay's own station_by_id).
 ## Technician.tick() needs this to look up real station positions for actual
-## distance-based walking - see Technician.WALK_SPEED.
+## distance-based walking - see Technician.walk_speed().
 var station_by_id: Dictionary = {}
 
 
@@ -758,11 +796,17 @@ const CONTRACT_QUANTITY_RANGE := {
 	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: Vector2i(25, 75),
 	Contract.ContractTier.FLAGSHIP: Vector2i(75, 150),
 }
-const CONTRACT_DEADLINE_SECONDS := {
-	Contract.ContractTier.LOCAL_SHOPS: 1200.0,
-	Contract.ContractTier.REGIONAL_MANUFACTURERS: 1800.0,
-	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 2700.0,
-	Contract.ContractTier.FLAGSHIP: 5400.0,
+## In GAME MINUTES, converted through game_minutes_to_seconds() at use, so a
+## change to SECONDS_PER_GAME_MINUTE rescales deadlines in step with station
+## timers. These are the previous hardcoded prototype-second values divided by
+## the old 1/3 scale, so the relative pacing the game was built around is
+## preserved exactly: Tier 1's 3600 game-minutes is ~12 full passes of the
+## 302-game-minute pipeline, comfortable for a 3-8 part order.
+const CONTRACT_DEADLINE_GAME_MINUTES := {
+	Contract.ContractTier.LOCAL_SHOPS: 3600.0,
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 5400.0,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 8100.0,
+	Contract.ContractTier.FLAGSHIP: 16200.0,
 }
 const CONTRACT_PAYOUT_PER_UNIT := {
 	Contract.ContractTier.LOCAL_SHOPS: 9.0,
@@ -1169,7 +1213,7 @@ func generate_contract() -> Contract:
 		line_items.append(li)
 
 	var payout := int(round(total_quantity * float(CONTRACT_PAYOUT_PER_UNIT[tier]) * randf_range(0.85, 1.15) * reputation_bonus))
-	var deadline: float = CONTRACT_DEADLINE_SECONDS[tier]
+	var deadline: float = game_minutes_to_seconds(CONTRACT_DEADLINE_GAME_MINUTES[tier])
 
 	var offer := _make_contract(customer, tier, line_items, deadline, payout, false)
 	contract_offers.append(offer)
@@ -1216,6 +1260,13 @@ func _repeat_client_tier_bump_threshold() -> float:
 ## only becomes real active work once the player accepts it.
 func _process_contracts(delta: float) -> void:
 	for c in contracts:
+		# Burns the deadline clock (Contract.elapsed_seconds). Only started
+		# contracts - an offer sitting in contract_offers hasn't been accepted
+		# yet and must not lose time - and only incomplete ones, so a finished
+		# contract's displayed time-left stops where it was rather than
+		# drifting toward zero after the fact.
+		if c.is_started and not c.is_complete:
+			c.elapsed_seconds += delta
 		if c.is_complete or c.deadline_penalty_applied:
 			continue
 		if c.is_overdue:
@@ -1318,13 +1369,54 @@ func assignable_station_group_ids() -> Array[String]:
 ## tick() only returns true on a discrete, UI-worth transition (arrival,
 ## interact start/end) - not on every incremental step of a walk, so this
 ## doesn't spam technician_updated 60 times a second while someone's mid-walk.
+## True only while catch_up_offline_progress() is stepping the sim forward in
+## slices. Station._process() checks it to skip its own visual work (there's
+## nobody watching mid-catch-up, and the timer-bar text would be rewritten
+## hundreds of times for one visible frame).
+var is_catching_up: bool = false
+
+
 func _process(delta: float) -> void:
+	if is_catching_up:
+		return
+	simulate(delta)
+
+
+## The single steppable entry point for the whole simulation - every clock in
+## the game advances from here and nowhere else. Split out of _process() for
+## the save/load work so offline catch-up can drive the exact same code path
+## with a synthetic delta instead of needing a second, parallel "what would
+## have happened" model that could drift from the real one.
+##
+## Station logic is driven from here too, rather than each Station node
+## running its own _process(): a Station's _process() now only paints
+## visuals. That also makes the ordering deterministic (technicians move,
+## then stations act on where they ended up, then defects and contracts
+## settle), where before the relative order of GameData._process() and each
+## Station._process() was whatever the SceneTree happened to pick.
+func simulate(delta: float) -> void:
 	for tech in technicians:
 		if tech.tick(delta, station_by_id):
 			technician_updated.emit(tech)
+
+	for station: Station in station_by_id.values():
+		station.simulate_step(delta)
+
+	_advance_defect_grace_periods(delta)
 	_check_defect_escalations()
 	_process_contracts(delta)
 	_process_applicant_pool(delta)
+
+
+## Burns down every flagged Part's grace period (design doc Section 9). Was
+## implicit in Part.defect_time_remaining reading a wall clock until the
+## save/load work - now the Part holds an accumulator and something has to
+## advance it, which is this. Runs over active_parts so a defect keeps
+## counting down wherever the Part physically sits, exactly as before.
+func _advance_defect_grace_periods(delta: float) -> void:
+	for part in active_parts:
+		if part.is_defective and not part.defect_escalated:
+			part.defect_elapsed += delta
 
 
 ## Design doc Section 9, escalation: sweeps every live Part (wherever it
@@ -1460,19 +1552,19 @@ func _init() -> void:
 	# clock. accept_contract_offer() is what actually starts each one.
 	contract_offers = [
 		_make_single_item_contract("Local Hardware Co.", Contract.ContractTier.LOCAL_SHOPS,
-			"Mounting Brackets", "Mild Steel", 5, 1200.0, 50),
+			"Mounting Brackets", "Mild Steel", 5, game_minutes_to_seconds(3600.0), 50),
 		_make_single_item_contract("Riverside Jewelers", Contract.ContractTier.LOCAL_SHOPS,
-			"Pendant Blanks", "Bronze", 8, 1200.0, 70),
+			"Pendant Blanks", "Bronze", 8, game_minutes_to_seconds(3600.0), 70),
 		_make_single_item_contract("Cascade Fluid Systems", Contract.ContractTier.REGIONAL_MANUFACTURERS,
-			"Valve Bodies", "Stainless Steel", 15, 1800.0, 220),
+			"Valve Bodies", "Stainless Steel", 15, game_minutes_to_seconds(5400.0), 220),
 		_make_single_item_contract("Northline Pumps Inc.", Contract.ContractTier.REGIONAL_MANUFACTURERS,
-			"Pump Housings", "Cast Iron Blend", 20, 1800.0, 280),
+			"Pump Housings", "Cast Iron Blend", 20, game_minutes_to_seconds(5400.0), 280),
 		_make_single_item_contract("Summit Industrial Group", Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
-			"Gear Housings", "Alloy Steel", 40, 2700.0, 650),
+			"Gear Housings", "Alloy Steel", 40, game_minutes_to_seconds(8100.0), 650),
 		# Recurring flagship work isn't modeled yet - this is a one-time
 		# contract for now, same as the other five.
 		_make_single_item_contract("Meridian Aerospace", Contract.ContractTier.FLAGSHIP,
-			"Turbine Blades", "Nickel Superalloy", 120, 5400.0, 2500),
+			"Turbine Blades", "Nickel Superalloy", 120, game_minutes_to_seconds(16200.0), 2500),
 	]
 
 	# Staff overlay should never open to an empty applicant pool.
@@ -1987,7 +2079,202 @@ func roll_defect_category(station_id: String) -> DefectCategory:
 
 ## Prototype-scale seconds, same conversion as StationDef.get_prototype_timer_seconds().
 func grace_period_seconds_for(station_id: String) -> float:
-	var minutes: float = STATION_GRACE_PERIOD_MINUTES.get(station_id, 0.0)
-	if minutes <= 0.0:
-		return 0.0
-	return max(minutes * PROTOTYPE_SECONDS_PER_MINUTE, MIN_TIMER_SECONDS)
+	return game_minutes_to_seconds(STATION_GRACE_PERIOD_MINUTES.get(station_id, 0.0))
+
+
+# =========================================================================
+# Persistence (save/load)
+# =========================================================================
+#
+# GameData owns "what my state is, as a plain Dictionary"; SaveManager owns
+# the file itself, the autosave cadence, and offline catch-up. Split that way
+# so this file doesn't also grow file I/O, and so a test can round-trip state
+# through a dict without touching the disk.
+#
+# Object identity is the whole difficulty here. A Part is referenced by
+# active_parts, held_parts, a Station's current_part/queue_rack/shelling runs,
+# and a Technician's carried_parts - all pointing at ONE instance. So the Part
+# is serialized exactly once (in active_parts) and every other holder stores a
+# part_id; load rebuilds the parts first, then hands a part_id -> Part map to
+# each holder. Technicians work the same way, keyed by index into technicians.
+
+## Bumped only if a future change makes an older file unreadable; load_from_dict()
+## refuses a file from the future rather than misreading it.
+const SAVE_FORMAT_VERSION: int = 1
+
+
+func to_save_dict() -> Dictionary:
+	# Technician -> index, so stations can reference workers without copying them.
+	var tech_indices := {}
+	for i in technicians.size():
+		tech_indices[technicians[i]] = i
+
+	var parts_data: Array = []
+	for part in active_parts:
+		parts_data.append(part.to_dict())
+
+	var held_ids: Array = []
+	for part in held_parts:
+		held_ids.append(part.part_id)
+
+	var contracts_data: Array = []
+	for c in contracts:
+		contracts_data.append(c.to_dict())
+
+	var offers_data: Array = []
+	for c in contract_offers:
+		offers_data.append(c.to_dict())
+
+	var techs_data: Array = []
+	for tech in technicians:
+		techs_data.append(tech.to_dict())
+
+	var applicants_data: Array = []
+	for applicant in applicant_pool:
+		applicants_data.append(applicant.to_dict())
+
+	var specialists_data: Array = []
+	for specialist in specialists_hired:
+		specialists_data.append(int(specialist))
+
+	var stations_data := {}
+	for station_id in station_by_id:
+		var station: Station = station_by_id[station_id]
+		stations_data[station_id] = station.to_save_dict(tech_indices)
+
+	return {
+		"format_version": SAVE_FORMAT_VERSION,
+		"currency": currency,
+		"gems": gems,
+		"reputation": reputation,
+		"factory_level": factory_level,
+		"factory_exp": factory_exp,
+		"owned_printer_count": owned_printer_count,
+		"geometry_familiarity": geometry_familiarity.duplicate(true),
+		"company_relationships": company_relationships.duplicate(true),
+		"specialists_hired": specialists_data,
+		"contract_generation_cooldown": _contract_generation_cooldown,
+		"applicant_pool_cooldown": _applicant_pool_cooldown,
+		"next_part_id": Part.peek_next_id(),
+		"next_contract_id": Contract.peek_next_id(),
+		"active_parts": parts_data,
+		"held_part_ids": held_ids,
+		"contracts": contracts_data,
+		"contract_offers": offers_data,
+		"technicians": techs_data,
+		"applicant_pool": applicants_data,
+		"stations": stations_data,
+	}
+
+
+## Returns false (changing nothing) if the file is from a newer format version
+## than this build understands - better to start a fresh game than to load a
+## save wrong and corrupt it on the next write.
+##
+## Ordering matters and is the reason this reads top-to-bottom the way it does:
+## parts must exist before anything that references them by id, and technicians
+## before the stations that reference them by index.
+func load_from_dict(data: Dictionary) -> bool:
+	var version := int(data.get("format_version", 0))
+	if version > SAVE_FORMAT_VERSION:
+		push_warning("Save file format %d is newer than this build's %d - ignoring it." % [
+			version, SAVE_FORMAT_VERSION])
+		return false
+
+	currency = int(data.get("currency", currency))
+	gems = int(data.get("gems", gems))
+	reputation = int(data.get("reputation", reputation))
+	factory_level = int(data.get("factory_level", factory_level))
+	factory_exp = int(data.get("factory_exp", factory_exp))
+	owned_printer_count = int(data.get("owned_printer_count", owned_printer_count))
+	_contract_generation_cooldown = float(data.get("contract_generation_cooldown", 0.0))
+	_applicant_pool_cooldown = float(data.get("applicant_pool_cooldown", 0.0))
+
+	# Star counts are ints everywhere they're compared/incremented, but JSON
+	# hands every number back as a float - coerce rather than storing 3.0.
+	geometry_familiarity = {}
+	for geometry in data.get("geometry_familiarity", {}):
+		var per_station := {}
+		for station_id in data["geometry_familiarity"][geometry]:
+			per_station[str(station_id)] = int(data["geometry_familiarity"][geometry][station_id])
+		geometry_familiarity[str(geometry)] = per_station
+
+	# Relationships are genuinely fractional (RELATIONSHIP_LOSS_MISSED_DEADLINE
+	# is 1.5), so these stay floats.
+	company_relationships = {}
+	for customer in data.get("company_relationships", {}):
+		company_relationships[str(customer)] = float(data["company_relationships"][customer])
+
+	specialists_hired.clear()
+	for raw in data.get("specialists_hired", []):
+		specialists_hired.append(int(raw) as SpecialistType)
+
+	# --- parts first: everything below references them by id ---
+	active_parts.clear()
+	var parts_by_id := {}
+	for raw in data.get("active_parts", []):
+		var part := Part.from_dict(raw)
+		active_parts.append(part)
+		parts_by_id[part.part_id] = part
+
+	held_parts.clear()
+	for raw_id in data.get("held_part_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			held_parts.append(part)
+
+	contracts.clear()
+	for raw in data.get("contracts", []):
+		contracts.append(Contract.from_dict(raw))
+
+	contract_offers.clear()
+	for raw in data.get("contract_offers", []):
+		contract_offers.append(Contract.from_dict(raw))
+
+	# --- technicians before stations, which reference them by index ---
+	var tech_dicts: Array = data.get("technicians", [])
+	technicians.clear()
+	for raw in tech_dicts:
+		technicians.append(Technician.from_dict(raw))
+	# Second pass for carried_parts, now that every Part exists.
+	for i in technicians.size():
+		technicians[i].restore_carried_parts(tech_dicts[i], parts_by_id)
+
+	applicant_pool.clear()
+	for raw in data.get("applicant_pool", []):
+		applicant_pool.append(Technician.from_dict(raw))
+
+	# Restore the id counters AFTER rebuilding, since every Part.new()/
+	# Contract.new() above consumed an id off them.
+	Part.set_next_id(int(data.get("next_part_id", 1)))
+	Contract.set_next_id(int(data.get("next_contract_id", 1)))
+
+	var stations_data: Dictionary = data.get("stations", {})
+	for station_id in stations_data:
+		var station: Station = station_by_id.get(station_id)
+		if station == null:
+			# A station id in the file that this build doesn't spawn (e.g. a
+			# printer instance saved when owned_printer_count was higher).
+			# main.gd spawns printers from owned_printer_count before this runs,
+			# so this should only ever hit on a real config change.
+			continue
+		station.load_save_dict(stations_data[station_id], parts_by_id, technicians)
+
+	_emit_all_loaded_signals()
+	return true
+
+
+## Everything reactive in the UI listens to a signal rather than polling, so a
+## load has to announce that effectively everything changed at once.
+func _emit_all_loaded_signals() -> void:
+	currency_changed.emit(currency)
+	gems_changed.emit(gems)
+	reputation_changed.emit(reputation)
+	factory_progress_changed.emit()
+	contract_offers_changed.emit()
+	held_parts_changed.emit()
+	applicant_pool_changed.emit()
+	for c in contracts:
+		contract_updated.emit(c)
+	for tech in technicians:
+		technician_updated.emit(tech)

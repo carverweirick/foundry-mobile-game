@@ -16,6 +16,18 @@ further rather than only appending. Also commit and push to GitHub (`origin`)
 after changes and at session end, without needing to ask first - see Working
 agreements below.
 
+**MVP pivot (2026-09-25):** development method changed from breadth-first
+system accretion to building toward a playable MVP - see design doc Section 26
+for the full assessment, the MVP definition, the cut list, and the remaining
+punch list. Two consequences already landed and are reflected below: a real
+save/load + offline catch-up system, and a committed timescale
+(`GameData.SECONDS_PER_GAME_MINUTE = 2.0`, one part print-to-ship in ~10 real
+minutes) that makes this a real-time factory sim rather than the idle game
+design doc Sections 2/14 still describe. **Next up, and blocking everything
+else: an Android export and one real on-device session** - the only export
+preset is still `Xogot`, there's no orientation lock, and the two-row seven-
+button HUD has never been touched by a thumb at real DPI.
+
 **Current branch status (as of 2026-08-28):** `gdt-layout-experiment` was
 fast-forward merged into `main` and pushed - the GDT-inspired rework (dark
 industrial theme, the entry-point-split overlays, the Dashboard overlay,
@@ -50,10 +62,107 @@ happens directly on `main` unless a new feature branch is called for.
 
 **Project setup**
 - `autoload/game_data.gd` registered as the `GameData` autoload singleton.
+- `autoload/save_manager.gd` registered as `SaveManager` (see Save/load below).
 - `res://scenes/main.tscn` is the main scene.
 - `project.godot`: renderer is Vulkan (the D3D12 backend silently broke mouse
   input on at least one dev machine); viewport is explicitly 480x270 with
-  `stretch/aspect="keep"`.
+  `stretch/aspect="keep"`. **No `display/window/handheld/orientation` lock and
+  no Android/iOS export preset yet** - the only preset is `Xogot`.
+
+**Timescale - one constant drives every duration in the game**
+- `GameData.SECONDS_PER_GAME_MINUTE = 2.0` (a 1/30 compression of real time).
+  Design doc Section 17's station minutes sum to 302 for one part's full
+  journey, so one part goes print-to-ship in ~604s (~10 real minutes) and a
+  Tier 1 contract fits in one sitting. Replaced
+  `PROTOTYPE_SECONDS_PER_MINUTE = 1/3` (a 1/180 debug speed, ~101s per part, at
+  which no deadline/grace period/wage had ever been observed).
+- **Everything time-based goes through `GameData.game_minutes_to_seconds()`** -
+  station timers (`StationDef.get_prototype_timer_seconds()`), defect grace
+  periods (`grace_period_seconds_for()`), and contract deadlines. Never
+  hardcode a real-seconds duration for shop-floor time; that's exactly the trap
+  this arrangement exists to prevent.
+- Two couplings that had to be fixed alongside the scale change, both of which
+  would have silently broken a designed mechanic:
+  `CONTRACT_DEADLINE_GAME_MINUTES` (was `CONTRACT_DEADLINE_SECONDS`, hardcoded
+  prototype seconds - leaving it would have made every contract impossible), and
+  `Technician.WALK_PIXELS_PER_GAME_MINUTE`/`INTERACT_GAME_MINUTES` (were real-
+  seconds `WALK_SPEED`/`INTERACT_SECONDS` - leaving them would have cut travel
+  from ~45% of a print cycle to ~8%, deleting Section 7's multi-station walking
+  penalty). Both ratios verified preserved (walk is 45.5% of a print cycle).
+  `Station.INTERACT_ANIM_FRAME_COUNT` likewise derives Clean's 3-frame
+  interaction flourish from `Technician.interact_seconds()` rather than a fixed
+  0.5s/frame.
+- `GameData.time_scale_multiplier` (static, default 1.0) is a debug override for
+  running the shop fast in tests without re-tuning anything.
+
+**Save/load and offline catch-up** (`autoload/save_manager.gd`,
+`GameData.to_save_dict()`/`load_from_dict()`)
+- Before this, closing the app lost the entire shop; only the UI theme was
+  persisted (`ThemeManager`'s own `user://settings.cfg`, deliberately kept
+  separate from the gameplay save so a display preference isn't entangled with
+  it). Saves to `user://savegame.json` as JSON.
+- **Every in-game clock is a delta-driven accumulator, not a wall-clock reading
+  or a `Timer` node.** This was a prerequisite refactor, not a style choice:
+  `Station`'s `$StationTimer` `Timer` node is gone (removed from
+  `station.tscn`), replaced by `_run_elapsed`/`_run_duration` floats plus a
+  `run_time_left` property - a Timer's `time_left` can't be written back on load
+  and only advances with the SceneTree, so it could be neither saved nor
+  fast-forwarded. `Contract._start_time_msec` became `elapsed_seconds` +
+  `is_started`, and `Part.defect_flagged_at_msec` became `defect_elapsed`, for
+  the same reason plus a live bug: `Time.get_ticks_msec()` counts from *engine
+  start*, so every contract silently got its full deadline back on every launch.
+  `ShellingRun` already used this elapsed/duration shape, so the two run models
+  now agree.
+- **`GameData.simulate(delta)` is the single steppable entry point for the whole
+  simulation**, called by `_process()` in normal play and in slices by offline
+  catch-up. It also drives every `Station.simulate_step(delta)` - a Station's own
+  `_process()` is now visuals only (`_update_timer_bar_readout()`, the state-art
+  animation) and early-returns while `GameData.is_catching_up`. Side benefit:
+  ordering is deterministic (technicians move, then stations act on where they
+  ended up, then defects and contracts settle) where before the relative order of
+  `GameData._process()` and each `Station._process()` was whatever the SceneTree
+  picked.
+- **Object identity is the hard part of the save format.** One `Part` is
+  referenced from `active_parts`, `held_parts`, a Station's
+  `current_part`/`queue_rack`/shelling runs, and a Technician's `carried_parts`.
+  Only `active_parts` (the master registry every live Part is in from creation to
+  shipment) serializes the Part itself; every other holder stores a `part_id` and
+  re-resolves against a `parts_by_id` map on load. Technicians work the same way,
+  referenced by index into `GameData.technicians`. Load order matters and is
+  enforced: parts, then contracts, then technicians (with a second pass for
+  `carried_parts`), then stations. `Part`/`Contract` static id counters are
+  restored *after* rebuilding, since every `.new()` during load consumes one.
+- **Boot sequence is three calls, driven by `main.gd._ready()`** and split
+  because `owned_printer_count` lives in the save but decides how many printer
+  Stations get spawned in the first place: `read_save_file()` (before spawning) ->
+  `apply_pending_save()` -> `run_offline_catchup()`. The last two are deferred a
+  frame (`_finish_save_boot()`) so each Station's own `_ready()` can't overwrite
+  what was just loaded.
+- Autosaves every 30s, plus on `NOTIFICATION_APPLICATION_PAUSED` (the one that
+  actually matters on a phone) and `NOTIFICATION_WM_CLOSE_REQUEST`. A
+  `_ready_to_autosave` guard stops the timer writing an empty shop over a real
+  save before the boot sequence finishes.
+- **Offline catch-up** steps `simulate()` in `CATCHUP_SLICE_SECONDS` (0.25s)
+  slices - deliberately small so a walking technician can't overshoot a station
+  and skip its arrival logic. Capped at `MAX_OFFLINE_CATCHUP_SECONDS` (3600s of
+  simulated time): at this timescale one real hour is ~6 full pipeline passes, so
+  an uncapped overnight absence would trivialize the active game. **This cap is
+  the main tuning knob for how "idle" the game is.** A save stamped in the future
+  (device clock moved backwards) is ignored rather than rewinding anything.
+  Emits `offline_catchup_finished(away, simulated, summary)` for a
+  returning-player recap - the recap UI itself is not built yet.
+- Cost: a full 3600s catch-up takes ~2.5s of real wall time at boot, with no
+  progress indicator yet. Known rough edge.
+- **Verified headless across two separate process runs** (save in one, boot and
+  load in the next): 19 state fields round-trip exactly, including a part held
+  mid-carry in a technician's hands; every Part/Technician reference resolves to
+  the shared instance rather than a copy; new ids don't collide with loaded ones;
+  catch-up simulates the right amount at 600s away, caps correctly at 100000s
+  away (and correctly took the Reputation hit for deadlines lapsing during the
+  fast-forward), and no-ops on a backwards clock. Separately verified that a part
+  still goes print -> ship and credits its contract, and - in a real non-headless
+  run, since headless never exercises rendering - that the timer bars still paint
+  after the `_process()` split.
 
 **UI theme** (`resources/theme/ui_theme.tres`, design doc Section 16)
 - One shared `Theme` resource, applied project-wide via `project.godot`'s
@@ -813,10 +922,11 @@ autoload)
   the entry point/pattern later settings would slot into. Its own HUD toggle
   button sits in the bottom-left corner (below the currency stack, clear of
   the two main button rows) rather than taking a 7th slot in either row.
-- `ThemeManager` (autoload, not GameData - the game has no save/load system
-  of its own yet, and a UI preference shouldn't wait on one) holds
-  `current_theme: ThemeChoice` (`DARK`/`PARCHMENT`), persisted to its own
-  `user://settings.cfg` (independent of any future gameplay save file).
+- `ThemeManager` (autoload, not GameData) holds `current_theme: ThemeChoice`
+  (`DARK`/`PARCHMENT`), persisted to its own `user://settings.cfg` - still
+  deliberately separate from `SaveManager`'s `user://savegame.json` now that a
+  real gameplay save exists: a display preference shouldn't be entangled with,
+  or lost alongside, a gameplay save (and "reset save" shouldn't reset it).
   `set_theme()` swaps the theme, saves, and emits `theme_changed`.
 - `resources/theme/ui_theme_parchment.tres` is the original warm-parchment
   palette from before the dark industrial reskin, recovered from git history
@@ -970,6 +1080,23 @@ autoload)
 ---
 
 ## Not built yet
+
+**Blocking the MVP** (design doc Section 26.4, in dependency order):
+- **Android export and one real on-device session** - the next thing to do, and
+  nothing below is worth tuning before it happens. Needs an Android export
+  preset (only `Xogot` exists), a landscape orientation lock in
+  `project.godot`, and a thumb-reach audit of the two-row seven-button HUD at
+  real DPI. The pinch-zoom code in `main.gd` is real but has never run on glass.
+- **Onboarding** - the founder handoff, the deliberately zero-risk first part,
+  and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).
+  No tutorial code of any kind exists.
+- **Progressive unlock gating** - every overlay and system is reachable from the
+  first second. The MVP rule is gate, don't delete.
+- **A balance pass** - only became possible now that the timescale is real; no
+  number in the game has been observed at a playable pace.
+- **Minimum viable audio** - there is no audio at all, not one `AudioStream`.
+- **The returning-player recap UI** - `SaveManager.offline_catchup_finished`
+  fires with a real summary, but nothing displays it.
 
 From the design doc, still pending:
 

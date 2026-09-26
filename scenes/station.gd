@@ -23,11 +23,11 @@ enum State { IDLE, RUNNING, READY }
 ## independent timers" - is a genuinely different runtime model than every
 ## other station's one-Part/one-Timer-node setup, not just a bigger batch_cap.
 ## Each ShellingRun ticks its own elapsed time independently in
-## _process_parallel_shelling() below, rather than sharing the single
-## station_timer node the rest of this class uses. Only ever used when
+## _advance_parallel_shelling() below, rather than sharing the single
+## _run_elapsed/_run_duration clock the rest of this class uses. Only used when
 ## is_parallel_shelling() is true (station_id=="shelling" and
 ## current_tier>=2); Tier 1 Shelling still runs through the normal
-## current_part/station_timer path unchanged.
+## current_part run-clock path unchanged.
 class ShellingRun:
 	var part: Part
 	var elapsed: float = 0.0
@@ -66,7 +66,7 @@ const BASE_SPRITE_SCALE: float = 0.18
 		if is_inside_tree():
 			_update_sprite()
 
-## Prototype-scale seconds (see GameData.PROTOTYPE_SECONDS_PER_MINUTE), not real minutes.
+## Real seconds at the current timescale (see GameData.game_minutes_to_seconds()), not game minutes.
 @export var timer_duration: float = 5.0
 ## -1 means unlimited (used by Ship, which has no batch cap).
 ## How many parts run together sharing one timer. Design doc Section 21.1:
@@ -173,11 +173,19 @@ var _has_state_art: bool = false
 
 ## How long the interaction-flourish animation holds each state_sprites frame
 ## before advancing to the next one (design request: "an animation that
-## plays when a technician interacts with the station"). Three frames over
-## Technician.INTERACT_SECONDS (1.5s) at 0.5s each lands exactly on the last
-## frame right as the interaction ends, so the flourish always finishes
-## cleanly rather than getting cut off mid-cycle.
-const INTERACT_ANIM_FRAME_SECONDS: float = 0.5
+## plays when a technician interacts with the station").
+##
+## Derived from the interaction's own length rather than hardcoded, so the three
+## frames always land on the last one exactly as the interaction ends instead of
+## being cut off mid-cycle or finishing early and holding. This was a fixed
+## 0.5s, tuned against Technician's old real-seconds INTERACT_SECONDS of 1.5s -
+## once interaction length became timescale-derived
+## (Technician.interact_seconds()), a fixed frame time would have let the
+## flourish finish in the first sixth of the interaction and sit frozen.
+const INTERACT_ANIM_FRAME_COUNT: int = 3
+
+func _interact_anim_frame_seconds() -> float:
+	return Technician.interact_seconds() / float(INTERACT_ANIM_FRAME_COUNT)
 var _interact_anim_elapsed: float = 0.0
 
 ## Parallel-shelling-only state (design doc Section 21.4) - see
@@ -193,7 +201,7 @@ var shelling_ready_parts: Array[Part] = []
 
 
 ## Whether this Station is currently running Shelling's Tier 2+ parallel
-## model rather than the normal single current_part/station_timer model -
+## model rather than the normal single current_part run-clock model -
 ## design doc Section 4: "Shelling: single part at Tier 1; parallel
 ## independent timers at Tier 2+." Checked before almost every state-mutating
 ## method below so the exact same Station scene/script serves both models
@@ -214,13 +222,25 @@ var push_through_armed: bool = false
 @onready var status_label: Label = $StatusLabel
 @onready var timer_bar: ProgressBar = $TimerBar
 @onready var timer_bar_label: Label = $TimerBar/TimerBarLabel
-@onready var station_timer: Timer = $StationTimer
+
+## The active slot's run clock. Was a real `Timer` node ($StationTimer, since
+## removed from station.tscn) until the save/load work - a Timer node's
+## time_left can't be written back on load, and a Timer only advances with the
+## SceneTree's own delta, so offline catch-up couldn't fast-forward it either.
+## Both are solved by owning the clock as plain floats advanced in _process():
+## the pair round-trips through a save file, and GameData.simulate() can step
+## it by an arbitrary delta. Deliberately the same elapsed/duration/time_left
+## shape ShellingRun above already used, so the two run models now agree
+## rather than one being a node and the other an accumulator.
+var _run_elapsed: float = 0.0
+var _run_duration: float = 0.0
+
+var run_time_left: float:
+	get: return max(_run_duration - _run_elapsed, 0.0)
 
 
 func _ready() -> void:
 	batch_size = batch_cap
-	station_timer.one_shot = true
-	station_timer.timeout.connect(_on_station_timer_timeout)
 
 	name_label.text = station_name
 
@@ -243,11 +263,14 @@ func set_sprite_scale_multiplier(multiplier: float) -> void:
 
 
 func _process(delta: float) -> void:
-	if is_parallel_shelling():
-		_process_parallel_shelling(delta)
-	elif current_state == State.RUNNING:
-		timer_bar.value = station_timer.time_left
-		timer_bar_label.text = "%.1fs" % station_timer.time_left
+	# Visuals only. Every clock and every state change this station makes now
+	# happens in simulate_step() below, driven by GameData.simulate(), so that
+	# offline catch-up can step the sim without the SceneTree running - see
+	# GameData.simulate()'s own comment for why the split exists.
+	if GameData.is_catching_up:
+		return
+
+	_update_timer_bar_readout()
 
 	if _has_state_art:
 		if _is_interact_animating():
@@ -256,8 +279,23 @@ func _process(delta: float) -> void:
 			_interact_anim_elapsed = 0.0
 		_apply_state_sprite()
 
-	# Design request, this session: several technicians can be assigned here
-	# at once now - iterate a duplicate defensively (an unassign triggered
+
+## One step of this station's actual simulation, called by GameData.simulate()
+## rather than by the SceneTree. Ordering inside matters: the run clock is
+## advanced (and a finished run resolved) before the technician loop, so a part
+## that just became READY is actionable on this same step instead of the next.
+func simulate_step(delta: float) -> void:
+	if is_parallel_shelling():
+		_advance_parallel_shelling(delta)
+	elif current_state == State.RUNNING:
+		# Completion fires from here now rather than a Timer node's `timeout`
+		# signal (see _run_elapsed above).
+		_run_elapsed += delta
+		if _run_elapsed >= _run_duration:
+			_on_run_finished()
+
+	# Design request, an earlier session: several technicians can be assigned
+	# here at once now - iterate a duplicate defensively (an unassign triggered
 	# mid-loop, while unlikely, would otherwise mutate assigned_technicians
 	# out from under this for-loop).
 	for tech: Technician in assigned_technicians.duplicate():
@@ -269,15 +307,22 @@ func _process(delta: float) -> void:
 ## 21.4) - each Part finishes on its own schedule rather than all together.
 ## Iterates a duplicate since _finish_shelling_run() below mutates
 ## shelling_active_parts (the real array) while this loop is still running.
-func _process_parallel_shelling(delta: float) -> void:
+func _advance_parallel_shelling(delta: float) -> void:
 	for run in shelling_active_parts.duplicate():
 		run.elapsed += delta
 		if run.is_done:
 			_finish_shelling_run(run)
 
-	if shelling_active_parts.is_empty():
-		_clear_timer_bar()
-	else:
+
+## Paints the timer bar and its embedded countdown text from whichever run
+## model this station is using. Split out of the old _process_parallel_shelling()
+## and the old inline RUNNING branch so that both models' *visual* half sits
+## here, on the visuals-only side of the simulate_step() split above.
+func _update_timer_bar_readout() -> void:
+	if is_parallel_shelling():
+		if shelling_active_parts.is_empty():
+			_clear_timer_bar()
+			return
 		var soonest: ShellingRun = shelling_active_parts[0]
 		for run in shelling_active_parts:
 			if run.time_left < soonest.time_left:
@@ -285,6 +330,9 @@ func _process_parallel_shelling(delta: float) -> void:
 		timer_bar.max_value = max(soonest.duration, 0.01)
 		timer_bar.value = soonest.time_left
 		timer_bar_label.text = "%.1fs" % soonest.time_left
+	elif current_state == State.RUNNING:
+		timer_bar.value = run_time_left
+		timer_bar_label.text = "%.1fs" % run_time_left
 
 
 func _start_shelling_run(part: Part) -> void:
@@ -330,8 +378,8 @@ func _update_parallel_state() -> void:
 ## One-time migration for a Shelling station that was already running a Part
 ## the normal single-current_part way (Tier 1) at the moment it crossed into
 ## Tier 2 - without this, that in-progress run would keep ticking under the
-## old station_timer (whose timeout handler still fires and still works) while
-## _process() stops reading it entirely once is_parallel_shelling() flips
+## old single run clock (which _process() stops advancing entirely once
+## is_parallel_shelling() flips
 ## true, leaving current_part silently stuck instead of visibly wrong. Wraps
 ## whatever time was already spent into a ShellingRun with the same time_left
 ## the player was already looking at, then hands off to the parallel model.
@@ -339,8 +387,8 @@ func _migrate_to_parallel_shelling() -> void:
 	if current_part == null:
 		return
 	var duration := timer_bar.max_value
-	var time_left := station_timer.time_left
-	station_timer.stop()
+	var time_left := run_time_left
+	_stop_run_clock()
 	var run := ShellingRun.new(current_part, duration)
 	run.elapsed = max(duration - time_left, 0.0)
 	current_part = null
@@ -1048,13 +1096,13 @@ func _update_sprite() -> void:
 ## ready, which read as the lid just being left open unattended (like running
 ## a dishwasher with the door open). state_sprites[1]/[2] (open) only ever
 ## appear during the interaction flourish itself, while a technician is
-## physically mid-interaction here (see INTERACT_ANIM_FRAME_SECONDS's
+## physically mid-interaction here (see INTERACT_ANIM_FRAME_COUNT's
 ## comment) - open only because someone's actually there with their hands in
 ## it, closed the rest of the time, including the instant they walk away.
 func _apply_state_sprite() -> void:
 	station_sprite.modulate = Color.WHITE
 	if _is_interact_animating():
-		var frame := int(_interact_anim_elapsed / INTERACT_ANIM_FRAME_SECONDS)
+		var frame := int(_interact_anim_elapsed / _interact_anim_frame_seconds())
 		station_sprite.texture = state_sprites[clampi(frame, 0, state_sprites.size() - 1)]
 		return
 	station_sprite.texture = state_sprites[0]
@@ -1110,8 +1158,8 @@ func _start_running() -> void:
 	current_state = State.RUNNING
 	var effective_duration := _effective_timer_duration()
 	timer_bar.max_value = effective_duration
-	station_timer.wait_time = max(effective_duration, 0.01)
-	station_timer.start()
+	_run_duration = max(effective_duration, 0.01)
+	_run_elapsed = 0.0
 
 
 ## Design request, this session: "when you upgrade to the next factory level
@@ -1129,7 +1177,7 @@ func _effective_timer_duration() -> float:
 	return max(base_duration / worker_speed, 0.01)
 
 
-func _on_station_timer_timeout() -> void:
+func _on_run_finished() -> void:
 	if current_part != null and current_part.is_push_through:
 		_resolve_push_through(current_part)
 		return
@@ -1267,7 +1315,7 @@ func _resolve_push_through(part: Part) -> void:
 		GameData.geometry_name_for_part(part), station_id, GameData.FAMILIARITY_GAIN_PUSH_THROUGH
 	)
 	# _maybe_flag_defect() isn't called on this path (Push Through bypasses
-	# it entirely - see _on_station_timer_timeout()), so the per-worker
+	# it entirely - see _on_run_finished()), so the per-worker
 	# experience hook needs its own call here too, same reasoning as there:
 	# "each time they process a part" still applies to a push-through part.
 	_gain_worker_experience(part)
@@ -1305,6 +1353,16 @@ func _resolve_push_through(part: Part) -> void:
 func _clear_timer_bar() -> void:
 	timer_bar.value = 0.0
 	timer_bar_label.text = ""
+
+
+## Zeroes the active slot's run clock (see _run_elapsed). Replaces what used
+## to be $StationTimer.stop() - only _migrate_to_parallel_shelling() ever
+## needed to abort a run mid-flight, since every other path out of RUNNING
+## goes through _on_run_finished() and every path back in goes through
+## _start_running(), which resets both floats itself.
+func _stop_run_clock() -> void:
+	_run_elapsed = 0.0
+	_run_duration = 0.0
 
 
 func _apply_state_tint() -> void:
@@ -1441,7 +1499,7 @@ func get_overview_status() -> String:
 		State.IDLE:
 			status = _idle_status_text()
 		State.RUNNING:
-			status = "Running (%.1fs left)" % station_timer.time_left
+			status = "Running (%.1fs left)" % run_time_left
 		State.READY:
 			status = "Ready - awaiting collection" if active_worker == null else "Ready"
 		_:
@@ -1471,3 +1529,116 @@ func _current_part_suffix() -> String:
 	return " - Part #%d (%s)" % [
 		current_part.part_id, contract.customer_name if contract != null else "no contract"
 	]
+
+
+# --- Persistence (save/load) ---------------------------------------------
+#
+# Parts and technicians are saved by reference, not by value: a Part is
+# serialized once in GameData.active_parts and a Technician once in
+# GameData.technicians, so everything here stores a part_id or an index into
+# GameData.technicians and re-resolves the shared instance on load. See
+# Part.to_dict()'s note for why object identity matters.
+#
+# Not saved: station_id/station_name/station_type/room, timer_duration,
+# tier_sprites and friends - all of that comes from GameData.StationDef when
+# main.gd spawns the station, and is config rather than player progress.
+
+
+func to_save_dict(tech_indices: Dictionary) -> Dictionary:
+	var rack_ids: Array = []
+	for part in queue_rack:
+		rack_ids.append(part.part_id)
+
+	var shelling_runs: Array = []
+	for run in shelling_active_parts:
+		shelling_runs.append({
+			"part_id": run.part.part_id,
+			"elapsed": run.elapsed,
+			"duration": run.duration,
+		})
+
+	var shelling_ready_ids: Array = []
+	for part in shelling_ready_parts:
+		shelling_ready_ids.append(part.part_id)
+
+	var assigned_indices: Array = []
+	for tech in assigned_technicians:
+		if tech_indices.has(tech):
+			assigned_indices.append(tech_indices[tech])
+
+	return {
+		"current_tier": current_tier,
+		"batch_size": batch_size,
+		"rack_capacity": rack_capacity,
+		"batch_cap": batch_cap,
+		"current_state": int(current_state),
+		"run_elapsed": _run_elapsed,
+		"run_duration": _run_duration,
+		"timer_bar_max": timer_bar.max_value,
+		"push_through_armed": push_through_armed,
+		"current_part_id": current_part.part_id if current_part != null else -1,
+		"queue_rack_ids": rack_ids,
+		"shelling_active": shelling_runs,
+		"shelling_ready_ids": shelling_ready_ids,
+		"assigned_technician_indices": assigned_indices,
+		"active_worker_index": tech_indices.get(active_worker, -1),
+		"incoming_technician_index": tech_indices.get(incoming_technician, -1),
+	}
+
+
+func load_save_dict(data: Dictionary, parts_by_id: Dictionary, techs: Array) -> void:
+	current_tier = int(data.get("current_tier", 1))
+	batch_cap = int(data.get("batch_cap", batch_cap))
+	batch_size = int(data.get("batch_size", batch_cap))
+	rack_capacity = int(data.get("rack_capacity", 1))
+	current_state = data.get("current_state", State.IDLE) as State
+	_run_elapsed = float(data.get("run_elapsed", 0.0))
+	_run_duration = float(data.get("run_duration", 0.0))
+	push_through_armed = bool(data.get("push_through_armed", false))
+
+	# The bar's max_value is the run's effective duration, which
+	# _migrate_to_parallel_shelling() reads back - restore it rather than
+	# letting it keep the Tier 1 default from _ready().
+	timer_bar.max_value = max(float(data.get("timer_bar_max", timer_duration)), 0.01)
+
+	current_part = parts_by_id.get(int(data.get("current_part_id", -1)))
+
+	queue_rack.clear()
+	for raw_id in data.get("queue_rack_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			queue_rack.append(part)
+
+	shelling_active_parts.clear()
+	for raw in data.get("shelling_active", []):
+		var part: Part = parts_by_id.get(int(raw.get("part_id", -1)))
+		if part == null:
+			continue
+		var run := ShellingRun.new(part, float(raw.get("duration", 1.0)))
+		run.elapsed = float(raw.get("elapsed", 0.0))
+		shelling_active_parts.append(run)
+
+	shelling_ready_parts.clear()
+	for raw_id in data.get("shelling_ready_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			shelling_ready_parts.append(part)
+
+	assigned_technicians.clear()
+	for raw_index in data.get("assigned_technician_indices", []):
+		var index := int(raw_index)
+		if index >= 0 and index < techs.size():
+			assigned_technicians.append(techs[index])
+
+	active_worker = _tech_at(techs, data.get("active_worker_index", -1))
+	incoming_technician = _tech_at(techs, data.get("incoming_technician_index", -1))
+
+	_update_sprite()
+	_update_display()
+
+
+static func _tech_at(techs: Array, raw_index) -> Technician:
+	var index := int(raw_index)
+	if index < 0 or index >= techs.size():
+		return null
+	return techs[index]

@@ -173,7 +173,7 @@ func _printer_position(printer_index: int) -> Vector2:
 	return Vector2(PRINTER_ROW_START_X + printer_index * PRINTER_ROW_SPACING_X, PRINTER_ROW_Y)
 
 ## Real technician sprites now live here in world space (not as a child of
-## any one Station - see resources/technician.gd's WALK_SPEED-based
+## any one Station - see resources/technician.gd's walk_speed()-based
 ## movement), positioned every frame straight from Technician.current_position
 ## so a technician visibly walks the real distance between two stations
 ## instead of snapping or following an abstract timer.
@@ -249,6 +249,14 @@ var _station_floor_labels: Dictionary = {}
 
 
 func _ready() -> void:
+	# Save file is read (not yet applied) before anything spawns: the number of
+	# printer instances to build comes out of the save, and a Station can't be
+	# loaded into that was never spawned. See SaveManager's header for the full
+	# three-step boot sequence and why it's split this way.
+	var has_save := SaveManager.read_save_file()
+	if has_save:
+		GameData.owned_printer_count = SaveManager.pending_printer_count()
+
 	_build_floor()
 	_spawn_stations()
 	_setup_camera()
@@ -258,6 +266,13 @@ func _ready() -> void:
 	staff_overlay.station_by_id = _stations_by_id
 	dashboard_overlay.station_by_id = _stations_by_id
 	GameData.station_by_id = _stations_by_id
+
+	# Step 2/3 of the boot sequence, now that every Station exists and
+	# station_by_id is populated: apply the save, then fast-forward by however
+	# long the player was away. Deferred one frame so each Station's _ready()
+	# (which resets batch_size and the timer bar from its StationDef) has
+	# already run - otherwise it would overwrite the values just loaded.
+	_finish_save_boot.call_deferred()
 
 	GameData.currency_changed.connect(_on_currency_changed)
 	_on_currency_changed(GameData.currency)
@@ -609,6 +624,16 @@ func _spawn_stations() -> void:
 	GameData.printer_purchased.connect(_on_printer_purchased)
 
 	_wire_next_station_links()
+
+
+## Steps 2 and 3 of SaveManager's boot sequence, deferred out of _ready() so
+## every spawned Station's own _ready() has already run first. Also re-syncs
+## the technician sprites, since loading can bring a whole roster into
+## existence at once rather than one hire at a time.
+func _finish_save_boot() -> void:
+	SaveManager.apply_pending_save()
+	SaveManager.run_offline_catchup()
+	_sync_technician_sprites()
 
 
 ## Called immediately (buy_printer() succeeding) rather than requiring a

@@ -32,7 +32,13 @@ var line_item_index: int = 0
 ## fix paths from Section 9.
 var defect_category: int = 0 # GameData.DefectCategory, default NONE
 var defect_station_id: String = ""
-var defect_flagged_at_msec: int = 0
+## Seconds burned off this defect's grace period so far, advanced by
+## GameData.simulate() rather than read off a wall clock. Was
+## `defect_flagged_at_msec` + Time.get_ticks_msec() until the save/load work,
+## which had the same two problems Contract.elapsed_seconds documents: it
+## reset on every launch, and it couldn't be fast-forwarded. An accumulator
+## saves and steps cleanly.
+var defect_elapsed: float = 0.0
 var defect_grace_seconds: float = 0.0
 var defect_escalated: bool = false
 
@@ -52,8 +58,7 @@ var defect_time_remaining: float:
 	get:
 		if not is_defective:
 			return 0.0
-		var elapsed := (Time.get_ticks_msec() - defect_flagged_at_msec) / 1000.0
-		return max(defect_grace_seconds - elapsed, 0.0)
+		return max(defect_grace_seconds - defect_elapsed, 0.0)
 
 
 func _init() -> void:
@@ -65,7 +70,7 @@ func _init() -> void:
 func flag_defect(category: int, station_id: String, grace_seconds: float) -> void:
 	defect_category = category
 	defect_station_id = station_id
-	defect_flagged_at_msec = Time.get_ticks_msec()
+	defect_elapsed = 0.0
 	defect_grace_seconds = grace_seconds
 	defect_escalated = false
 
@@ -79,6 +84,62 @@ func flag_defect(category: int, station_id: String, grace_seconds: float) -> voi
 func clear_defect() -> void:
 	defect_category = GameData.DefectCategory.NONE
 	defect_station_id = ""
-	defect_flagged_at_msec = 0
+	defect_elapsed = 0.0
 	defect_grace_seconds = 0.0
 	defect_escalated = false
+
+
+# --- Persistence (save/load) ---------------------------------------------
+#
+# A Part is referenced from several places at once (GameData.active_parts,
+# GameData.held_parts, a Station's current_part/queue_rack/shelling runs, a
+# Technician's carried_parts). Only GameData.active_parts - the master
+# registry every live Part is in from creation to shipment - serializes the
+# Part itself; every other holder saves just this part_id and re-resolves the
+# shared instance on load. That's what keeps object identity intact instead of
+# silently deep-copying one Part into four unrelated ones.
+
+
+func to_dict() -> Dictionary:
+	return {
+		"part_id": part_id,
+		"current_station_index": current_station_index,
+		"status": int(status),
+		"contract_id": contract_id,
+		"line_item_index": line_item_index,
+		"defect_category": defect_category,
+		"defect_station_id": defect_station_id,
+		"defect_elapsed": defect_elapsed,
+		"defect_grace_seconds": defect_grace_seconds,
+		"defect_escalated": defect_escalated,
+		"is_push_through": is_push_through,
+	}
+
+
+static func from_dict(data: Dictionary) -> Part:
+	var part := Part.new()
+	# _init() already claimed a fresh id off _next_part_id; overwrite it with
+	# the saved one. GameData.load_from_dict() restores the counter itself
+	# afterward, so later parts keep issuing unused ids.
+	part.part_id = int(data.get("part_id", 0))
+	part.current_station_index = int(data.get("current_station_index", 0))
+	part.status = data.get("status", Status.IN_STATION) as Status
+	part.contract_id = int(data.get("contract_id", -1))
+	part.line_item_index = int(data.get("line_item_index", 0))
+	part.defect_category = int(data.get("defect_category", 0))
+	part.defect_station_id = str(data.get("defect_station_id", ""))
+	part.defect_elapsed = float(data.get("defect_elapsed", 0.0))
+	part.defect_grace_seconds = float(data.get("defect_grace_seconds", 0.0))
+	part.defect_escalated = bool(data.get("defect_escalated", false))
+	part.is_push_through = bool(data.get("is_push_through", false))
+	return part
+
+
+## Highest id ever issued, so GameData.load_from_dict() can restore the static
+## counter and a part created after loading can't collide with a saved one.
+static func peek_next_id() -> int:
+	return _next_part_id
+
+
+static func set_next_id(value: int) -> void:
+	_next_part_id = max(value, 1)
