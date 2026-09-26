@@ -58,7 +58,7 @@ layout_mode = 2
 custom_minimum_size = Vector2(0, 40)
 text = "Idle"
 
-[node name="DefectRow" type="HBoxContainer" parent="Panel/Scroll/Content"]
+[node name="DefectRow" type="HFlowContainer" parent="Panel/Scroll/Content"]
 unique_name_in_owner = true
 layout_mode = 2
 
@@ -176,6 +176,6 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Tap a slot to see part details."
 
-[node name="SelectedFixRow" type="HBoxContainer" parent="RackPanel/RackScroll/RackContent"]
+[node name="SelectedFixRow" type="HFlowContainer" parent="RackPanel/RackScroll/RackContent"]
 unique_name_in_owner = true
 layout_mode = 2

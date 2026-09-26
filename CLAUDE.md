@@ -96,7 +96,27 @@ python3 tools/audit_ui_layout.py
 Exits non-zero and names the offending node path. Run it after any `.tscn`
 change that adds or moves a control inside an HBoxContainer.
 
-### 2. The same bug has a height variant
+### 2. Action buttons go in a wrapping container, and the budget is 276px
+
+The Station Detail Menu's panel is 292px wide, so **276px of usable content
+width** after insets. That is the whole budget at the 480x270 base viewport, and
+it is smaller than it sounds: a single button reading "Scrap - won't meet
+tolerance (weakest link 87% familiar)" measured **312px** - wider than the panel
+on its own - and the four defect-fix buttons together came to 595px, so
+everything past the first two rendered off the right edge and could not be
+tapped. A defective part showed its category and no reachable way to fix it.
+
+So: any row whose button count or width varies (defect fixes, per-part actions)
+uses an **`HFlowContainer`**, which wraps onto extra lines, never a plain
+`HBoxContainer`. `DefectRow`, `SelectedFixRow`, and the Insert-from-Inventory
+rows all do. A list row that needs both information and actions splits into a
+`VBoxContainer`: an info `HBoxContainer` on top (fixed-width columns, measured
+to fit) and an `HFlowContainer` of buttons below.
+
+Keep button text short enough to fit alone - put the sentence in
+`tooltip_text`, not on the button face.
+
+### 3. The same bug has a height variant
 
 A Label whose own text length varies a lot between refreshes (a staffing line, a
 status readout, a toggled-visibility label) reflows every sibling row below it
@@ -104,14 +124,19 @@ each time it changes. Give it an explicit `custom_minimum_size.y` (~40px for two
 lines). `station_detail_menu.tscn`'s `StatusLabel` and `staff_overlay.gd`'s
 roster header/carrying labels are the existing examples.
 
-### 3. Headless testing cannot catch any of this
+### 4. Headless testing cannot catch any of this
 
 `--headless` disables the rendering driver entirely, so a clean headless run
 proves nothing about layout. Verify a UI change by **measuring the live Control
 rects in a real windowed run** (`Control.size`, `.position`,
 `Label.get_line_count()`) and saving a screenshot - a wrapped label shows up
 immediately as `get_line_count() > 1` or a row height far taller than one line.
-See `[[headless-gameplay-testing]]` for the general form of this lesson.
+A stronger check than eyeballing a screenshot: walk the panel's `Button`
+descendants and assert each one's right edge is inside the panel's own right
+edge - that catches "rendered but unreachable" directly, and font metrics
+(`Font.get_string_size()`) are real even headless, so a width budget can be
+measured before any code is written. See `[[headless-gameplay-testing]]` for the
+general form of this lesson.
 
 ---
 

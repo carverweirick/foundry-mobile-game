@@ -29,7 +29,7 @@ const REFRESH_INTERVAL: float = 0.25
 @onready var title_label: Label = %TitleLabel
 @onready var close_button: Button = %CloseButton
 @onready var status_label: Label = %StatusLabel
-@onready var defect_row: HBoxContainer = %DefectRow
+@onready var defect_row: HFlowContainer = %DefectRow
 @onready var queue_button: Button = %QueueButton
 @onready var collect_button: Button = %CollectButton
 @onready var push_through_check_box: CheckBox = %PushThroughCheckBox
@@ -43,7 +43,7 @@ const REFRESH_INTERVAL: float = 0.25
 @onready var rack_panel: Panel = %RackPanel
 @onready var rack_grid: GridContainer = %RackGrid
 @onready var selected_info_label: Label = %SelectedInfoLabel
-@onready var selected_fix_row: HBoxContainer = %SelectedFixRow
+@onready var selected_fix_row: HFlowContainer = %SelectedFixRow
 
 var _station: Station = null
 var _refresh_elapsed: float = 0.0
@@ -483,6 +483,9 @@ func _refresh_defect_row() -> void:
 ## Shared by the current-part DefectRow above and each defective row in the
 ## Queue (rack) and Insert-from-Inventory lists below - anywhere a defective
 ## Part is shown gets the same two fix buttons.
+## `row` is expected to be a wrapping container (HFlowContainer) at every call
+## site - these buttons vary in number and width, and the panel is only 276px
+## wide, so a non-wrapping row silently pushes them out of reach.
 func _add_defect_fix_buttons(row: Container, part: Part) -> void:
 	if not part.is_defective:
 		return
@@ -516,7 +519,15 @@ func _add_defect_fix_buttons(row: Container, part: Part) -> void:
 	if GameData.can_scrap_for_expertise(part):
 		var weakest_percent := GameData.weakest_familiarity_percent(GameData.geometry_name_for_part(part))
 		var scrap := Button.new()
-		scrap.text = "Scrap - won't meet tolerance (weakest link %d%% familiar)" % weakest_percent
+		# Measured at 312px when this said "Scrap - won't meet tolerance
+		# (weakest link N% familiar)" - wider than the 276px the panel actually
+		# has, so it rendered off the edge and was unreachable. The percentage
+		# is the number Section 21.7 wants in front of the player at this exact
+		# moment, so it stays on the face; the sentence moves to the tooltip.
+		scrap.text = "Scrap (%d%%)" % weakest_percent
+		scrap.tooltip_text = (
+			"Scrap this part - it won't meet tolerance.\n"
+			+ "Weakest-link familiarity for this geometry: %d%%." % weakest_percent)
 		scrap.pressed.connect(_on_scrap_part.bind(part))
 		row.add_child(scrap)
 
@@ -692,7 +703,14 @@ func _refresh_inventory_list() -> void:
 	)
 
 	for part in compatible:
+		# Two lines, not one. Measured: the info columns alone need 264px of the
+		# 276px the panel has, so any action button beyond that rendered off the
+		# right edge and couldn't be tapped - which is how a defective part could
+		# show "Shell Crack (ESCALATED)" with its Redesign/Scrap buttons
+		# invisible. Info stays on line one; actions wrap on their own below.
+		var entry := VBoxContainer.new()
 		var row := HBoxContainer.new()
+		entry.add_child(row)
 		var contract := GameData.get_contract(part.contract_id)
 
 		var id_label := Label.new()
@@ -725,14 +743,19 @@ func _refresh_inventory_list() -> void:
 			defect_label.text = _defect_marker(part).trim_prefix(" - DEFECT: ")
 			row.add_child(defect_label)
 
+		# HFlowContainer so the action buttons wrap onto extra lines rather than
+		# overflowing the panel - the number and width of them varies (Insert,
+		# plus Mortar Patch / Redesign / Scrap only when applicable).
+		var actions := HFlowContainer.new()
 		var insert_button := Button.new()
 		insert_button.text = "Insert"
 		insert_button.disabled = not _station.can_accept_part()
 		insert_button.pressed.connect(_on_insert_part.bind(part))
-		row.add_child(insert_button)
-		_add_defect_fix_buttons(row, part)
+		actions.add_child(insert_button)
+		_add_defect_fix_buttons(actions, part)
+		entry.add_child(actions)
 
-		inventory_list.add_child(row)
+		inventory_list.add_child(entry)
 
 
 func _clear_list(list: Container) -> void:
