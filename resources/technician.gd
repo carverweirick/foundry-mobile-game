@@ -600,7 +600,26 @@ func pick_next_station(station_by_id: Dictionary) -> String:
 ##    regardless of relative distance.
 func _priority_tier_for(station_id: String, station: Station) -> int:
 	for part in carried_parts:
-		if GameData.next_station_id_for(part) == station_id:
+		if GameData.next_station_id_for(part) != station_id:
+			continue
+		# Carrying a part bound here is a reason to go ONLY if there's somewhere
+		# to put it down. Without this capacity check, a technician holding a
+		# part for a station whose active slot is busy AND whose queue rack is
+		# full would walk there, fail to deposit
+		# (Station._deposit_one_carried_part() bails on can_accept_part()),
+		# leave for their other station, and immediately commit back again -
+		# forever. Reported as a technician "bouncing back and forth between
+		# shelling and the printer" while Tier 1 Shelling was mid-run with a
+		# full one-slot rack, and self-correcting on upgrade to Tier 2, which
+		# opens extra parallel slots so the deposit finally succeeds.
+		#
+		# This does NOT weaken the coordination rule below it: tier 0 still
+		# bypasses the active_worker/incoming_technician checks, so another
+		# technician working or heading to this station never blocks a
+		# delivery. It only declines to make a trip that physically cannot
+		# accomplish anything. Once the station frees up, this returns 0 again
+		# and the delivery happens.
+		if station.can_accept_part():
 			return 0
 
 	if station.active_worker != null and station.active_worker != self:
@@ -692,11 +711,14 @@ static func from_dict(data: Dictionary) -> Technician:
 		tech.assigned_station_ids.append(str(id))
 
 	tech.department_skill = _int_valued_dict(data.get("department_skill", {}))
-	# geometry_familiarity is nested one level deeper: geometry -> {station: stars}
-	tech.geometry_familiarity = {}
-	for geometry in data.get("geometry_familiarity", {}):
-		tech.geometry_familiarity[str(geometry)] = _int_valued_dict(
-			data["geometry_familiarity"][geometry])
+	# FLAT (geometry_name -> stars), same shape as department_skill above.
+	# Deliberately noted because GameData.geometry_familiarity is the nested
+	# shop-wide one (geometry -> {station_id: stars}) and this used to be
+	# restored as if it were nested too - which meant a save loaded fine until
+	# a technician had actually gained hands-on experience, and from then on
+	# every load blew up in _int_valued_dict() and left the whole roster as
+	# nulls. See familiarity_for_geometry()/gain_experience() for the real shape.
+	tech.geometry_familiarity = _int_valued_dict(data.get("geometry_familiarity", {}))
 	return tech
 
 

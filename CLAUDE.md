@@ -190,6 +190,14 @@ See `[[headless-gameplay-testing]]` for the general form of this lesson.
   ended up, then defects and contracts settle) where before the relative order of
   `GameData._process()` and each `Station._process()` was whatever the SceneTree
   picked.
+- **The two `geometry_familiarity` dictionaries have DIFFERENT shapes** and
+  must be serialized differently: `GameData.geometry_familiarity` is nested
+  (`geometry -> {station_id: stars}`), `Technician.geometry_familiarity` is flat
+  (`geometry -> stars`, see `familiarity_for_geometry()`/`gain_experience()`).
+  Restoring the technician one as if it were nested left the entire roster as
+  nulls on load - and only once a technician had actually gained hands-on
+  experience, so a fresh-hire round-trip test passes right over it. Any save
+  test must seed real familiarity before saving.
 - **Object identity is the hard part of the save format.** One `Part` is
   referenced from `active_parts`, `held_parts`, a Station's
   `current_part`/`queue_rack`/shelling runs, and a Technician's `carried_parts`.
@@ -408,6 +416,17 @@ See `[[headless-gameplay-testing]]` for the general form of this lesson.
   technician starting it." `from_dict` defaults the flag from
   `current_station_id != "" or is_traveling` so saves written before it existed
   don't reintroduce the teleport.
+- **Carrying cargo for a station is only a reason to go there if the station
+  has room.** `Technician._priority_tier_for()`'s tier-0 cargo branch checks
+  `Station.can_accept_part()`. Without it, a technician holding a part for a
+  station whose active slot was busy AND whose queue rack was full would walk
+  there, fail to deposit, leave for their other station, and immediately commit
+  back - forever (reported as bouncing between Shelling and the printer with
+  Tier 1 Shelling mid-run and a full one-slot rack; it self-corrected on
+  upgrading to Tier 2, which opens extra parallel slots so the deposit
+  succeeds). Tier 0 still bypasses the `active_worker`/`incoming_technician`
+  coordination checks below, so another technician never blocks a delivery -
+  only a physically impossible trip is declined.
 - **`Station.incoming_technician` - a route reservation, claimed the
   instant a technician COMMITS to traveling somewhere, not on arrival**
   (player report, this session: "id like there to be no point in time
@@ -513,7 +532,16 @@ See `[[headless-gameplay-testing]]` for the general form of this lesson.
   branches on `is_parallel_shelling()` via shared predicates
   `_has_ready_part_to_send()`/`_has_open_slot_to_fill()`. Upgrading Shelling
   from Tier 1 to Tier 2 mid-run wraps the in-progress part into a
-  `ShellingRun` rather than losing it. Known rough edge:
+  `ShellingRun` rather than losing it. **Every parallel run's countdown is
+  visible, not just the soonest**: the single floor timer bar fills against
+  whichever finishes first (`_soonest_shelling_run()`) while its label lists
+  each remaining time (`_parallel_timer_text()`, up to
+  `MAX_TIMERS_ON_FLOOR` = 3 then a `+N` tail, sized to the bar's 150px), and
+  `_parallel_shelling_status_text()` adds part-numbered countdowns
+  (`3/4 running, (#1 308s, #2 312s, #3 316s)`) for the Overview tab and
+  Station Detail Menu, which have the room. `_current_part_suffix()` lists
+  only the READY parts in parallel mode, since the running ones are already
+  named with their timers. Known rough edge:
   `Technician._priority_tier_for()` only checks `current_state == IDLE` for
   "actionable while idle," so a partially-busy parallel-Shelling station
   (some slots running, one open) isn't prioritized in route planning - once

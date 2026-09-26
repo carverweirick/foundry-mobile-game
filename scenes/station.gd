@@ -323,16 +323,60 @@ func _update_timer_bar_readout() -> void:
 		if shelling_active_parts.is_empty():
 			_clear_timer_bar()
 			return
-		var soonest: ShellingRun = shelling_active_parts[0]
-		for run in shelling_active_parts:
-			if run.time_left < soonest.time_left:
-				soonest = run
+		# The single bar can only fill for one run, so it tracks whichever
+		# finishes first - but the LABEL lists every run's remaining time.
+		# Showing only the soonest meant a player with several parts shelling in
+		# parallel could see just one countdown and had no way to tell how far
+		# along the others were ("i cant see the timers on both parts in the
+		# sheller when there is more than one part in work").
+		var soonest := _soonest_shelling_run()
 		timer_bar.max_value = max(soonest.duration, 0.01)
 		timer_bar.value = soonest.time_left
-		timer_bar_label.text = "%.1fs" % soonest.time_left
+		timer_bar_label.text = _parallel_timer_text()
 	elif current_state == State.RUNNING:
 		timer_bar.value = run_time_left
 		timer_bar_label.text = "%.1fs" % run_time_left
+
+
+## Whichever parallel run finishes first. Shared by the timer bar (which fills
+## against it) and _update_parallel_state()'s callers.
+func _soonest_shelling_run() -> ShellingRun:
+	var soonest: ShellingRun = shelling_active_parts[0]
+	for run in shelling_active_parts:
+		if run.time_left < soonest.time_left:
+			soonest = run
+	return soonest
+
+
+## Parallel runs sorted soonest-first. Sorting rather than showing them in
+## slot order keeps the leftmost number matching what the bar itself is
+## filling toward, so the two readouts never disagree.
+func _shelling_runs_by_soonest() -> Array:
+	var runs: Array = shelling_active_parts.duplicate()
+	runs.sort_custom(func(a, b): return a.time_left < b.time_left)
+	return runs
+
+
+## How many countdowns fit across TimerBar's 150px before the text overflows
+## the bar. Anything past this collapses into a "+N" tail rather than being
+## silently dropped.
+const MAX_TIMERS_ON_FLOOR: int = 3
+
+
+## Compact multi-run countdown for the floor's timer bar - times only, no part
+## numbers (there's no room, and the Station Detail Menu carries the labelled
+## version via _parallel_shelling_status_text()).
+func _parallel_timer_text() -> String:
+	var runs := _shelling_runs_by_soonest()
+	if runs.size() == 1:
+		return "%.1fs" % runs[0].time_left
+	var shown: Array[String] = []
+	for i in mini(runs.size(), MAX_TIMERS_ON_FLOOR):
+		shown.append("%.0fs" % runs[i].time_left)
+	var text := " / ".join(PackedStringArray(shown))
+	if runs.size() > MAX_TIMERS_ON_FLOOR:
+		text += " +%d" % (runs.size() - MAX_TIMERS_ON_FLOOR)
+	return text
 
 
 func _start_shelling_run(part: Part) -> void:
@@ -1413,6 +1457,15 @@ func _parallel_shelling_status_text() -> String:
 	var parts: Array[String] = []
 	if batch_cap > 0:
 		parts.append("%d/%d running" % [shelling_active_parts.size(), batch_cap])
+	# Per-part countdowns, labelled by part number. The floor's timer bar has
+	# no room for part numbers (see _parallel_timer_text()), but every menu that
+	# reads this - the Overview tab and the Station Detail Menu's status line -
+	# does, and it's the only place a player can tell WHICH part is which.
+	if not shelling_active_parts.is_empty():
+		var each: Array[String] = []
+		for run in _shelling_runs_by_soonest():
+			each.append("#%d %.0fs" % [run.part.part_id, run.time_left])
+		parts.append("(%s)" % ", ".join(PackedStringArray(each)))
 	if not shelling_ready_parts.is_empty():
 		parts.append("%d ready" % shelling_ready_parts.size())
 	return ", ".join(PackedStringArray(parts))
@@ -1515,14 +1568,16 @@ func get_overview_status() -> String:
 ## away in either of those two more detailed views instead.
 func _current_part_suffix() -> String:
 	if is_parallel_shelling():
+		# Only the READY parts get named here. The running ones are already
+		# listed, with their countdowns, by _parallel_shelling_status_text() -
+		# naming them again produced a status line that read
+		# "3/4 running, (#1 308s, #2 312s, #3 316s) [#1, #2, #3]".
 		var ids: Array[String] = []
-		for run in shelling_active_parts:
-			ids.append("#%d" % run.part.part_id)
 		for part in shelling_ready_parts:
 			ids.append("#%d" % part.part_id)
 		if ids.is_empty():
 			return ""
-		return " [%s]" % ", ".join(PackedStringArray(ids))
+		return " [ready: %s]" % ", ".join(PackedStringArray(ids))
 	if current_part == null:
 		return ""
 	var contract := GameData.get_contract(current_part.contract_id)
