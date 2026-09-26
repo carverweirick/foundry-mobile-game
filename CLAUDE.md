@@ -416,6 +416,25 @@ See `[[headless-gameplay-testing]]` for the general form of this lesson.
   technician starting it." `from_dict` defaults the flag from
   `current_station_id != "" or is_traveling` so saves written before it existed
   don't reintroduce the teleport.
+- **Undeliverable cargo is handed to Awaiting Transfer, not carried forever.**
+  Cargo is only ever picked up for a station the technician is assigned to, but
+  that assignment can be removed afterwards - unassign them from Burnout while
+  they hold a Burnout-bound Part and it becomes undeliverable.
+  `Station._release_undeliverable_cargo()` (first thing `_technician_act()`
+  does) drops any Part whose next station isn't in
+  `real_assigned_station_ids()` into `GameData.held_parts`, the same fallback
+  `_try_send_to_next_station()` already uses. Previously such a Part kept the
+  technician permanently "busy delivering" AND never surfaced in Awaiting
+  Transfer, so the player couldn't route it by hand either.
+- **Deferring local work to deliver cargo only applies if the technician
+  actually leaves.** `_travel_if_worthwhile()` returns whether it committed to
+  a destination, and `_technician_act()`'s cargo branch only returns early when
+  it did. It used to return unconditionally, so a technician holding cargo they
+  couldn't deliver right now (destination full, or a station they no longer
+  work at) skipped local work forever while shuttling between their other
+  stations - reported as being "caught between grinding and the printer but
+  carrying something for burnout," with Grinding idle next to a part they
+  refused to load.
 - **Carrying cargo for a station is only a reason to go there if the station
   has room.** `Technician._priority_tier_for()`'s tier-0 cargo branch checks
   `Station.can_accept_part()`. Without it, a technician holding a part for a

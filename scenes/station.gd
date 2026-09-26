@@ -470,6 +470,10 @@ func _technician_act(tech: Technician) -> void:
 		_technician_act_as_visitor(tech)
 		return
 
+	# Before anything else: a Part this technician can never deliver has to stop
+	# being their problem, or it poisons every decision below.
+	_release_undeliverable_cargo(tech)
+
 	if _deposit_one_carried_part(tech):
 		tech.begin_interacting()
 		return
@@ -486,8 +490,17 @@ func _technician_act(tech: Technician) -> void:
 	# would just keep "succeeding" here forever. _deposit_one_carried_part()
 	# above already handled anything bound HERE - this is specifically about
 	# something bound elsewhere, which only pick_next_station() can route to.
-	if not tech.carried_parts.is_empty() and tech.has_multiple_real_stations():
-		_travel_if_worthwhile(tech)
+	# Note the `and _travel_if_worthwhile(...)`: deferring local work is only
+	# justified if they actually set off somewhere. It used to return
+	# unconditionally, so a technician holding cargo they couldn't deliver right
+	# now (destination full, or - before _release_undeliverable_cargo() above -
+	# a station they no longer work at) skipped local work forever while
+	# shuttling between their other stations. Reported as being "caught between
+	# grinding and the printer but carrying something for burnout," with
+	# Grinding sitting idle next to a part they refused to load.
+	if (not tech.carried_parts.is_empty()
+			and tech.has_multiple_real_stations()
+			and _travel_if_worthwhile(tech)):
 		return
 
 	# Not just _auto_queue_if_possible(): a station that's been idle and
@@ -543,7 +556,10 @@ func _technician_act_as_visitor(tech: Technician) -> void:
 ## "nothing to do" verdict and immediately turned around again. Also
 ## releases active_worker if tech was holding it, so whoever's left present
 ## (if anyone) can claim it next.
-func _travel_if_worthwhile(tech: Technician) -> void:
+## Returns whether it actually sent tech anywhere. Callers rely on that: a
+## "stay put" verdict must fall through to local work rather than being treated
+## as "travel handled, nothing more to do here."
+func _travel_if_worthwhile(tech: Technician) -> bool:
 	var next_id := tech.pick_next_station(GameData.station_by_id)
 	if next_id != tech.current_station_id:
 		if active_worker == tech:
@@ -556,6 +572,8 @@ func _travel_if_worthwhile(tech: Technician) -> void:
 		if next_station != null:
 			next_station.incoming_technician = tech
 		tech.start_traveling_to(next_id)
+		return true
+	return false
 
 
 ## Whether there's a real reason for the assigned technician to come here
@@ -1051,6 +1069,28 @@ func _clear_sent_ready_part(part: Part) -> void:
 ## per call, same as every other technician action - see _technician_act(),
 ## which re-calls this on the next interact cycle if they're carrying more
 ## than one thing bound here.
+## Hands any Part the technician physically cannot deliver to Awaiting Transfer
+## (GameData.held_parts), the same fallback _try_send_to_next_station() uses
+## when a technician isn't able to carry a Part onward in the first place.
+##
+## Cargo only ever gets picked up for a station the technician is assigned to,
+## but that assignment can be taken away afterwards - unassign them from Burnout
+## while they're carrying a Burnout-bound Part and it becomes undeliverable
+## cargo. Leaving it in their hands was doubly bad: it kept them "busy
+## delivering" forever, and the Part never surfaced in Awaiting Transfer, so the
+## player couldn't route it by hand either - it was simply invisible.
+func _release_undeliverable_cargo(tech: Technician) -> void:
+	if tech.carried_parts.is_empty():
+		return
+	var reachable := tech.real_assigned_station_ids()
+	for part in tech.carried_parts.duplicate():
+		var destination := GameData.next_station_id_for(part)
+		if destination == "" or reachable.has(destination):
+			continue
+		tech.carried_parts.erase(part)
+		GameData.hold_part(part)
+
+
 func _deposit_one_carried_part(tech: Technician) -> bool:
 	for part in tech.carried_parts:
 		if GameData.next_station_id_for(part) != station_id:
