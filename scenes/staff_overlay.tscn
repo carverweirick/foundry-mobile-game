@@ -71,8 +71,8 @@ text = "Refresh Applicants"
 
 [node name="RefreshCountdownLabel" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent/RefreshRow"]
 unique_name_in_owner = true
-autowrap_mode = 3
 layout_mode = 2
+size_flags_horizontal = 3
 text = "New applicants in: 0:00"
 
 [node name="RosterHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]

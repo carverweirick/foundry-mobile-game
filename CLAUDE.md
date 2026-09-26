@@ -58,6 +58,63 @@ happens directly on `main` unless a new feature branch is called for.
 
 ---
 
+## UI layout rules - read these before changing any scene or UI code
+
+These are invariants, not style preferences. Each one has already shipped as a
+visible bug more than once, so treat a violation as a defect even if it happens
+to look fine in the one state you tested.
+
+### 1. A control with autowrap inside an HBoxContainer must be given a width
+
+**The mechanism**, because pattern-matching on this one isn't enough: a Label
+with `autowrap_mode` set has a minimum width of roughly **zero** - it can always
+wrap harder, so there is no width it can't survive. An `HBoxContainer` hands
+every child its minimum width first, so an autowrapping Label next to a Button
+gets a sliver, wraps one character per line, and turns a short readout into a
+tall vertical strip that eats the panel. The symptom is always reported the same
+way: "it's vertical again" / "it takes up half the menu."
+
+**Three valid fixes; any one is enough.** Pick by intent:
+- `size_flags_horizontal = 3` (expand-fill) - the control should take whatever
+  space is left over. Best for the main text in a row.
+- `custom_minimum_size = Vector2(W, 0)` - a hard width floor. Best when several
+  controls share the row and you want stable columns. This is what the
+  `.gd`-built rows already do (`staff_overlay.gd`'s cost/strategy labels).
+- Drop `autowrap_mode` entirely - then the minimum width *is* the natural text
+  width. Correct for any short single-line readout that should never wrap.
+
+**Why this keeps recurring:** every Label got a blanket `autowrap_mode` so long
+text wraps inside a panel instead of clipping. That is right for prose in a
+VBoxContainer and actively harmful for a short label in an HBoxContainer. Scene
+files are the blind spot - `.gd`-built rows set widths by hand, but a Label
+added in the Godot editor silently inherits autowrap with no floor.
+
+**Check it, don't eyeball it:**
+```
+python3 tools/audit_ui_layout.py
+```
+Exits non-zero and names the offending node path. Run it after any `.tscn`
+change that adds or moves a control inside an HBoxContainer.
+
+### 2. The same bug has a height variant
+
+A Label whose own text length varies a lot between refreshes (a staffing line, a
+status readout, a toggled-visibility label) reflows every sibling row below it
+each time it changes. Give it an explicit `custom_minimum_size.y` (~40px for two
+lines). `station_detail_menu.tscn`'s `StatusLabel` and `staff_overlay.gd`'s
+roster header/carrying labels are the existing examples.
+
+### 3. Headless testing cannot catch any of this
+
+`--headless` disables the rendering driver entirely, so a clean headless run
+proves nothing about layout. Verify a UI change by **measuring the live Control
+rects in a real windowed run** (`Control.size`, `.position`,
+`Label.get_line_count()`) and saving a screenshot - a wrapped label shows up
+immediately as `get_line_count() > 1` or a row height far taller than one line.
+See `[[headless-gameplay-testing]]` for the general form of this lesson.
+
+---
+
 ## Currently built
 
 **Project setup**
@@ -861,16 +918,10 @@ happens directly on `main` unless a new feature branch is called for.
   doesn't refire `toggled`), never freed/recreated, avoiding a visible
   "pop"/reflow every 250ms. New checkboxes/rows are still added lazily when
   a printer is bought or a technician is hired.
-- Any label sitting next to a wider sibling control in an `HBoxContainer`
-  (e.g. "Strategy:", "Batch size:") needs an explicit
-  `custom_minimum_size.x`, or it collapses to a one-character-per-line
-  vertical wrap - a recurring gotcha in this codebase, already fixed
-  everywhere it's been hit but worth remembering if a new short label is
-  added next to a wide control.
-- Any label whose own text length varies a lot on refresh (staffing status,
-  a toggled-visibility label) needs an explicit `custom_minimum_size.y`
-  (~40px/2 lines), or it reflows every sibling row below it - same
-  recurring-gotcha note as above, for height instead of width.
+- Row layout in this overlay follows the project-wide **UI layout rules**
+  section near the top of this file (width floors on HBox children, height
+  floors on variable-length labels). `staff_overlay.gd`'s cost/strategy labels
+  are the reference examples; `tools/audit_ui_layout.py` checks the scene side.
 - **Wage economy, paid at Factory Level-up, not on a timer** (design request,
   this session: "have wages be an addition to the factory level" - replaces
   a same-session first pass that used a flat 90s real-time payday clock,
