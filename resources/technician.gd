@@ -333,6 +333,47 @@ var has_real_position: bool = false
 var is_interacting: bool = false
 var _interact_elapsed: float = 0.0
 
+## --- Bounce fail-safe ------------------------------------------------------
+##
+## Every "technician bounces between two stations forever" bug so far has had
+## the same shape: pick_next_station() (via _priority_tier_for() and
+## Station.has_actionable_work()) PREDICTS there's work somewhere, the
+## technician walks there, and Station._technician_act() - the thing that
+## actually does work - disagrees and finds nothing. Each fix closed one such
+## predictor/actor mismatch, but any future one reintroduces the loop. So this
+## watches the symptom directly instead of trusting every predictor to be
+## right: a short history of recent visits, each marked productive (did at
+## least one real action - begin_interacting() - between arriving and leaving)
+## or not. BOUNCE_UNPRODUCTIVE_VISITS wasted trips in a row means the routing
+## is lying; the stations involved are taken off this technician's candidate
+## list for a cooldown (doubling on repeat offences, reset by any real work),
+## so they stay put and do local work or head somewhere else that genuinely
+## has some. A warning is logged with the visit history, since a trip here
+## means there's a new mismatch worth finding and fixing at the source.
+##
+## Transient on purpose - not saved. A save taken mid-loop just re-detects it
+## within a few trips after loading.
+const VISIT_HISTORY_SIZE: int = 8
+## 4 = two full round trips between the same pair. Low enough to catch a loop
+## within ~10 seconds of walking, high enough that one lost race (someone else
+## took the work first) doesn't trip it.
+const BOUNCE_UNPRODUCTIVE_VISITS: int = 4
+const BOUNCE_SUPPRESS_SECONDS: float = 20.0
+const BOUNCE_SUPPRESS_MAX_SECONDS: float = 160.0
+
+## Most recent last: {"station_id": String, "productive": bool}.
+var recent_visits: Array[Dictionary] = []
+## Starts true so a freshly loaded/placed technician's first departure isn't
+## counted against them before they've had a real arrival.
+var _acted_since_arrival: bool = true
+var _unproductive_streak: int = 0
+## station_id -> seconds of simulated time left before it's a candidate again.
+var _suppressed_stations: Dictionary = {}
+var _next_suppress_seconds: float = BOUNCE_SUPPRESS_SECONDS
+## How many times the fail-safe has tripped for this technician - for tests
+## and debugging, not gameplay.
+var bounce_breaks: int = 0
+
 var hire_cost: int:
 	get: return TIER_HIRE_COST[skill_tier]
 
@@ -392,6 +433,7 @@ var productivity_multiplier: float:
 ## _technician_act(), which only sends someone walking if they have another
 ## assigned station to check.
 func tick(delta: float, station_by_id: Dictionary) -> bool:
+	_tick_route_suppression(delta)
 	if assigned_station_ids.is_empty():
 		if current_station_id == "" and not is_traveling:
 			return false
@@ -437,6 +479,7 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 			if station != null:
 				current_position = station.position
 			has_real_position = true
+			_acted_since_arrival = false
 		return true
 
 	if is_interacting:
@@ -459,6 +502,7 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 			current_station_id = travel_target_station_id
 			travel_target_station_id = ""
 			is_traveling = false
+			_acted_since_arrival = false
 			# Release the reservation this technician claimed on committing
 			# to this destination (Station._travel_if_worthwhile()) - see
 			# Station.incoming_technician's own comment. Arrival is a strictly
@@ -500,6 +544,59 @@ func start_traveling_to(next_station_id: String) -> void:
 func begin_interacting() -> void:
 	is_interacting = true
 	_interact_elapsed = 0.0
+	# Real work happened - the routing is evidently fine right now, so the
+	# bounce fail-safe's streak and escalating cooldown both start over.
+	_acted_since_arrival = true
+	_unproductive_streak = 0
+	_next_suppress_seconds = BOUNCE_SUPPRESS_SECONDS
+
+
+## Logs the visit this technician is about to walk away from (see the bounce
+## fail-safe notes above recent_visits), and trips the fail-safe if it
+## completes a streak of wasted trips. Called by Station._travel_if_worthwhile()
+## once pick_next_station() has chosen somewhere else, BEFORE committing to it.
+## Returns true if the fail-safe just tripped - the caller must then re-plan,
+## since the destination it was about to commit to is now suppressed.
+func record_departure() -> bool:
+	var productive := _acted_since_arrival
+	recent_visits.append({"station_id": current_station_id, "productive": productive})
+	if recent_visits.size() > VISIT_HISTORY_SIZE:
+		recent_visits.pop_front()
+	if productive:
+		_unproductive_streak = 0
+		return false
+	_unproductive_streak += 1
+	if _unproductive_streak < BOUNCE_UNPRODUCTIVE_VISITS:
+		return false
+
+	# Every station in the wasted streak - covers a 2-station ping-pong and a
+	# longer cycle alike.
+	var looped: Array[String] = []
+	for i in range(recent_visits.size() - _unproductive_streak, recent_visits.size()):
+		var id: String = recent_visits[i]["station_id"]
+		if id != "" and not looped.has(id):
+			looped.append(id)
+	for id in looped:
+		_suppressed_stations[id] = _next_suppress_seconds
+	push_warning("%s was bouncing between %s with nothing to do - ignoring them for %.0fs. Recent visits: %s" % [
+		technician_name, ", ".join(looped), _next_suppress_seconds, str(recent_visits)])
+	bounce_breaks += 1
+	_unproductive_streak = 0
+	_next_suppress_seconds = min(_next_suppress_seconds * 2.0, BOUNCE_SUPPRESS_MAX_SECONDS)
+	return true
+
+
+func is_route_suppressed(station_id: String) -> bool:
+	return _suppressed_stations.has(station_id)
+
+
+func _tick_route_suppression(delta: float) -> void:
+	if _suppressed_stations.is_empty():
+		return
+	for id in _suppressed_stations.keys():
+		_suppressed_stations[id] -= delta
+		if _suppressed_stations[id] <= 0.0:
+			_suppressed_stations.erase(id)
 
 
 ## Chooses which of this technician's OTHER assigned stations to head to
@@ -539,7 +636,9 @@ const NOTHING_TIER: int = 3
 func pick_next_station(station_by_id: Dictionary) -> String:
 	var candidates: Array[String] = []
 	for id in real_assigned_station_ids():
-		if id != current_station_id:
+		# Suppressed = the bounce fail-safe caught this station luring us over
+		# with work that wasn't there (see record_departure()).
+		if id != current_station_id and not is_route_suppressed(id):
 			candidates.append(id)
 	if candidates.is_empty():
 		return current_station_id

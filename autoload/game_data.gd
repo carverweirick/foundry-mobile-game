@@ -978,6 +978,25 @@ func get_active_contracts() -> Array[Contract]:
 	return contracts.filter(func(c): return not c.is_complete)
 
 
+## The first active contract that still needs a brand new Part started - i.e.
+## has a line item whose shipped + in-flight count is short of its required
+## quantity. null when every active contract is already fully covered by Parts
+## in the pipeline. This is THE single answer to "can an entry station create a
+## Part right now, contract-wise," shared by Station.has_actionable_work() (the
+## routing predictor) and Station._try_create_part()/_auto_queue_if_possible()
+## (the actor). They used to disagree: the predictor said yes whenever any
+## active contract existed, while the actor only tried active[0] and refused
+## once its line items were all in flight - so a technician covering two
+## printers saw phantom work at whichever one they weren't standing at and
+## walked back and forth between them forever.
+func next_contract_needing_parts() -> Contract:
+	for contract in get_active_contracts():
+		var in_flight := in_flight_counts_for_contract(contract.contract_id)
+		if contract.first_open_line_item_index(in_flight) >= 0:
+			return contract
+	return null
+
+
 func get_contract(id: int) -> Contract:
 	for c in contracts:
 		if c.contract_id == id:

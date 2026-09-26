@@ -471,6 +471,28 @@ general form of this lesson.
   succeeds). Tier 0 still bypasses the `active_worker`/`incoming_technician`
   coordination checks below, so another technician never blocks a delivery -
   only a physically impossible trip is declined.
+- **Routing predictor and actor must agree - the root of every bounce bug.**
+  `pick_next_station()` trusts `Station.has_actionable_work()` to predict what
+  `_technician_act()` will actually do on arrival; any disagreement is an
+  infinite walk between stations. Entry stations now share
+  `GameData.next_contract_needing_parts()` (first active contract with a line
+  item short of shipped+in-flight) between the predictor, `_try_create_part()`
+  and `_auto_queue_if_possible()` - previously the predictor said "work" for any
+  active contract while the actor only tried `active[0]` and refused once its
+  parts were all in flight, so a technician covering 2+ printers ping-ponged
+  nonstop (~1150 trips per 15 sim-minutes) once a contract was fully in
+  production. Idle entry stations in that state read "Idle - every contracted
+  part already in production".
+- **Bounce fail-safe** (`Technician.record_departure()`, called from
+  `Station._travel_if_worthwhile()` before committing to a trip). Each technician
+  keeps `recent_visits` (last 8, each `{station_id, productive}` - productive =
+  `begin_interacting()` fired between arriving and leaving). 4 unproductive
+  visits in a row suppresses every station in that streak as a destination for
+  20s of simulated time (doubling per repeat trip up to 160s; any real work
+  resets both), then re-plans - usually "stay put and do local work". Logs a
+  `push_warning` with the visit history, since a trip means a new
+  predictor/actor mismatch worth fixing at the source. Transient, not saved.
+  `bounce_breaks` counts trips for tests.
 - **`Station.incoming_technician` - a route reservation, claimed the
   instant a technician COMMITS to traveling somewhere, not on arrival**
   (player report, this session: "id like there to be no point in time

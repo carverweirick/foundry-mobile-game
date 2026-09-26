@@ -561,6 +561,11 @@ func _technician_act_as_visitor(tech: Technician) -> void:
 ## as "travel handled, nothing more to do here."
 func _travel_if_worthwhile(tech: Technician) -> bool:
 	var next_id := tech.pick_next_station(GameData.station_by_id)
+	# Bounce fail-safe (see Technician.record_departure()): if leaving here
+	# would complete a streak of wasted trips, the stations involved just got
+	# suppressed - so re-plan, which usually means staying put.
+	if next_id != tech.current_station_id and tech.record_departure():
+		next_id = tech.pick_next_station(GameData.station_by_id)
 	if next_id != tech.current_station_id:
 		if active_worker == tech:
 			active_worker = null
@@ -601,7 +606,9 @@ func has_actionable_work() -> bool:
 		# producing exactly the same "stuck bouncing back and forth"
 		# symptom the earlier NOTHING_TIER fix was meant to end, just with a
 		# blocked entry station standing in for "nothing to do anywhere."
-		if is_pipeline_entry and can_start_new_work() and not GameData.get_active_contracts().is_empty():
+		# Must agree exactly with what _auto_queue_if_possible() would actually
+		# do on arrival - see GameData.next_contract_needing_parts().
+		if is_pipeline_entry and can_start_new_work() and GameData.next_contract_needing_parts() != null:
 			return true
 	return false
 
@@ -965,10 +972,9 @@ func _try_create_part(contract: Contract = null) -> bool:
 	if current_part != null:
 		return false
 	if contract == null:
-		var active := GameData.get_active_contracts()
-		if active.is_empty():
+		contract = GameData.next_contract_needing_parts()
+		if contract == null:
 			return false
-		contract = active[0]
 
 	# Section 24.1: a contract can have several line items - pick whichever
 	# one still needs more Parts (shipped-or-in-flight, not just shipped, so
@@ -1152,10 +1158,9 @@ func _auto_queue_if_possible() -> bool:
 		return false
 	if not can_start_new_work():
 		return false
-	var active := GameData.get_active_contracts()
-	if active.is_empty():
-		return false
-	return _try_create_part(active[0])
+	# Not active[0]: a first contract whose Parts are all already in flight
+	# would otherwise block every contract behind it.
+	return _try_create_part(GameData.next_contract_needing_parts())
 
 
 func _update_sprite() -> void:
@@ -1531,6 +1536,8 @@ func _idle_status_text() -> String:
 		return "Idle - no active contracts (accept one from Contract Offers)"
 	if not can_start_new_work():
 		return "Idle - blocked, clear the backlog first"
+	if GameData.next_contract_needing_parts() == null:
+		return "Idle - every contracted part already in production"
 	return "Idle"
 
 
