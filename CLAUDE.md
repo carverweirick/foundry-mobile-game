@@ -81,17 +81,28 @@ happens directly on `main` unless a new feature branch is called for.
   periods (`grace_period_seconds_for()`), and contract deadlines. Never
   hardcode a real-seconds duration for shop-floor time; that's exactly the trap
   this arrangement exists to prevent.
-- Two couplings that had to be fixed alongside the scale change, both of which
-  would have silently broken a designed mechanic:
-  `CONTRACT_DEADLINE_GAME_MINUTES` (was `CONTRACT_DEADLINE_SECONDS`, hardcoded
-  prototype seconds - leaving it would have made every contract impossible), and
-  `Technician.WALK_PIXELS_PER_GAME_MINUTE`/`INTERACT_GAME_MINUTES` (were real-
-  seconds `WALK_SPEED`/`INTERACT_SECONDS` - leaving them would have cut travel
-  from ~45% of a print cycle to ~8%, deleting Section 7's multi-station walking
-  penalty). Both ratios verified preserved (walk is 45.5% of a print cycle).
-  `Station.INTERACT_ANIM_FRAME_COUNT` likewise derives Clean's 3-frame
+- `CONTRACT_DEADLINE_GAME_MINUTES` (was `CONTRACT_DEADLINE_SECONDS`, hardcoded
+  prototype seconds) had to move to game minutes alongside the scale change -
+  leaving it would have made every contract instantly impossible.
+- **Technician walk/handling pace is deliberately NOT timescale-derived.**
+  `Technician.WALK_SPEED` (220 px/real-sec) and `INTERACT_SECONDS` (1.5s) are
+  real-time constants tuned for feel, read via `walk_speed()`/
+  `interact_seconds()`. They were briefly made timescale-derived on the theory
+  that design doc Section 7's multi-station penalty needed travel to stay a
+  fixed fraction of a machine cycle; that was wrong on both counts. Section 7's
+  penalty is already modelled separately and explicitly as
+  `productivity_multiplier` (a pure ratio, timescale-independent), so physical
+  travel is an additional emergent cost rather than the mechanic itself - and
+  holding travel at ~45% of a cycle against 30x-slower cycles produced a
+  36 px/sec crawl plus a 9-second freeze per pickup (reported as "the
+  technicians are moving really slow"). Charging the penalty twice is a worse
+  game. `Station.INTERACT_ANIM_FRAME_COUNT` still derives Clean's 3-frame
   interaction flourish from `Technician.interact_seconds()` rather than a fixed
-  0.5s/frame.
+  0.5s/frame, so it tracks any retune.
+- **Tier 1 Shelling is 160 game-minutes = 320 real seconds, over half the whole
+  604s pipeline.** Faithful to design doc Section 17 (shelling is meant to be
+  the bottleneck), but it dominates the felt pace and is the first number to
+  revisit in a balance pass.
 - `GameData.time_scale_multiplier` (static, default 1.0) is a debug override for
   running the shop fast in tests without re-tuning anything.
 
@@ -326,6 +337,20 @@ happens directly on `main` unless a new feature branch is called for.
   what keeps multiple technicians from all walking toward the same station
   without reason, while still letting a cargo-carrier always deliver (tier
   0 bypasses both checks unconditionally).
+- **A reassigned technician walks; only a never-placed one snaps.**
+  `Technician.has_real_position` (false until they're first put on the floor,
+  and saved/restored) splits `tick()`'s reassignment branch in two: a brand new
+  hire has nowhere to walk from, so they snap onto their first station (which
+  is what lets a first/solo assignment go live immediately, via
+  `GameData.assign_technician()`'s synchronous `tick(0.0)` call); anyone who
+  already has a position instead `start_traveling_to()`s the new station. That
+  branch used to snap `current_position` unconditionally, so reassigning an
+  existing technician teleported them across the whole floor instantly (1285px,
+  Clean to Burnout) and they claimed the station on the next frame - reported as
+  "I assigned my technician to a new station and the station ran without a
+  technician starting it." `from_dict` defaults the flag from
+  `current_station_id != "" or is_traveling` so saves written before it existed
+  don't reintroduce the teleport.
 - **`Station.incoming_technician` - a route reservation, claimed the
   instant a technician COMMITS to traveling somewhere, not on arrival**
   (player report, this session: "id like there to be no point in time

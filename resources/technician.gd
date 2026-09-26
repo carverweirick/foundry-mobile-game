@@ -266,34 +266,32 @@ const CARRY_CAPACITY: int = 2
 ## current_station_id points is actually staffed at any given moment (see
 ## Station._technician_is_present()), and getting anywhere else takes real,
 ## distance-proportional time.
-## Walking pace, expressed in pixels per GAME minute and converted to a real
-## per-second speed by walk_speed() below.
+## Walking pace and handling time, in REAL seconds - deliberately NOT derived
+## from GameData.SECONDS_PER_GAME_MINUTE the way station timers and contract
+## deadlines are.
 ##
-## Why not a plain pixels-per-real-second constant (which is what this was -
-## 220.0 px/sec): the multi-station walking penalty is a designed mechanic
-## (design doc Section 7 - splitting a technician's attention has to cost real
-## throughput). That only holds if travel time stays a meaningful fraction of a
-## machine cycle. Pinned to real seconds, the 30x slowdown of
-## GameData.SECONDS_PER_GAME_MINUTE would have cut walking from ~45% of a print
-## cycle to ~8%, quietly deleting the mechanic without any code looking wrong.
-## 73.33 px/game-minute is the old 220 px/sec restated at the old timescale, so
-## the ratio the game was tuned around carries over unchanged.
-const WALK_PIXELS_PER_GAME_MINUTE: float = 73.33
-
-## Handling time for one real interaction, in GAME minutes - same reasoning as
-## WALK_PIXELS_PER_GAME_MINUTE. 4.5 game-minutes is the old 1.5 real seconds
-## restated at the old timescale.
-const INTERACT_GAME_MINUTES: float = 4.5
-
-
-## Real pixels per real second at the current timescale.
-static func walk_speed() -> float:
-	return WALK_PIXELS_PER_GAME_MINUTE / (GameData.SECONDS_PER_GAME_MINUTE * GameData.time_scale_multiplier)
-
-
-## Real seconds one interaction takes at the current timescale.
-static func interact_seconds() -> float:
-	return GameData.game_minutes_to_seconds(INTERACT_GAME_MINUTES)
+## These were briefly made timescale-derived, on the reasoning that design doc
+## Section 7's multi-station walking penalty needed travel to stay a fixed
+## fraction of a machine cycle. That reasoning was wrong, twice over:
+##
+## 1. Section 7's penalty is already modelled explicitly and separately, as
+##    productivity_multiplier (100/85/70/55% by station count), which
+##    Station._effective_timer_duration() divides into the run time. That's a
+##    pure ratio - it is timescale-independent and loses nothing when travel
+##    time changes. Physical walking is an additional, emergent cost on top,
+##    not the mechanic itself.
+## 2. Holding travel at ~45% of a machine cycle meant a technician spent nearly
+##    half their life walking. Against the 30x-slower cycles of the committed
+##    timescale that came out as a 36 px/sec crawl and a 9-second freeze on
+##    every pickup - reported, accurately, as "the technicians are moving
+##    really slow." Charging the walking penalty twice (once as the explicit
+##    multiplier, once as genuinely sluggish movement) is a worse game.
+##
+## So these are tuned for how the floor should FEEL - a technician who reads as
+## busy and purposeful, arriving promptly - and are free to be retuned without
+## touching any other system. 220 px/sec crosses a typical room gap in ~2-3
+## seconds against a 30-second print cycle.
+const WALK_SPEED: float = 220.0 # pixels per real second
 
 ## Brief real pause after actually doing something at a station - depositing
 ## a carried part, picking one up, or loading the next part into the active
@@ -301,7 +299,19 @@ static func interact_seconds() -> float:
 ## it, not idle waiting. There's no fixed "stand around" timer at all: a
 ## technician assigned to more than one station leaves for the next one the
 ## moment there's genuinely nothing left to interact with here.
-# (INTERACT_GAME_MINUTES / interact_seconds() above replaced INTERACT_SECONDS.)
+const INTERACT_SECONDS: float = 1.5
+
+
+## Kept as functions rather than reading the constants directly at the call
+## sites, so walking/handling pace stays one thing to retune (and so
+## Station.INTERACT_ANIM_FRAME_COUNT can keep deriving Clean's interaction
+## flourish from whatever the handling time currently is).
+static func walk_speed() -> float:
+	return WALK_SPEED
+
+
+static func interact_seconds() -> float:
+	return INTERACT_SECONDS
 
 ## Station id this technician is physically standing at and actively working
 ## right now - "" if unassigned everywhere or currently mid-walk. While
@@ -311,6 +321,14 @@ var current_station_id: String = ""
 var travel_target_station_id: String = ""
 var is_traveling: bool = false
 var current_position: Vector2 = Vector2.ZERO
+
+## False until this technician has been placed on the floor for the first
+## time. Distinguishes "brand new hire, nowhere to walk from" (snap them onto
+## their first station) from "already standing somewhere" (walk there) in
+## tick()'s reassignment branch above - see that branch for the teleport bug
+## this exists to prevent. Deliberately an explicit flag rather than testing
+## current_position against Vector2.ZERO, which is a real coordinate.
+var has_real_position: bool = false
 
 var is_interacting: bool = false
 var _interact_elapsed: float = 0.0
@@ -390,14 +408,35 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 		return false
 
 	if not real_ids.has(current_station_id) and not is_traveling:
-		# Fresh assignment, or their current station got unassigned out from
-		# under them - snap onto the first real assigned station (and its
-		# real position) rather than leaving them stranded.
-		current_station_id = real_ids[0]
-		var station: Node2D = station_by_id.get(current_station_id)
-		if station != null:
-			current_position = station.position
+		# Either a brand new hire who has never stood anywhere, or someone
+		# whose current station just got unassigned out from under them.
+		# These two cases have to be handled DIFFERENTLY, which is the bug
+		# that used to live here: this branch snapped current_position onto
+		# the destination station unconditionally, so reassigning an existing
+		# technician teleported them across the whole floor (1285px, in the
+		# reported case - Clean to Burnout) the instant the player clicked.
+		# They then claimed the station on the very next frame, so it started
+		# running with nobody ever visibly walking over to start it - reported
+		# as "I assigned my technician to a new station and the station ran
+		# without a technician starting it."
 		is_interacting = false
+		var destination: String = real_ids[0]
+		if has_real_position:
+			# They're genuinely standing somewhere on the floor - make them
+			# walk. Whichever station they're leaving has already released
+			# active_worker (GameData.unassign_technician() ->
+			# Station.unassign_technician()), so nothing is left holding a
+			# slot they're no longer at.
+			start_traveling_to(destination)
+		else:
+			# Never been placed: there's nowhere to walk FROM, so snapping is
+			# correct here (and is what lets a first/solo assignment go live
+			# immediately - see GameData.assign_technician()'s tick(0.0) call).
+			current_station_id = destination
+			var station: Node2D = station_by_id.get(destination)
+			if station != null:
+				current_position = station.position
+			has_real_position = true
 		return true
 
 	if is_interacting:
@@ -614,6 +653,7 @@ func to_dict() -> Dictionary:
 		"current_station_id": current_station_id,
 		"travel_target_station_id": travel_target_station_id,
 		"is_traveling": is_traveling,
+		"has_real_position": has_real_position,
 		"position_x": current_position.x,
 		"position_y": current_position.y,
 		"is_interacting": is_interacting,
@@ -636,6 +676,12 @@ static func from_dict(data: Dictionary) -> Technician:
 	tech.is_traveling = bool(data.get("is_traveling", false))
 	tech.current_position = Vector2(
 		float(data.get("position_x", 0.0)), float(data.get("position_y", 0.0)))
+	# Defaulted rather than assumed false, so a save written before this field
+	# existed doesn't hand back an already-placed technician who then teleports
+	# on their next reassignment (the very bug the flag exists to prevent):
+	# anyone standing at a station, or mid-walk, demonstrably has a position.
+	tech.has_real_position = bool(data.get("has_real_position",
+		tech.current_station_id != "" or tech.is_traveling))
 	tech.is_interacting = bool(data.get("is_interacting", false))
 	tech._interact_elapsed = float(data.get("interact_elapsed", 0.0))
 
