@@ -600,6 +600,8 @@ class ContractRow:
 	var time_label: Label
 	var engineer_button: Button
 	var contract_id: int = -1
+	## One entry per line item: {label, trial_button, production_button}.
+	var item_widgets: Array[Dictionary] = []
 
 var _contract_rows: Dictionary = {} # contract_id -> ContractRow
 var _contracts_empty_label: Label = null
@@ -616,7 +618,7 @@ func _refresh_contracts_tab() -> void:
 		_reputation_header_label = Label.new()
 		_reputation_header_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		contracts_list.add_child(_reputation_header_label)
-	_reputation_header_label.text = _reputation_summary_text()
+	_reputation_header_label.text = "%s\nRevert metal: %d (each trial part uses 1)" % [_reputation_summary_text(), GameData.revert_stock]
 	contracts_list.move_child(_reputation_header_label, 0)
 
 	var active := GameData.get_active_contracts()
@@ -655,6 +657,9 @@ func _refresh_contracts_tab() -> void:
 		row.progress_bar.max_value = maxi(c.quantity_required, 1)
 		row.progress_bar.value = c.quantity_shipped
 		row.contract_id = c.contract_id
+		if row.item_widgets.is_empty():
+			_build_item_widgets(row, c)
+		_update_item_widgets(row, c)
 		var engineer := GameData.engineer_for_contract(c.contract_id)
 		if engineer != null:
 			row.engineer_button.text = "Engineer: %s" % engineer.technician_name
@@ -736,6 +741,61 @@ func _create_contract_row() -> ContractRow:
 	row.container.add_child(row.engineer_button)
 
 	return row
+
+
+## Per-line-item queue controls (design doc 28.7): production no longer
+## starts by itself - the player queues trial parts (poured in revert, never
+## shipped) or production parts (virgin metal, unlocked at 85% familiarity)
+## and pays per part. Built once per row, the first time its contract is
+## seen, since a contract's line items never change.
+func _build_item_widgets(row: ContractRow, contract: Contract) -> void:
+	for i in contract.line_items.size():
+		var label := Label.new()
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.container.add_child(label)
+		# Button text varies with price - HFlowContainer (UI rule 2).
+		var buttons := HFlowContainer.new()
+		row.container.add_child(buttons)
+		var trial := Button.new()
+		trial.pressed.connect(_on_queue_pressed.bind(row, i, true))
+		buttons.add_child(trial)
+		var production := Button.new()
+		production.pressed.connect(_on_queue_pressed.bind(row, i, false))
+		buttons.add_child(production)
+		row.item_widgets.append({"label": label, "trial_button": trial, "production_button": production})
+
+
+func _update_item_widgets(row: ContractRow, contract: Contract) -> void:
+	for i in row.item_widgets.size():
+		var widgets: Dictionary = row.item_widgets[i]
+		var item: Contract.LineItem = contract.line_items[i]
+		var familiarity := GameData.geometry_familiarity_percent(item.geometry_name)
+		var queued_trial := GameData.queued_order_count(contract.contract_id, i, true)
+		var queued_production := GameData.queued_order_count(contract.contract_id, i, false)
+		widgets.label.text = "%s: %d/%d shipped, %d%% familiar%s" % [
+			item.geometry_name, item.quantity_shipped, item.quantity_required, roundi(familiarity),
+			" (queued: %d trial, %d production)" % [queued_trial, queued_production] if queued_trial + queued_production > 0 else "",
+		]
+		_update_queue_button(widgets.trial_button, contract, i, true,
+			"Trial %dg" % GameData.part_cost(contract, true),
+			"Poured in revert - never shipped. Teaches the shop this geometry and carries your Engineer's latest fix.")
+		_update_queue_button(widgets.production_button, contract, i, false,
+			"Production %dg" % GameData.part_cost(contract, false),
+			"Poured in virgin metal for the customer. Ships only at %d%%+ quality." % int(GameData.SHIP_QUALITY_THRESHOLD))
+
+
+func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, text: String, about: String) -> void:
+	var blocker := GameData.print_order_blocker(contract, index, is_trial)
+	button.text = text
+	button.disabled = blocker != ""
+	button.tooltip_text = about if blocker == "" else "%s\n%s" % [blocker, about]
+
+
+func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:
+	var contract := GameData.get_contract(row.contract_id)
+	if contract != null:
+		GameData.queue_print_order(contract, index, is_trial)
+	_refresh_contracts_tab.call_deferred()
 
 
 func _on_engineer_pressed(row: ContractRow) -> void:

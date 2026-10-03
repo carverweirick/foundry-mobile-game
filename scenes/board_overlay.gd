@@ -192,7 +192,7 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 			row.action_button.tooltip_text = "Move the finished part to Awaiting Transfer"
 		"queue":
 			row.action_button.text = "Queue"
-			row.action_button.tooltip_text = "Start printing a part for an active contract"
+			row.action_button.tooltip_text = "Start printing the next queued part"
 		"upgrade":
 			var cost := GameData.upgrade_cost_for_tier(station.current_tier + 1)
 			row.action_button.text = "Upgrade %dg" % cost
@@ -215,7 +215,7 @@ func _primary_action(station: Station) -> String:
 		return "collect"
 	if station.assigned_technicians.is_empty() and station.is_pipeline_entry \
 			and station.current_state == Station.State.IDLE and station.can_start_new_work() \
-			and GameData.next_contract_needing_parts() != null:
+			and GameData.has_print_order():
 		return "queue"
 	if station.current_tier < 5 and GameData.can_afford_with_gems(GameData.upgrade_cost_for_tier(station.current_tier + 1)):
 		return "upgrade"

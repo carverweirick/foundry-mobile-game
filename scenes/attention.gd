@@ -18,6 +18,7 @@ class_name Attention
 const PRIORITY_NC_SHELF := 0
 const PRIORITY_NO_ENGINEER := 1
 const PRIORITY_AWAITING_TRANSFER := 2
+const PRIORITY_NOTHING_QUEUED := 3
 const PRIORITY_NO_CONTRACT := 4
 
 
@@ -92,6 +93,30 @@ static func collect() -> Array[Dictionary]:
 					"order": order,
 				})
 				order += 1
+
+	# Production doesn't start by itself any more (design doc 28.7): an
+	# active contract with nothing queued and nothing in the line is idle
+	# until the player queues trial or production parts.
+	for contract in GameData.get_active_contracts():
+		var busy := false
+		for part in GameData.active_parts:
+			if part.contract_id == contract.contract_id:
+				busy = true
+				break
+		for print_order in GameData.print_orders:
+			if int(print_order.contract_id) == contract.contract_id:
+				busy = true
+				break
+		if not busy:
+			items.append({
+				"key": "queue:%d" % contract.contract_id,
+				"priority": PRIORITY_NOTHING_QUEUED,
+				"label": "%s: queue parts to make" % contract.customer_name,
+				"station": null,
+				"overlay": "contracts_active",
+				"order": order,
+			})
+			order += 1
 
 	if GameData.get_active_contracts().is_empty() and not GameData.contract_offers.is_empty():
 		items.append({

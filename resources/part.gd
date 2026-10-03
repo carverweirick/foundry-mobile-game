@@ -66,6 +66,24 @@ var learning_only: bool = false
 var scan_to_learn: bool = false
 var learning_origin_station_id: String = ""
 
+## Design doc 28.7: a trial part is poured in revert and can never ship to
+## a customer; a production part is poured in virgin metal. Chosen when the
+## player queues it (GameData.queue_print_order()).
+var is_trial: bool = false
+## Quality %, rolled when the part is poured (GameData.roll_casting_quality());
+## -1 until then. A production part ships only at >= GameData.SHIP_QUALITY_THRESHOLD.
+var quality: float = -1.0
+## An Engineer's trial fix stamped on at queue time (design doc 28.7): at the
+## station whose defect table matches fix_station_id, this part's defect risk
+## is multiplied by fix_risk_mult. "" = no fix.
+var fix_station_id: String = ""
+var fix_risk_mult: float = 1.0
+
+## Only production parts count toward a contract's quantity and its
+## in-flight total - trial and learning parts can never ship.
+var counts_toward_contract: bool:
+	get: return not is_trial and not learning_only
+
 var is_defective: bool:
 	get: return defect_category != GameData.DefectCategory.NONE
 
@@ -137,6 +155,10 @@ func to_dict() -> Dictionary:
 		"learning_only": learning_only,
 		"scan_to_learn": scan_to_learn,
 		"learning_origin_station_id": learning_origin_station_id,
+		"is_trial": is_trial,
+		"quality": quality,
+		"fix_station_id": fix_station_id,
+		"fix_risk_mult": fix_risk_mult,
 	}
 
 
@@ -161,6 +183,10 @@ static func from_dict(data: Dictionary) -> Part:
 	part.learning_only = bool(data.get("learning_only", false))
 	part.scan_to_learn = bool(data.get("scan_to_learn", false))
 	part.learning_origin_station_id = str(data.get("learning_origin_station_id", ""))
+	part.is_trial = bool(data.get("is_trial", false))
+	part.quality = float(data.get("quality", -1.0))
+	part.fix_station_id = str(data.get("fix_station_id", ""))
+	part.fix_risk_mult = float(data.get("fix_risk_mult", 1.0))
 	return part
 
 

@@ -625,8 +625,8 @@ func has_actionable_work() -> bool:
 		# symptom the earlier NOTHING_TIER fix was meant to end, just with a
 		# blocked entry station standing in for "nothing to do anywhere."
 		# Must agree exactly with what _auto_queue_if_possible() would actually
-		# do on arrival - see GameData.next_contract_needing_parts().
-		if is_pipeline_entry and can_start_new_work() and GameData.next_contract_needing_parts() != null:
+		# do on arrival - see GameData.has_print_order().
+		if is_pipeline_entry and can_start_new_work() and GameData.has_print_order():
 			return true
 	return false
 
@@ -647,7 +647,7 @@ func attention_need() -> Dictionary:
 	if _has_ready_part_to_send():
 		return {"priority": 1, "label": "Ready to collect"}
 	if is_pipeline_entry and current_part == null and can_start_new_work() \
-			and GameData.next_contract_needing_parts() != null:
+			and GameData.has_print_order():
 		return {"priority": 3, "label": "Ready to start a print"}
 	return {}
 
@@ -784,6 +784,16 @@ func _ship_part(part: Part) -> void:
 	if part.learning_only:
 		GameData.retire_learning_part(part, station_id)
 		status_label.text = "Retired learning part #%d" % part.part_id
+		return
+	# Design doc 28.7: trial parts (poured in revert) never go to a customer,
+	# and a production casting under the quality bar is saved as revert.
+	if part.is_trial:
+		GameData.retire_trial_part(part)
+		status_label.text = "Trial part #%d done - remelted to revert" % part.part_id
+		return
+	if part.quality >= 0.0 and part.quality < GameData.SHIP_QUALITY_THRESHOLD:
+		GameData.remelt_to_revert(part)
+		status_label.text = "Part #%d at %d%% quality - remelted to revert" % [part.part_id, roundi(part.quality)]
 		return
 	# Design doc Section 9, escalation point 2: "if it ships anyway, or sits
 	# long enough that it ships... the part does not count toward the order."
@@ -1036,30 +1046,23 @@ func unassign_technician(tech: Technician) -> void:
 ## per-station contract picker anymore, see the Contracts menu tab instead)
 ## and starts the timer. Fails if a part is already in progress here, or no
 ## contract is available to assign it to.
-func _try_create_part(contract: Contract = null) -> bool:
+## Starts the next queued print order (design doc 28.7 - production no
+## longer starts by itself; the player queues trial or production parts in
+## the Contracts menu). Fails if this printer is busy or nothing is queued.
+func _try_create_part() -> bool:
 	if current_part != null:
 		return false
-	if contract == null:
-		contract = GameData.next_contract_needing_parts()
-		if contract == null:
-			return false
-
-	# Section 24.1: a contract can have several line items - pick whichever
-	# one still needs more Parts (shipped-or-in-flight, not just shipped, so
-	# this doesn't keep overproducing one line item past what it actually
-	# needs while another on the same contract still needs work). No open
-	# line item (everything already shipped or covered by Parts already in
-	# the pipeline) means there's genuinely nothing to create yet - same as
-	# the old "contract has no room" case, just resolved per line item now.
-	var in_flight := GameData.in_flight_counts_for_contract(contract.contract_id)
-	var line_item_index := contract.first_open_line_item_index(in_flight)
-	if line_item_index < 0:
+	var order := GameData.pop_print_order()
+	if order.is_empty():
 		return false
 
 	var part := Part.new()
 	part.current_station_index = 0
-	part.contract_id = contract.contract_id
-	part.line_item_index = line_item_index
+	part.contract_id = int(order.contract_id)
+	part.line_item_index = int(order.line_item_index)
+	part.is_trial = bool(order.is_trial)
+	part.fix_station_id = str(order.fix_station_id)
+	part.fix_risk_mult = float(order.fix_risk_mult)
 	GameData.register_part(part)
 	current_part = part
 	_start_running()
@@ -1226,9 +1229,7 @@ func _auto_queue_if_possible() -> bool:
 		return false
 	if not can_start_new_work():
 		return false
-	# Not active[0]: a first contract whose Parts are all already in flight
-	# would otherwise block every contract behind it.
-	return _try_create_part(GameData.next_contract_needing_parts())
+	return _try_create_part()
 
 
 func _update_sprite() -> void:
@@ -1352,6 +1353,8 @@ func _on_run_finished() -> void:
 		if current_part.scan_to_learn and station_id == "scan":
 			GameData.retire_learning_part(_take_active_part(), station_id)
 			return
+		if station_id == "pour" and not current_part.learning_only:
+			GameData.roll_casting_quality(current_part)
 	_update_display()
 	# No direct _try_send_to_next_station() call here - if a technician is
 	# present, _process()'s next frame picks this up via _technician_act()
@@ -1465,6 +1468,9 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 		active_worker.defect_multiplier if active_worker != null else 1.0
 	)
 	var risk := base_risk * familiarity_mult * tech_mult * GameData.undiagnosed_risk_multiplier(station_id)
+	# An Engineer's trial fix aimed at this station (design doc 28.7).
+	if part.fix_station_id != "" and GameData.defect_table_key(part.fix_station_id) == GameData.defect_table_key(station_id):
+		risk *= part.fix_risk_mult
 	if randf() >= risk:
 		return GameData.DefectCategory.NONE
 	var category := GameData.roll_defect_category(station_id)
@@ -1520,6 +1526,8 @@ func _resolve_push_through(part: Part) -> void:
 	if outcome == GameData.DefectCategory.NONE:
 		current_state = State.READY
 		part.status = Part.Status.READY_TO_ROUTE
+		if station_id == "pour":
+			GameData.roll_casting_quality(part)
 		status_label.text = "Push Through succeeded on part #%d%s" % [part.part_id, _rack_suffix()]
 		return
 	current_part = null
@@ -1632,8 +1640,8 @@ func _idle_status_text(compact: bool = false) -> String:
 		return "Idle - no contracts" if compact else "Idle - no active contracts (accept one from Contract Offers)"
 	if not can_start_new_work():
 		return "Idle - backlog" if compact else "Idle - blocked, clear the backlog first"
-	if GameData.next_contract_needing_parts() == null:
-		return "Idle - all in production" if compact else "Idle - every contracted part already in production"
+	if not GameData.has_print_order():
+		return "Idle - no print orders" if compact else "Idle - no print orders (queue parts in Contracts)"
 	return "Idle"
 
 

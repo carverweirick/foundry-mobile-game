@@ -1339,7 +1339,7 @@ longer ride along the line with a grace period.*
    background diagnosis, dispositions (scrap / learning-only rework / scan
    to learn), Engineers removed from station assignment, passive idle
    familiarity.
-2. **Phase 2 (numbers to be agreed with the user first):** quality % and the
+2. **Phase 2 - BUILT 2026-10-03 (see 28.7):** quality % and the
    ship threshold, trials, manual print queueing with a per-part cost.
 3. **Later:** the engineering-office scene, the scrap inventory.
 

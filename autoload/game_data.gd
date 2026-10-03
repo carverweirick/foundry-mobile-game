@@ -903,7 +903,7 @@ func unregister_part(part: Part) -> void:
 func count_parts_in_pipeline(contract_id: int) -> int:
 	var count := 0
 	for p in active_parts:
-		if p.contract_id == contract_id and not p.learning_only:
+		if p.contract_id == contract_id and p.counts_toward_contract:
 			count += 1
 	return count
 
@@ -917,7 +917,7 @@ func count_parts_in_pipeline(contract_id: int) -> int:
 func in_flight_counts_for_contract(contract_id: int) -> Dictionary:
 	var counts := {}
 	for p in active_parts:
-		if p.contract_id == contract_id and not p.learning_only:
+		if p.contract_id == contract_id and p.counts_toward_contract:
 			counts[p.line_item_index] = counts.get(p.line_item_index, 0) + 1
 	return counts
 
@@ -1000,12 +1000,185 @@ func get_active_contracts() -> Array[Contract]:
 ## once its line items were all in flight - so a technician covering two
 ## printers saw phantom work at whichever one they weren't standing at and
 ## walked back and forth between them forever.
-func next_contract_needing_parts() -> Contract:
-	for contract in get_active_contracts():
-		var in_flight := in_flight_counts_for_contract(contract.contract_id)
-		if contract.first_open_line_item_index(in_flight) >= 0:
-			return contract
-	return null
+# --- Print orders, quality and revert (design doc 28.7) --------------------
+#
+# Production no longer starts by itself: the player queues trial or
+# production parts per contract line item (Contracts menu), paying per part,
+# and printers - staffed or not - work through print_orders front to back.
+# A trial part is poured in revert and never ships; a production part is
+# poured in virgin metal, unlocked once the geometry is >= 85% familiar, and
+# ships only at >= 90% quality. Every number here is a placeholder.
+
+const SHIP_QUALITY_THRESHOLD: float = 90.0
+const PRODUCTION_FAMILIARITY_PERCENT: float = 85.0
+const STARTING_REVERT_STOCK: int = 10
+const TRIAL_COST_SHARE: float = 0.2
+const PRODUCTION_COST_SHARE: float = 0.5
+const QUALITY_BASE: float = 55.0
+const QUALITY_FAMILIARITY_SPAN: float = 40.0
+const QUALITY_SPREAD: float = 6.0
+const TRIAL_FIX_USES: int = 3
+const ENGINEER_FIX_RISK_MULT := {
+	Technician.SkillTier.APPRENTICE: 0.6,
+	Technician.SkillTier.TECHNICIAN: 0.5,
+	Technician.SkillTier.SENIOR_TECHNICIAN: 0.4,
+	Technician.SkillTier.MASTER: 0.3,
+}
+const TRIAL_FAMILIARITY_GAIN := {
+	Technician.SkillTier.APPRENTICE: 1,
+	Technician.SkillTier.TECHNICIAN: 1,
+	Technician.SkillTier.SENIOR_TECHNICIAN: 2,
+	Technician.SkillTier.MASTER: 2,
+}
+
+## Remelted metal for trial pours. Saved.
+var revert_stock: int = STARTING_REVERT_STOCK
+## Queued, not-yet-printed parts, front first: {contract_id, line_item_index,
+## is_trial, fix_station_id, fix_risk_mult}. Saved.
+var print_orders: Array[Dictionary] = []
+## contract_id -> {station_id, risk_mult, uses_left}: the Engineer's
+## proposed fix from the latest diagnosis, stamped onto that contract's next
+## TRIAL_FIX_USES trial parts as they're queued. Saved.
+var pending_trial_fixes: Dictionary = {}
+
+signal print_orders_changed()
+
+
+## 0-100: the mean of the staff's average familiarity with the geometry and
+## the shop-wide familiarity at the tracked stations, as a share of 5 stars.
+func geometry_familiarity_percent(geometry_name: String) -> float:
+	var staff := 0.0
+	if not technicians.is_empty():
+		for tech in technicians:
+			staff += tech.shopwide_familiarity_for_geometry(geometry_name)
+		staff /= technicians.size()
+	var shop := 0.0
+	for station_id in FAMILIARITY_TRACKED_STATIONS:
+		shop += familiarity_stars_for(geometry_name, station_id)
+	shop /= FAMILIARITY_TRACKED_STATIONS.size()
+	return (staff + shop) * 0.5 / 5.0 * 100.0
+
+
+func can_run_production(geometry_name: String) -> bool:
+	return geometry_familiarity_percent(geometry_name) >= PRODUCTION_FAMILIARITY_PERCENT
+
+
+func part_cost(contract: Contract, is_trial: bool) -> int:
+	var per_unit: float = CONTRACT_PAYOUT_PER_UNIT.get(contract.tier, 10.0)
+	return maxi(1, ceili(per_unit * (TRIAL_COST_SHARE if is_trial else PRODUCTION_COST_SHARE)))
+
+
+func queued_order_count(contract_id: int, line_item_index: int, is_trial: bool) -> int:
+	var count := 0
+	for order in print_orders:
+		if int(order.contract_id) == contract_id and int(order.line_item_index) == line_item_index and bool(order.is_trial) == is_trial:
+			count += 1
+	return count
+
+
+## Production parts this line item still needs started: required, minus
+## shipped, minus production parts already in the system or queued.
+func production_still_needed(contract: Contract, line_item_index: int) -> int:
+	var item: Contract.LineItem = contract.line_items[line_item_index]
+	var in_flight: int = in_flight_counts_for_contract(contract.contract_id).get(line_item_index, 0)
+	return item.quantity_required - item.quantity_shipped - in_flight - queued_order_count(contract.contract_id, line_item_index, false)
+
+
+## "" if this part can be queued now, otherwise the reason it can't.
+func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool) -> String:
+	if not can_afford_with_gems(part_cost(contract, is_trial)):
+		return "Not enough gold"
+	if is_trial:
+		if revert_stock <= 0:
+			return "No revert metal left"
+		return ""
+	if not can_run_production(contract.line_items[line_item_index].geometry_name):
+		return "Needs %d%% familiarity" % int(PRODUCTION_FAMILIARITY_PERCENT)
+	if production_still_needed(contract, line_item_index) <= 0:
+		return "Enough already queued"
+	return ""
+
+
+func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool) -> bool:
+	if print_order_blocker(contract, line_item_index, is_trial) != "":
+		return false
+	if not try_spend_with_gems(part_cost(contract, is_trial)):
+		return false
+	var order := {
+		"contract_id": contract.contract_id,
+		"line_item_index": line_item_index,
+		"is_trial": is_trial,
+		"fix_station_id": "",
+		"fix_risk_mult": 1.0,
+	}
+	if is_trial:
+		revert_stock -= 1
+		var fix: Dictionary = pending_trial_fixes.get(contract.contract_id, {})
+		if not fix.is_empty():
+			order["fix_station_id"] = fix["station_id"]
+			order["fix_risk_mult"] = fix["risk_mult"]
+			fix["uses_left"] = int(fix["uses_left"]) - 1
+			if fix["uses_left"] <= 0:
+				pending_trial_fixes.erase(contract.contract_id)
+	print_orders.append(order)
+	print_orders_changed.emit()
+	return true
+
+
+## Whether a printer has something to start - the ONE predicate shared by
+## Station.has_actionable_work(), _auto_queue_if_possible() and the manual
+## Queue path, so the technician route predictor and the actor can't
+## disagree (the root of every bounce bug - see CLAUDE.md).
+func has_print_order() -> bool:
+	_drop_stale_print_orders()
+	return not print_orders.is_empty()
+
+
+func pop_print_order() -> Dictionary:
+	_drop_stale_print_orders()
+	if print_orders.is_empty():
+		return {}
+	var order: Dictionary = print_orders.pop_front()
+	print_orders_changed.emit()
+	return order
+
+
+## Orders whose contract has finished or gone are dropped (already paid -
+## a finished contract simply doesn't need them).
+func _drop_stale_print_orders() -> void:
+	var before := print_orders.size()
+	print_orders = print_orders.filter(func(order: Dictionary) -> bool:
+		var contract := get_contract(int(order.contract_id))
+		return contract != null and not contract.is_complete)
+	if print_orders.size() != before:
+		print_orders_changed.emit()
+
+
+## Rolled once, when the part is poured (Station, at Pour).
+func roll_casting_quality(part: Part) -> void:
+	var share := geometry_familiarity_percent(geometry_name_for_part(part)) / 100.0
+	part.quality = clampf(QUALITY_BASE + QUALITY_FAMILIARITY_SPAN * share + randf_range(-QUALITY_SPREAD, QUALITY_SPREAD), 0.0, 100.0)
+
+
+## A trial part at the end of the line: remelted back to revert, and its
+## lessons credited - more from a stronger Engineer (design doc 28.7).
+func retire_trial_part(part: Part) -> void:
+	revert_stock += 1
+	var engineer := engineer_for_contract(part.contract_id)
+	var stars: int = TRIAL_FAMILIARITY_GAIN.get(engineer.skill_tier, 1) if engineer != null else 1
+	var geometry := geometry_name_for_part(part)
+	for station_id in FAMILIARITY_TRACKED_STATIONS:
+		raise_familiarity(geometry, station_id, stars)
+	if engineer != null:
+		engineer.gain_general_experience(geometry, stars)
+	unregister_part(part)
+
+
+## A production casting below SHIP_QUALITY_THRESHOLD: never shipped, saved as
+## revert. The contract will need another production part queued.
+func remelt_to_revert(part: Part) -> void:
+	revert_stock += 1
+	unregister_part(part)
 
 
 func get_contract(id: int) -> Contract:
@@ -1658,6 +1831,12 @@ func _process_engineers(delta: float) -> void:
 
 func _finish_diagnosis(part: Part, engineer: Technician) -> void:
 	part.nc_diagnosed = true
+	# The Engineer proposes a fix for the next trial batch (design doc 28.7).
+	pending_trial_fixes[part.contract_id] = {
+		"station_id": part.defect_station_id,
+		"risk_mult": ENGINEER_FIX_RISK_MULT.get(engineer.skill_tier, 0.6),
+		"uses_left": TRIAL_FIX_USES,
+	}
 	var geometry := geometry_name_for_part(part)
 	raise_familiarity(geometry, part.defect_station_id, FAMILIARITY_GAIN_DIAGNOSIS)
 	engineer.gain_general_experience(geometry, FAMILIARITY_GAIN_DIAGNOSIS)
@@ -2423,6 +2602,9 @@ func to_save_dict() -> Dictionary:
 		"stations": stations_data,
 		"station_stats": station_stats.duplicate(true),
 		"nc_shelf_ids": nc_shelf.map(func(p: Part): return p.part_id),
+		"revert_stock": revert_stock,
+		"print_orders": print_orders.duplicate(true),
+		"pending_trial_fixes": pending_trial_fixes.keys().map(func(id): return {"contract_id": id, "fix": pending_trial_fixes[id]}),
 		"scrapped_part_count": scrapped_part_count,
 		"stats_elapsed": stats_elapsed,
 	}
@@ -2502,6 +2684,24 @@ func load_from_dict(data: Dictionary) -> bool:
 		if part != null:
 			nc_shelf.append(part)
 	scrapped_part_count = int(data.get("scrapped_part_count", 0))
+	revert_stock = int(data.get("revert_stock", STARTING_REVERT_STOCK))
+	print_orders.clear()
+	for raw in data.get("print_orders", []):
+		print_orders.append({
+			"contract_id": int(raw.get("contract_id", -1)),
+			"line_item_index": int(raw.get("line_item_index", 0)),
+			"is_trial": bool(raw.get("is_trial", false)),
+			"fix_station_id": str(raw.get("fix_station_id", "")),
+			"fix_risk_mult": float(raw.get("fix_risk_mult", 1.0)),
+		})
+	pending_trial_fixes.clear()
+	for raw in data.get("pending_trial_fixes", []):
+		var fix: Dictionary = raw.get("fix", {})
+		pending_trial_fixes[int(raw.get("contract_id", -1))] = {
+			"station_id": str(fix.get("station_id", "")),
+			"risk_mult": float(fix.get("risk_mult", 1.0)),
+			"uses_left": int(fix.get("uses_left", 0)),
+		}
 
 	contracts.clear()
 	for raw in data.get("contracts", []):

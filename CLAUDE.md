@@ -487,15 +487,12 @@ general form of this lesson.
 - **Routing predictor and actor must agree - the root of every bounce bug.**
   `pick_next_station()` trusts `Station.has_actionable_work()` to predict what
   `_technician_act()` will actually do on arrival; any disagreement is an
-  infinite walk between stations. Entry stations now share
-  `GameData.next_contract_needing_parts()` (first active contract with a line
-  item short of shipped+in-flight) between the predictor, `_try_create_part()`
-  and `_auto_queue_if_possible()` - previously the predictor said "work" for any
-  active contract while the actor only tried `active[0]` and refused once its
-  parts were all in flight, so a technician covering 2+ printers ping-ponged
-  nonstop (~1150 trips per 15 sim-minutes) once a contract was fully in
-  production. Idle entry stations in that state read "Idle - every contracted
-  part already in production".
+  infinite walk between stations. Entry stations share ONE predicate,
+  `GameData.has_print_order()`, between the predictor, `_try_create_part()`
+  (which pops the order) and `_auto_queue_if_possible()` - an earlier
+  mismatch here had a technician covering 2+ printers ping-ponging ~1150
+  trips per 15 sim-minutes. Idle printers with an empty queue read "Idle - no
+  print orders".
 - **Bounce fail-safe** (`Technician.record_departure()`, called from
   `Station._travel_if_worthwhile()` before committing to a trip). Each technician
   keeps `recent_visits` (last 8, each `{station_id, productive}` - productive =
@@ -566,8 +563,9 @@ general form of this lesson.
   their current station (otherwise an entry station with endless queueable
   work could strand them there indefinitely).
 - **Parts flow technician-carried, not teleported.** A real `Part` resource
-  flows through the shop; Printing is the sole pipeline entry point, parts
-  auto-assign to `GameData.get_active_contracts()`'s open line items. Every
+  flows through the shop; Printing is the sole pipeline entry point, and each
+  part comes from a player-queued print order (see "Print orders, quality and
+  revert" below) carrying its contract, line item and trial flag. Every
   `Part` is tracked in `GameData.active_parts` from creation to shipment.
   Non-entry stations are passive receivers - on timer completion the part
   flips to `ready_to_route`. **Unstaffed** stations offer a manual Collect
@@ -982,6 +980,36 @@ general form of this lesson.
   risk entry - always succeeds there, just always grants free familiarity).
   A miss destroys the part outright (never flagged, never reaches Ship)
   rather than just flagging it.
+
+**Print orders, quality and revert** (design doc 28.7; all numbers placeholders)
+- **Production doesn't start by itself.** The player queues parts per
+  contract line item from the Contracts Active tab (a Trial and a Production
+  button per line item, disabled with the reason in the tooltip via
+  `GameData.print_order_blocker()`), paying `part_cost()` per part (20% /
+  50% of the contract's per-part payout). Orders live in
+  `GameData.print_orders` (saved); printers - staffed (auto-queue) or not
+  (Queue button) - pop them front to back in `Station._try_create_part()`.
+  Orders for finished contracts are dropped. Attention nags "queue parts to
+  make" for an active contract with nothing queued or in the line.
+- **Trial parts** (`Part.is_trial`) are poured in revert: queueing one uses 1
+  `GameData.revert_stock` (starts at 10, saved). They roll defects normally,
+  never count toward the contract (`Part.counts_toward_contract`), and at
+  Ship are retired via `retire_trial_part()`: +1 revert back, +1 star (+2
+  from a Senior/Master Engineer) at every familiarity-tracked station and
+  for the contract's Engineer.
+- **Production parts** are poured in virgin metal and unlock once
+  `geometry_familiarity_percent()` >= 85 (mean of staff average and
+  shop-wide tracked-station familiarity, as a share of 5 stars).
+- **Quality %** (`Part.quality`, -1 until poured) is rolled at Pour (also on
+  a pushed-through Pour) by `roll_casting_quality()`: 55 + 40 x familiarity
+  share, +/-6. At Ship a production part under `SHIP_QUALITY_THRESHOLD` (90)
+  is remelted to revert (`remelt_to_revert()`), never credited; -1 (poured
+  before this existed) ships as before.
+- **Engineer trial fixes**: finishing a diagnosis stores
+  `pending_trial_fixes[contract_id]` (station, risk mult 0.6/0.5/0.4/0.3 by
+  Engineer tier, 3 uses, saved); the next 3 trial orders queued on that
+  contract carry it (`Part.fix_station_id`/`fix_risk_mult`), multiplying
+  defect risk at the matching station (`defect_table_key()` comparison).
 
 **Rail menus: Contracts / Board / Team / Factory** (Section 6,
 consolidated per design doc 27.7)
