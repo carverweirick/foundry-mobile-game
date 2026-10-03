@@ -1068,3 +1068,90 @@ make legible through a thumb. A specific thing the MVP should measure: whether
 the defect/familiarity loop, the designed heart of the game, is noticed at all
 during normal play. Current suspicion is that it is effectively invisible,
 because nothing announces it.
+
+---
+
+## 27. UI Direction After the First On-Device Session (2026-10-03)
+
+*Decisions and ideas from the first real play session on an iPhone 16 Pro
+(Xogot remote deploy) and the external mockup round that followed. Where this
+section and Sections 6/15/16 disagree, this section is current.*
+
+### 27.1 What the device session showed
+
+- 16px m5x7 text at the 480x270 base reads fine on the phone - no need for a
+  higher base resolution.
+- Black side bars (16:9 lock on a 19.5:9 screen) - fixed: stretch aspect is
+  now `expand`, so the viewport widens to ~585x270.
+- That widening exposed that the HUD was never edge-anchored: every button
+  sits at fixed 480-wide coordinates, so the button grid now looks centered,
+  and the top-left stats are clipped by the iPhone's rounded corners. Any new
+  HUD must anchor to screen edges AND inset by the device safe area
+  (`DisplayServer.get_display_safe_area()`; on a 16 Pro in landscape roughly
+  40 logical px each side and 14 at the bottom).
+- Zoomed out, one station label crowded out the rest - fixed with zone-only
+  labels below 0.7x zoom.
+- Drag-scrolling a list failed when the drag started on an expandable row -
+  fixed for Contract Offers.
+- Menus are functional but the user doesn't like how they look or play.
+
+### 27.2 Chosen HUD direction (from two AI mockups)
+
+Taken from "Mockup 3 - Edge Tabs and Floating Panel":
+- **A vertical rail of icon+label buttons down the right edge** - liked
+  specifically.
+- **Menus open as a floating panel beside the rail that does not cover the
+  whole screen** - the floor stays visible (and keeps running) next to it.
+
+Taken from "Mockup 2 - Bottom Command Belt":
+- **Gold / Gems / Reputation / Factory Level as one bar along the top**,
+  rather than a stacked block in the corner.
+- **The richer Contracts list**: per-contract row with a part image, part
+  name, process + alloy, a progress bar with "6 / 20 castings", reward (gold
+  and +rep), time left, and a View button. Showing contract *progression* at
+  a glance is the thing liked here.
+
+Not taken: Mockup 2's bottom button belt (eats vertical space in landscape)
+and its full-width bottom sheet.
+
+### 27.3 What each menu should actually contain - redefinition
+
+The current seven overlays grew one at a time and overlap. Direction given:
+
+- **Overview -> factory statistics.** Per station / per process phase: how
+  long the station takes to complete a cycle, the **yield** from that
+  station or phase, throughput. The "how is my factory performing" screen.
+- **Upgrades (replaces the Printers button).** A button that only buys
+  printers is too narrow. Either an Upgrades tab of its own, or combined with
+  the Overview statistics so the player can make **informed upgrades based on
+  throughput and yield** - see the bottleneck, then buy the fix in the same
+  place. Printer purchase and factory level-up move in here.
+- **Dashboard -> live status and manual control.** Status of every station,
+  and the place to **move parts manually** (in addition to tapping stations
+  on the floor). This overlaps today's Transfer (Awaiting Transfer) screen;
+  folding Transfer into Dashboard is the natural consequence, not yet decided.
+- **Contracts** - fine as is for now, aside from adopting the 27.2 row style.
+- **Staff** - fine for now, **will be revisited later**.
+- **Settings** - unchanged.
+
+### 27.4 Dependencies this creates
+
+- **Yield and throughput are not tracked anywhere today.** No per-station
+  completion count, defect/scrap rate, or measured average cycle time exists
+  in `GameData`/`Station` - only the configured timer. The Overview-as-
+  statistics and informed-upgrades ideas need a stats collector first
+  (per station: parts completed, parts flagged/scrapped, real time per part,
+  rolling window), and it must be saved/offline-catch-up safe like every
+  other clock (delta-driven, see Section 26 / `GameData.simulate()`).
+- **Part images on contract rows** need per-geometry art (Section 24.3) -
+  the existing family-tinted placeholder icon can stand in.
+- **Icons on the rail buttons** - no UI icon art exists yet.
+
+### 27.5 Order of work
+
+1. HUD shell first: top resource bar, right-edge rail, floating panel slot,
+   safe-area insets, edge anchoring. Existing menus move into the panel slot
+   with their current contents.
+2. Contracts row restyle (27.2).
+3. Menu redefinition (27.3), starting with the stats collector (27.4) since
+   Overview and Upgrades both depend on it.

@@ -1270,9 +1270,12 @@ autoload)
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - the user's main open complaint after playing on
-  device: menus work but don't look or play the way they want. Includes
-  re-laying out overlays/HUD for the variable-width viewport (they're still
-  pinned to the left 480px).
+  device. Direction is decided and recorded in **design doc Section 27**: top
+  resource bar, right-edge icon rail, floating side panel, safe-area insets;
+  Overview becomes factory statistics (yield/throughput - not tracked anywhere
+  yet, needs a stats collector), Printers becomes an Upgrades screen,
+  Dashboard absorbs manual part moves. Overlays/HUD are still pinned to the
+  left 480px until the HUD shell lands.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,
   and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).
   No tutorial code of any kind exists.
