@@ -46,6 +46,8 @@ virtual_controller/ios/enable_button_a=true
 virtual_controller/ios/enable_button_b=true
 virtual_controller/ios/enable_button_x=true
 virtual_controller/ios/enable_button_y=true
+sensors/enable_accelerometer=true
+sensors/enable_gravity=true
 
 [physics]
 

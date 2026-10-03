@@ -36,6 +36,15 @@ const PANEL_MAX_WIDTH: float = 400.0
 ## `-- --simulate-iphone-safe-area` to force them on.
 const SIMULATE_SAFE_AREA_ARG := "--simulate-iphone-safe-area"
 const SIMULATED_INSETS := {"left": 40.0, "top": 0.0, "right": 40.0, "bottom": 14.0}
+## On a wide handheld screen the bar's ends stay this far from BOTH edges
+## even when the camera is on the other side - the rounded corners still
+## clip there, and the Settings gear sits at the bar's right end.
+const CORNER_INSET: float = 22.0
+## Desktop testing: fake a detected camera side, e.g. `-- --simulate-camera-left`.
+const SIMULATE_CAMERA_LEFT_ARG := "--simulate-camera-left"
+const SIMULATE_CAMERA_RIGHT_ARG := "--simulate-camera-right"
+## Gravity is re-read this often; a side change needs two agreeing reads.
+const CAMERA_SIDE_POLL_SECONDS: float = 0.5
 const DEBT_COLOR := Color(0.85, 0.2, 0.2)
 const BUTTON_STATES: Array[String] = [
 	"normal", "normal_mirrored", "hover", "hover_mirrored", "pressed",
@@ -54,6 +63,10 @@ var _rail_buttons: Array[Button] = []
 ## Every OverlayBase that opens into the panel slot (rail menus + Settings).
 var _slot_overlays: Array[OverlayBase] = []
 var _station_detail_menu: StationDetailMenu = null
+## AUTO mode's current answer: CutoutSide.LEFT/RIGHT, or BOTH while unknown.
+var _detected_camera_side: ThemeManager.CutoutSide = ThemeManager.CutoutSide.BOTH
+var _pending_camera_side: ThemeManager.CutoutSide = ThemeManager.CutoutSide.BOTH
+var _camera_poll_elapsed: float = 0.0
 
 
 func _ready() -> void:
@@ -65,6 +78,7 @@ func _ready() -> void:
 	ThemeManager.theme_changed.connect(func(_choice): _apply_theme())
 	_apply_theme()
 	get_viewport().size_changed.connect(_layout)
+	ThemeManager.cutout_side_changed.connect(func(_side): _layout())
 
 
 ## Called once by main.gd after every overlay exists. rail_entries is an
@@ -82,6 +96,8 @@ func bind(rail_entries: Array, settings_overlay: OverlayBase, station_detail_men
 		_rail_buttons.append(button)
 		_slot_overlays.append(overlay)
 	_settings_button.pressed.connect(settings_overlay.toggle)
+	if settings_overlay is SettingsOverlay:
+		settings_overlay.hud = self
 	settings_overlay.rail_button = _settings_button
 	_slot_overlays.append(settings_overlay)
 	_station_detail_menu = station_detail_menu
@@ -90,7 +106,11 @@ func bind(rail_entries: Array, settings_overlay: OverlayBase, station_detail_men
 	_log_safe_area_diagnostics()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_camera_poll_elapsed += delta
+	if _camera_poll_elapsed >= CAMERA_SIDE_POLL_SECONDS:
+		_camera_poll_elapsed = 0.0
+		_poll_camera_side()
 	# Polled rather than signal-driven: a save load can replace every one of
 	# these values without emitting, and set_text() is a no-op when unchanged.
 	_gold_label.text = "Gold: %dg" % GameData.currency
@@ -217,12 +237,20 @@ func _apply_theme() -> void:
 func _layout() -> void:
 	var view: Vector2 = get_viewport().get_visible_rect().size
 	var insets := _safe_insets(view)
+	var camera_side := _camera_side()
+	if camera_side == ThemeManager.CutoutSide.LEFT:
+		insets.right = 0.0
+	elif camera_side == ThemeManager.CutoutSide.RIGHT:
+		insets.left = 0.0
 	var left: float = insets.left
 	var right: float = view.x - insets.right
 	var bottom: float = view.y - insets.bottom - EDGE_GAP
 
-	_bar.position = Vector2(left, insets.top)
-	_bar.size = Vector2(right - left, BAR_HEIGHT)
+	var corner: float = CORNER_INSET if _is_wide_handheld(view) else 0.0
+	var bar_left: float = maxf(left, corner)
+	var bar_right: float = minf(right, view.x - corner)
+	_bar.position = Vector2(bar_left, insets.top)
+	_bar.size = Vector2(bar_right - bar_left, BAR_HEIGHT)
 	var bar_bottom: float = _bar.position.y + maxf(BAR_HEIGHT, _bar.get_combined_minimum_size().y)
 
 	var top: float = bar_bottom + EDGE_GAP
@@ -251,14 +279,15 @@ func _layout() -> void:
 ## covered the rail): the OS-reported safe area, floored at SIMULATED_INSETS
 ## on any handheld screen 2:1 or wider - every phone that shape has rounded
 ## corners and a camera cutout.
-## The island can sit on either side depending on which way the phone is
-## turned, so insets stay symmetric left/right.
+## Returned symmetric left/right (iOS itself reports it that way in
+## landscape); _layout() then drops the side without the camera, per
+## _camera_side().
 func _safe_insets(view: Vector2) -> Dictionary:
 	if SIMULATE_SAFE_AREA_ARG in OS.get_cmdline_user_args():
-		return SIMULATED_INSETS
+		return SIMULATED_INSETS.duplicate()
 	var none := {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
-	var is_phone_os := OS.has_feature("mobile") or OS.get_name() in ["iOS", "Android"]
-	if not is_phone_os and not DisplayServer.is_touchscreen_available():
+	var is_phone_os := _is_phone_os()
+	if not _is_handheld():
 		return none
 	var reported := none
 	var window := Vector2(DisplayServer.window_get_size())
@@ -274,7 +303,7 @@ func _safe_insets(view: Vector2) -> Dictionary:
 			"right": maxf(0.0, side),
 			"bottom": maxf(0.0, (window.y - safe.end.y) * k.y),
 		}
-	if view.y <= 0.0 or view.x / view.y < 2.0:
+	if not _is_wide_handheld(view):
 		return reported
 	# Wide handheld: never less than the fallback on the sides/bottom, in case
 	# the platform under-reports (or reports a portrait-shaped area). Top stays
@@ -287,12 +316,75 @@ func _safe_insets(view: Vector2) -> Dictionary:
 	}
 
 
+func _is_phone_os() -> bool:
+	return OS.has_feature("mobile") or OS.get_name() in ["iOS", "Android"]
+
+
+func _is_handheld() -> bool:
+	return _is_phone_os() or DisplayServer.is_touchscreen_available() \
+		or SIMULATE_SAFE_AREA_ARG in OS.get_cmdline_user_args()
+
+
+func _is_wide_handheld(view: Vector2) -> bool:
+	return _is_handheld() and view.y > 0.0 and view.x / view.y >= 2.0
+
+
+## Which side gets the cutout inset: the player's Settings choice, or in AUTO
+## the gravity-detected side (BOTH until a confident reading arrives).
+func _camera_side() -> ThemeManager.CutoutSide:
+	var args := OS.get_cmdline_user_args()
+	if SIMULATE_CAMERA_LEFT_ARG in args:
+		return ThemeManager.CutoutSide.LEFT
+	if SIMULATE_CAMERA_RIGHT_ARG in args:
+		return ThemeManager.CutoutSide.RIGHT
+	if ThemeManager.cutout_side != ThemeManager.CutoutSide.AUTO:
+		return ThemeManager.cutout_side
+	return _detected_camera_side
+
+
+## Godot gives no way to read which landscape direction the interface is in
+## (screen_get_orientation() returns the configured orientation, not the
+## current one, and iOS reports a symmetric safe area), so AUTO infers it
+## from the gravity sensor. In raw device axes, landscape with the top of
+## the phone (the camera end) to the left puts gravity along -x, to the right
+## along +x. If the platform instead reports gravity already rotated into
+## screen space, x stays near 0 when held upright and this never commits -
+## BOTH stays the answer, and the Settings override is the way out. The sign
+## convention is unverified on real hardware: the [Hud] log line below and
+## the Settings override exist for exactly that.
+func _detect_camera_side() -> ThemeManager.CutoutSide:
+	var gravity: Vector3 = Input.get_gravity()
+	if gravity.length() < 4.0 or absf(gravity.x) < absf(gravity.y) * 1.5:
+		return _detected_camera_side
+	return ThemeManager.CutoutSide.LEFT if gravity.x < 0.0 else ThemeManager.CutoutSide.RIGHT
+
+
+func _poll_camera_side() -> void:
+	if ThemeManager.cutout_side != ThemeManager.CutoutSide.AUTO or not _is_phone_os():
+		return
+	var reading := _detect_camera_side()
+	if reading == _detected_camera_side:
+		_pending_camera_side = reading
+		return
+	if reading != _pending_camera_side:
+		_pending_camera_side = reading
+		return
+	_detected_camera_side = reading
+	print("[Hud] gravity=%s -> camera side %s" % [Input.get_gravity(), ThemeManager.CUTOUT_SIDE_DISPLAY_NAMES[reading]])
+	_layout()
+
+
+## Shown by the Settings overlay next to its cutout option.
+func detected_camera_side_name() -> String:
+	return ThemeManager.CUTOUT_SIDE_DISPLAY_NAMES[_detected_camera_side]
+
+
 ## One startup line so a device run shows what the platform actually
 ## reported - the safe-area path above has already been wrong once on real
 ## hardware.
 func _log_safe_area_diagnostics() -> void:
-	print("[Hud] os=%s mobile=%s touch=%s window=%s screen=%s safe_area=%s view=%s -> insets=%s" % [
-		OS.get_name(), OS.has_feature("mobile"), DisplayServer.is_touchscreen_available(),
+	print("[Hud] os=%s mobile=%s touch=%s gravity=%s window=%s screen=%s safe_area=%s view=%s -> insets=%s" % [
+		OS.get_name(), OS.has_feature("mobile"), DisplayServer.is_touchscreen_available(), Input.get_gravity(),
 		DisplayServer.window_get_size(), DisplayServer.screen_get_size(),
 		DisplayServer.get_display_safe_area(), get_viewport().get_visible_rect().size,
 		_safe_insets(get_viewport().get_visible_rect().size),

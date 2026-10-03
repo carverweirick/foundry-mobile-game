@@ -975,10 +975,19 @@ general form of this lesson.
   empty (HUD edge to edge, Dynamic Island over the rail), so
   `_safe_insets()` treats any phone OS or touchscreen as handheld and, on a
   handheld view 2:1 or wider, floors the sides/bottom at `SIMULATED_INSETS`
-  (40/0/40/14) with top 0 (landscape-locked). Symmetric left/right since
-  the island flips sides with rotation. A `[Hud] os=... safe_area=...`
-  line prints once at startup - read it from a device run before changing
-  this logic again. Menu content must fit ~384px inner panel width: the
+  (40/0/40/14) with top 0 (landscape-locked). **Only the camera side is
+  inset** (`_camera_side()`): the player's Settings choice
+  (`ThemeManager.cutout_side`, Auto/Left/Right/Both, saved in
+  `settings.cfg`), or in Auto a gravity-sensor guess
+  (`_detect_camera_side()`; sensors enabled in `project.godot`) - Godot
+  can't report the current landscape direction and iOS reports symmetric
+  insets. The gravity sign convention is **unverified on hardware**; until
+  a confident reading arrives Auto insets both sides. The bar's ends keep
+  `CORNER_INSET` (22px) from both edges on wide handhelds regardless (rounded
+  corners, gear). `[Hud] ...` lines print at startup and on each detected
+  side change - read them from a device run before changing this logic
+  again. Desktop testing args: `--simulate-iphone-safe-area`,
+  `--simulate-camera-left`/`--simulate-camera-right`. Menu content must fit ~384px inner panel width: the
   Contracts Active rows were rebuilt as stacked lines (customer + time
   left / gold progress bar / shipped count + relationship) after four
   fixed columns (~434px) overflowed the slot. Layer 2 sits above every overlay's Backdrop, so rail taps switch

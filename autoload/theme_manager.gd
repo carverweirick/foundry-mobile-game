@@ -31,8 +31,8 @@ extends Node
 ## below sets .theme directly on each overlay's own top-level Panel/Button -
 ## once a Control's own .theme is set, it becomes the theme owner for its
 ## whole Control-descendant subtree, sidestepping the CanvasLayer break
-## entirely. Every OverlayBase subclass, StationDetailMenu, and main.gd's HUD
-## labels call this on their own top-level Controls, both once at startup and
+## entirely. Every OverlayBase subclass, StationDetailMenu, and the Hud's bar
+## and rail call this on their own top-level Controls, both once at startup and
 ## on every theme_changed.
 
 enum ThemeChoice { DARK, PARCHMENT }
@@ -47,11 +47,27 @@ const THEME_DISPLAY_NAMES := {
 	ThemeChoice.PARCHMENT: "Parchment",
 }
 
+## Which screen edge the phone's camera cutout (Dynamic Island / notch) is
+## on, so the Hud only insets that side (design doc Section 27). AUTO reads
+## the gravity sensor (see Hud._detect_camera_side()); BOTH insets both
+## sides. A display preference like the theme, so it lives here and is
+## saved to the same settings file.
+enum CutoutSide { AUTO, LEFT, RIGHT, BOTH }
+
+const CUTOUT_SIDE_DISPLAY_NAMES := {
+	CutoutSide.AUTO: "Auto",
+	CutoutSide.LEFT: "Left",
+	CutoutSide.RIGHT: "Right",
+	CutoutSide.BOTH: "Both sides",
+}
+
 const SETTINGS_PATH := "user://settings.cfg"
 
 signal theme_changed(theme_choice: ThemeChoice)
+signal cutout_side_changed(side: CutoutSide)
 
 var current_theme: ThemeChoice = ThemeChoice.DARK
+var cutout_side: CutoutSide = CutoutSide.AUTO
 
 
 func _ready() -> void:
@@ -66,6 +82,14 @@ func set_theme(choice: ThemeChoice) -> void:
 	_apply_theme()
 	_save_settings()
 	theme_changed.emit(current_theme)
+
+
+func set_cutout_side(side: CutoutSide) -> void:
+	if side == cutout_side:
+		return
+	cutout_side = side
+	_save_settings()
+	cutout_side_changed.emit(cutout_side)
 
 
 ## Kept as a harmless default-theme assignment (correct practice, and covers
@@ -96,6 +120,9 @@ func _load_settings() -> void:
 	var saved: int = config.get_value("ui", "theme", ThemeChoice.DARK)
 	if THEME_PATHS.has(saved):
 		current_theme = saved
+	var saved_side: int = config.get_value("ui", "cutout_side", CutoutSide.AUTO)
+	if CUTOUT_SIDE_DISPLAY_NAMES.has(saved_side):
+		cutout_side = saved_side
 
 
 func _save_settings() -> void:
@@ -104,4 +131,5 @@ func _save_settings() -> void:
 	var config := ConfigFile.new()
 	config.load(SETTINGS_PATH)
 	config.set_value("ui", "theme", current_theme)
+	config.set_value("ui", "cutout_side", cutout_side)
 	config.save(SETTINGS_PATH)
