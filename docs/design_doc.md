@@ -1353,3 +1353,101 @@ passes. Building this exposed that printer instances never rolled defects
 at all (their ids didn't match the "printing" defect table) - fixed, so
 printers now produce Warping defects at their designed 5% base rate.
 
+
+### 28.7 Phase 2 decisions (user, 2026-10-03)
+
+- **Ship threshold: 90% quality.** A casting below it is **saved as revert**
+  (remelted metal), never shipped. Revert is what Engineers' trial parts are
+  poured in. **No part poured in revert is ever sent to a customer.**
+- **Two kinds of part, two prices.** Every part entering the system costs
+  money per part: a **trial part** is poured in revert, so it's cheaper to
+  process; a **production part** is poured in virgin metal for the customer.
+- **Production unlocks at 85% familiarity** with a geometry - before that,
+  a geometry can only be run as trials.
+- **Trials** (confirmed as proposed): after a diagnosis, the contract's
+  Engineer proposes a fix; the next batch of trial parts queued for that
+  contract runs with lower risk of that defect at that station. The
+  Engineer's skill sets how much the fix helps and how much familiarity a
+  finished trial earns.
+
+**Implementation choices made to fill gaps (placeholders, all tunable):**
+- Familiarity % for a geometry = the mean of the staff's average familiarity
+  with it and the shop-wide familiarity at the four tracked stations, as a
+  share of 5 stars.
+- Quality % is rolled when a part is poured: 55 + 40 x familiarity share,
+  +/- 6 random. So ~85% familiarity averages ~89% quality - production is
+  open but still risky, and 90% reliably needs more mastery.
+- Revert is a counted stock: the shop starts with 10 units (lab-scale
+  leftovers); queueing a trial part uses one; every trial part retired at
+  Ship and every production casting below 90% returns one.
+- Prices: trial = 20% of the contract's per-part payout, production = 50%.
+- Production no longer starts by itself: the player queues trial or
+  production parts per contract line item from the Contracts menu, and
+  printers (staffed or not) work through that queue.
+- An Engineer's fix lasts for the next 3 trial parts queued on that
+  contract, cutting the risk of that defect at that station to 60% / 50% /
+  40% / 30% of normal by Engineer tier; a finished trial grants 1 star of
+  familiarity (2 from a Senior or Master Engineer) at each tracked station.
+
+### 28.8 Candidate defect types to add later (research, not implemented)
+
+Today's defects: Warping (printing, burnout), Shell Crack (shelling,
+burnout), Porosity and Misrun (pour), Inclusion (grinding). Real investment
+casting has a richer set, grouped here by where in the pipeline they're
+born - each a candidate category with its own repair-or-not answer for the
+NC shelf. From industry defect guides and printed-pattern research (see
+sources at the end).
+
+**Print Room (pattern defects)**
+- **Layer shift / stair-stepping** - print layers misaligned or visibly
+  stepped on curved faces; carried straight into the casting surface.
+  Repairable at Patching (sanding/filling) if minor.
+- **Trapped solvent (IPA) / uncured resin** - poor Clean or UV Cure leaves
+  liquid in the pattern that turns to vapor in Burnout and cracks the
+  shell. A *latent* defect: born in Clean/UV Cure, shows up at Burnout -
+  a good candidate for a diagnosis that points to an upstream station.
+- **Dimensional out-of-tolerance** - caught at Structured Light Scan;
+  pattern shrink/warp beyond tolerance. Not repairable - scrap or learn.
+
+**Shell Building**
+- **Shell spall / delamination** - coats separating, often from a bad
+  primary coat or drying; frees ceramic into the cavity (later inclusions).
+- **Thin/insufficient shell** - too few coats; leads to bulging or
+  run-outs at Pour. Repairable by adding coats (back to Shelling).
+
+**Burnout**
+- **Ash residue** - incomplete burnout of a printed pattern leaves ash in
+  the cavity, causing surface pits and inclusions in the casting.
+  Repairable by re-firing (back to Burnout).
+- **Thermal-expansion shell crack** - the printed resin expands faster
+  than the shell (already modeled as Burnout's Shell Crack; worth
+  distinguishing from Shelling's handling cracks so diagnosis means more).
+
+**Pour (VIM)**
+- **Shrinkage porosity** - irregular, jagged voids in thick sections that
+  solidify last and can't draw feed metal. Distinct from gas porosity.
+  Fixed by gating/feeding changes - a natural *trial* defect.
+- **Gas porosity** - smooth, rounded voids from moisture in the shell or
+  dissolved gas (today's Porosity).
+- **Cold shut** - two metal fronts meet but don't fuse; low pour
+  temperature, slow pour or a cold shell. Close cousin of Misrun.
+- **Hot tear** - jagged crack where the shell restrains the metal from
+  contracting while it solidifies. Not repairable.
+- **Metal penetration / fins** - metal runs into shell cracks, leaving fins
+  that Grinding can remove (repairable at Grinding).
+
+**Post Processing**
+- **Grinding burn / over-grind** - overheated or over-ground surface takes
+  the part out of tolerance. Not repairable.
+- **Blast erosion** - over-blasting loses fine detail.
+
+**Cored geometries (Section 24.4, if built)**
+- **Core shift / core break** - the internal core moves or breaks during
+  shelling or pour, giving wrong wall thickness. Not repairable.
+
+Sources: [TFG USA - Common Casting Defects](https://www.tfgusa.com/casting-defects/),
+[Investacast - Defects in Investment Casting](https://investacast.com/news/defects-in-investment-casting-part-1/),
+[metal-castings.com - Common Defects and Their Causes](https://metal-castings.com/common-defects-in-investment-casting-and-their-causes/),
+[Besser - Preventing Defects in Investment Casting](https://www.bessercasting.com/preventing-defects-in-investment-casting-porosity-cracks-how-to-fix-them/),
+[Formlabs - Industrial Investment Casting With 3D Printed Patterns](https://formlabs.com/white-papers/industrial-investment-casting-with-3d-printed-patterns-using-formlabs-clear-cast-resin/),
+[ICI - Improvements in the Burnout Process for Printed Patterns](https://www.investmentcasting.org/uploads/8/1/9/8/81988734/18_mueller.docx.pdf).
