@@ -401,7 +401,15 @@ func _create_roster_row(tech: Technician) -> RosterRow:
 ## displayed selection is already correct the instant the player picks one.
 func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 	var assignment_text := "Idle"
-	if tech.is_assigned:
+	if tech.is_engineer:
+		# Engineers own contracts and diagnose defects, not stations (design
+		# doc 28.2) - assigned from the Contracts menu, so no station checks.
+		var owned := tech.assigned_contract_ids.size()
+		assignment_text = "Owns %d contract(s)" % owned if owned > 0 else "No contracts - assign one in Contracts"
+		var target := GameData.diagnosis_target_for(tech)
+		if target != null:
+			assignment_text += " - diagnosing part #%d" % target.part_id
+	elif tech.is_assigned:
 		assignment_text = "Working %d station(s), %d%% productivity" % [
 			tech.real_assigned_station_ids().size(), roundi(tech.productivity_multiplier * 100.0)
 		]
@@ -433,6 +441,10 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 	# cover all the printers not individual ones." GameData.assignable_station_group_ids()
 	# collapses every printer instance into one virtual "printing" checkbox
 	# instead of listing "Printing #1"/"Printing #2" separately.
+	if tech.is_engineer:
+		for check: CheckBox in row.station_checks.values():
+			check.visible = false
+		return
 	for id in GameData.assignable_station_group_ids():
 		if id == "printing":
 			if not row.station_checks.has(id):

@@ -598,6 +598,8 @@ class ContractRow:
 	var progress_bar: ProgressBar
 	var progress_label: Label
 	var time_label: Label
+	var engineer_button: Button
+	var contract_id: int = -1
 
 var _contract_rows: Dictionary = {} # contract_id -> ContractRow
 var _contracts_empty_label: Label = null
@@ -652,6 +654,15 @@ func _refresh_contracts_tab() -> void:
 		row.progress_label.text = "%d/%d shipped (%d in pipe)" % [c.quantity_shipped, c.quantity_required, in_pipeline]
 		row.progress_bar.max_value = maxi(c.quantity_required, 1)
 		row.progress_bar.value = c.quantity_shipped
+		row.contract_id = c.contract_id
+		var engineer := GameData.engineer_for_contract(c.contract_id)
+		if engineer != null:
+			row.engineer_button.text = "Engineer: %s" % engineer.technician_name
+		elif GameData.engineers().is_empty():
+			row.engineer_button.text = "No Engineer - hire one in Team"
+		else:
+			row.engineer_button.text = "Assign an Engineer"
+		row.engineer_button.disabled = GameData.engineers().is_empty()
 		row.time_label.text = "%s left" % _format_time(c.time_remaining)
 
 
@@ -716,7 +727,24 @@ func _create_contract_row() -> ContractRow:
 	row.relationship_label = Label.new()
 	bottom_line.add_child(row.relationship_label)
 
+	# Design doc 28.2: each contract is owned by an Engineer, who diagnoses
+	# its defects. Tapping cycles through the hired Engineers (and "none").
+	row.engineer_button = Button.new()
+	row.engineer_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.engineer_button.tooltip_text = "The Engineer who diagnoses this contract's defects. Tap to change."
+	row.engineer_button.pressed.connect(_on_engineer_pressed.bind(row))
+	row.container.add_child(row.engineer_button)
+
 	return row
+
+
+func _on_engineer_pressed(row: ContractRow) -> void:
+	var options: Array = [null]
+	options.append_array(GameData.engineers())
+	var current := GameData.engineer_for_contract(row.contract_id)
+	var next: Technician = options[(options.find(current) + 1) % options.size()]
+	GameData.assign_engineer_to_contract(row.contract_id, next)
+	_refresh_contracts_tab.call_deferred()
 
 
 func _bar_style(color: Color) -> StyleBoxFlat:

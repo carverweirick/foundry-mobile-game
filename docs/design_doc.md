@@ -1334,7 +1334,7 @@ longer ride along the line with a grace period.*
   shipped**.
 
 ### 28.6 Build phases
-1. **Phase 1 (2026-10-03):** the NC shelf (quarantine, raised risk while
+1. **Phase 1 - BUILT 2026-10-03:** the NC shelf (quarantine, raised risk while
    undiagnosed, VIM Bay placement), contract -> Engineer assignment,
    background diagnosis, dispositions (scrap / learning-only rework / scan
    to learn), Engineers removed from station assignment, passive idle
@@ -1342,3 +1342,14 @@ longer ride along the line with a grace period.*
 2. **Phase 2 (numbers to be agreed with the user first):** quality % and the
    ship threshold, trials, manual print queueing with a per-part cost.
 3. **Later:** the engineering-office scene, the scrap inventory.
+
+**Phase 1 build notes (placeholder numbers, for the balance pass):**
+diagnosis takes 10 game-minutes (20 real seconds) for an Apprentice-tier
+Engineer, up to 2x faster at Master; each undiagnosed shelf part raises its
+flagging station's risk by 50% of normal, capped at 3x; an idle Engineer
+gains one familiarity star per contract geometry per 60 game-minutes; a
+learning-only part gains one star at each familiarity-tracked station it
+passes. Building this exposed that printer instances never rolled defects
+at all (their ids didn't match the "printing" defect table) - fixed, so
+printers now produce Warping defects at their designed 5% base rate.
+

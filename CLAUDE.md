@@ -892,22 +892,56 @@ general form of this lesson.
   completed run at a mapped station, crediting `active_worker` specifically
   - a no-op if unstaffed or at a non-mapped station).
 - **Defect roll**: `Station._roll_defect_outcome()` rolls
-  `base_risk × familiarity_multiplier × technician_multiplier` (unstaffed =
-  1.0 technician multiplier). On a hit, `Part.flag_defect()` stamps
-  category/station/grace-period (`GameData.grace_period_seconds_for()`).
-  Visible as `" - DEFECT: <category> (<Xs to address>)"` on the floor status
-  label and Station Detail Menu status line, and a shorter marker on rack/
-  insert-list rows - the defect rides along with the Part wherever it goes.
-- **Grace period and escalation**: `GameData._check_defect_escalations()`
-  (every frame) sweeps all `active_parts`; on an unaddressed
-  `defect_time_remaining` hitting zero, escalates once
-  (`Part.defect_escalated` guard). Escalation point 1: `DEFECT_CONTAMINATION_CHANCE`
-  (25% placeholder) roll against every other Part in the flagging station's
-  own `queue_rack`/`current_part` (closest analog to "the batch" without
-  real simultaneous batching) - a contaminated Part gets the same category
-  and a fresh grace period. Escalation point 2: handled at Ship, not at
-  escalation time - `Station._ship_part()` discards any still-flagged Part
-  without crediting its contract, rather than the normal credit path.
+  `base_risk × familiarity_multiplier × technician_multiplier ×
+  GameData.undiagnosed_risk_multiplier(station_id)` (unstaffed = 1.0
+  technician multiplier). Defect tables are keyed by `"printing"`, so every
+  lookup goes through `GameData.defect_table_key()` (maps `printing_N` ->
+  `printing`) - before that existed printers never rolled a defect at all.
+- **Nonconformance (NC) shelf** (design doc Section 28): **every flagged
+  part leaves the line immediately** - `Station._on_run_finished()` /
+  `_finish_shelling_run()` hand it to `GameData.quarantine_part()` and free
+  the slot (`_take_active_part()`). `GameData.nc_shelf: Array[Part]` (saved
+  as ids). The floor shelf is `NcShelf` (`scenes/nc_shelf.gd`, drawn
+  placeholder rack, red box = undiagnosed, gold = diagnosed) at
+  `main.NC_SHELF_POSITION` in VIM Bay's free left strip beside Pour; tapping
+  it or the Attention item calls `main._focus_nc_shelf()` -> `NcOverlay`
+  (`scenes/nc_overlay.gd`, panel slot, rows rebuilt on `nc_shelf_changed`,
+  countdowns polled). While a part sits undiagnosed, its flagging station's
+  risk is ×(1 + 0.5 per undiagnosed part), capped ×3 - this replaced the old
+  grace-period escalation/contamination (removed; `Part.defect_elapsed`/
+  grace fields remain only for save compatibility).
+- **Engineers own contracts, not stations** (design doc 28.2):
+  `Technician.assigned_contract_ids` (saved); one Engineer per contract via
+  `GameData.assign_engineer_to_contract()`, set from a cycling button on
+  each Contracts Active row. `assign_technician()` refuses Engineers, the
+  Team roster hides their station checks, the Station Detail Menu's assign
+  list skips them, and `load_from_dict()` takes any Engineer in an old save
+  off every station (carried parts -> Awaiting Transfer). Technicians now
+  roll skill in all five departments (`TECHNICIAN_DEPARTMENTS`;
+  `backfill_department_skills()` fills old saves). Diagnosis runs in the
+  background: `GameData._process_engineers()` (from `simulate()`) works each
+  Engineer's oldest undiagnosed shelf part from their contracts for
+  `diagnosis_seconds_for()` (10 game-min / tier speed 1-2x / seniority);
+  finishing grants +1 familiarity (shop-wide at the flagging station, and
+  the Engineer's own) and lifts that part's risk penalty. An Engineer with
+  no diagnosis to do gains +1 familiarity on each of their active
+  contracts' geometries per 60 game-min (`gain_general_experience()`).
+- **Dispositions** (`GameData.scrap_nc_part()`/`rework_nc_part()`/
+  `scan_nc_part()`): Scrap anytime (counted in `scrapped_part_count`; the
+  scrap inventory is a later idea). Diagnosed + repairable
+  (`rework_station_for()`: printer defects -> Patching, Shell Crack -> Mold
+  Prep) -> Rework; diagnosed + not repairable -> Scan to learn (index set so
+  the next stop is Scan). Both release the part to Awaiting Transfer as
+  **learning-only** (`Part.learning_only`): it never rolls defects again,
+  gives +1 familiarity at each tracked station it passes, isn't counted as
+  in flight for its contract (so a replacement gets made), and is retired
+  without credit at Ship, or at Scan for `scan_to_learn`
+  (`retire_learning_part()`). Hiring a Specialist now marks matching shelf
+  parts diagnosed instead of clearing them.
+- **Legacy fix paths**: Mortar Patch / Redesign / Scrap-for-expertise below
+  and the Station Detail Menu's DefectRow still exist but only ever see a
+  defect on a part flagged before the NC shelf (old saves); new defects
+  never stay at a station. Ship still discards any such legacy flagged part.
 - **Fix path 1, Mortar Patch** (`GameData.mortar_patch_defect()`) - Shell
   Crack only, `MORTAR_PATCH_COST` (40g), clears the defect with no
   familiarity gain ("a patch, not a fix"). UI-scoped to only show at Mold

@@ -109,8 +109,13 @@ const ROLE_LABEL := {
 ## "post_process" covers Deshell/Abrasive Blast/Ship and the new Grinding
 ## station as one skill, matching the mockup's own 3-department grouping
 ## once Pour moves under Engineer instead.
+##
+## Design doc 28.2 (2026-10-03): Engineers no longer run stations - they own
+## contracts and diagnose defects. Technicians now run every station, so they
+## roll skill in every production department; ENGINEER_DEPARTMENTS is kept
+## only as the familiarity baseline an Engineer's diagnosis work draws on.
 const ENGINEER_DEPARTMENTS: Array[String] = ["printing", "shelling", "pour"]
-const TECHNICIAN_DEPARTMENTS: Array[String] = ["patching", "post_process"]
+const TECHNICIAN_DEPARTMENTS: Array[String] = ["printing", "shelling", "pour", "patching", "post_process"]
 
 func departments() -> Array[String]:
 	return ENGINEER_DEPARTMENTS if role == StaffRole.ENGINEER else TECHNICIAN_DEPARTMENTS
@@ -146,6 +151,29 @@ func roll_department_skills() -> void:
 	var skill_range: Vector2i = TIER_SKILL_ROLL_RANGE[skill_tier]
 	for department in departments():
 		department_skill[department] = randi_range(skill_range.x, skill_range.y)
+
+
+## Rolls any department this role now has but a saved worker never got -
+## technicians hired before 28.2 only had Patching/Post Processing.
+func backfill_department_skills() -> void:
+	var skill_range: Vector2i = TIER_SKILL_ROLL_RANGE[skill_tier]
+	for department in departments():
+		if not department_skill.has(department):
+			department_skill[department] = randi_range(skill_range.x, skill_range.y)
+
+
+## Engineers only (design doc 28.2): the contracts this Engineer owns - they
+## diagnose those contracts' shelved defects and passively learn those
+## contracts' geometries when idle. Assigned from the Contracts overlay.
+var assigned_contract_ids: Array[int] = []
+
+## Seconds of idle time banked toward the next passive familiarity star
+## (GameData._process_engineers()). Not saved - losing a partial star on a
+## restart is harmless.
+var passive_learning_elapsed: float = 0.0
+
+var is_engineer: bool:
+	get: return role == StaffRole.ENGINEER
 
 
 ## The shop-wide familiarity summary (GameData.average_familiarity_stars()/
@@ -184,6 +212,14 @@ func familiarity_for_geometry(geometry_name: String, department_name: String) ->
 	if geometry_familiarity.has(geometry_name):
 		return geometry_familiarity[geometry_name]
 	return department_skill.get(department_name, 0)
+
+
+## For Engineers' diagnosis and passive learning, which aren't tied to one
+## department: builds from their overall baseline for the geometry rather
+## than a single department's skill.
+func gain_general_experience(geometry_name: String, amount: int) -> void:
+	var current := roundi(shopwide_familiarity_for_geometry(geometry_name))
+	geometry_familiarity[geometry_name] = clampi(current + amount, 0, 5)
 
 
 func gain_experience(geometry_name: String, department_name: String, amount: int) -> void:
@@ -777,6 +813,7 @@ func to_dict() -> Dictionary:
 		"is_interacting": is_interacting,
 		"interact_elapsed": _interact_elapsed,
 		"carried_part_ids": carried_ids,
+		"assigned_contract_ids": assigned_contract_ids.duplicate(),
 	}
 
 
@@ -818,6 +855,10 @@ static func from_dict(data: Dictionary) -> Technician:
 	# every load blew up in _int_valued_dict() and left the whole roster as
 	# nulls. See familiarity_for_geometry()/gain_experience() for the real shape.
 	tech.geometry_familiarity = _int_valued_dict(data.get("geometry_familiarity", {}))
+	tech.backfill_department_skills()
+	tech.assigned_contract_ids.clear()
+	for id in data.get("assigned_contract_ids", []):
+		tech.assigned_contract_ids.append(int(id))
 	return tech
 
 

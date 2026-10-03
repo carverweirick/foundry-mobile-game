@@ -410,6 +410,9 @@ func _refresh_technician_assign_list() -> void:
 	var is_printer := _station.station_id.begins_with("printing_")
 
 	for tech: Technician in GameData.technicians:
+		# Engineers own contracts, not stations (design doc 28.2).
+		if tech.is_engineer:
+			continue
 		var row := HBoxContainer.new()
 
 		var label := Label.new()

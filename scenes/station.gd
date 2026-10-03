@@ -402,9 +402,25 @@ func _finish_shelling_run(run: ShellingRun) -> void:
 	var part := run.part
 	part.status = Part.Status.READY_TO_ROUTE
 	_maybe_flag_defect(part, run.duration)
-	shelling_ready_parts.append(part)
+	if part.is_defective:
+		GameData.quarantine_part(part)
+	else:
+		shelling_ready_parts.append(part)
 	_update_parallel_state()
+	_fill_active_slot_if_possible()
 	_update_display()
+
+
+## Empties the single active slot and returns the part that was in it, then
+## pulls the next racked part in (used when a finished part leaves for the
+## NC shelf or is retired, rather than waiting to be collected).
+func _take_active_part() -> Part:
+	var part := current_part
+	current_part = null
+	current_state = State.IDLE
+	_fill_active_slot_if_possible()
+	_update_display()
+	return part
 
 
 ## Keeps current_state a reasonable aggregate for parallel shelling, so every
@@ -765,6 +781,10 @@ func receive_part(part: Part) -> void:
 func _ship_part(part: Part) -> void:
 	part.status = Part.Status.SHIPPED
 	var contract := GameData.get_contract(part.contract_id)
+	if part.learning_only:
+		GameData.retire_learning_part(part, station_id)
+		status_label.text = "Retired learning part #%d" % part.part_id
+		return
 	# Design doc Section 9, escalation point 2: "if it ships anyway, or sits
 	# long enough that it ships... the part does not count toward the order."
 	# The fix paths now exist (GameData.mortar_patch_defect() /
@@ -1324,6 +1344,14 @@ func _on_run_finished() -> void:
 		_maybe_flag_defect(current_part, _run_duration)
 		if station_id == "patching":
 			_resolve_patching(current_part)
+		# Design doc 28.1: a defective part leaves the line the moment it's
+		# found, for the nonconformance shelf - the slot frees immediately.
+		if current_part.is_defective:
+			GameData.quarantine_part(_take_active_part())
+			return
+		if current_part.scan_to_learn and station_id == "scan":
+			GameData.retire_learning_part(_take_active_part(), station_id)
+			return
 	_update_display()
 	# No direct _try_send_to_next_station() call here - if a technician is
 	# present, _process()'s next frame picks this up via _technician_act()
@@ -1371,6 +1399,13 @@ func _resolve_patching(part: Part) -> void:
 ## the Factory screen's stats (cycle_seconds = that run's real duration).
 func _maybe_flag_defect(part: Part, cycle_seconds: float) -> void:
 	_gain_worker_experience(part)
+	# A learning-only part (design doc 28.3) is already known-bad: it doesn't
+	# roll again, it teaches - one star at each familiarity-tracked station it
+	# passes through.
+	if part.learning_only:
+		GameData.raise_familiarity(GameData.geometry_name_for_part(part), station_id, 1)
+		GameData.record_station_run(station_id, cycle_seconds, false)
+		return
 	var category := _roll_defect_outcome(part)
 	GameData.record_station_run(station_id, cycle_seconds, category != GameData.DefectCategory.NONE)
 	if category == GameData.DefectCategory.NONE:
@@ -1429,7 +1464,7 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 	var tech_mult := (
 		active_worker.defect_multiplier if active_worker != null else 1.0
 	)
-	var risk := base_risk * familiarity_mult * tech_mult
+	var risk := base_risk * familiarity_mult * tech_mult * GameData.undiagnosed_risk_multiplier(station_id)
 	if randf() >= risk:
 		return GameData.DefectCategory.NONE
 	var category := GameData.roll_defect_category(station_id)

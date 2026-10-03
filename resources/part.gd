@@ -49,6 +49,23 @@ var defect_escalated: bool = false
 ## cycle and this only ever applies to the one part it was stamped onto.
 var is_push_through: bool = false
 
+## Nonconformance shelf (design doc 28.1-28.3). A part is quarantined on
+## GameData.nc_shelf the moment a defect is flagged; its contract's Engineer
+## diagnoses it in the background (nc_diagnosis_elapsed counts up to
+## GameData.diagnosis_seconds_for()), and only a diagnosed part can be
+## reworked or scanned for learning. Scrap is allowed either way.
+var nc_diagnosed: bool = false
+var nc_diagnosis_elapsed: float = 0.0
+
+## Set by a learning disposition (rework, or scan-to-learn): the part goes
+## back onto the line to teach the shop about its geometry but can never
+## ship - Station retires it at Ship (or at Scan for scan_to_learn) instead
+## of crediting its contract, and it no longer counts as in flight for that
+## contract. learning_origin_station_id remembers which station flagged it.
+var learning_only: bool = false
+var scan_to_learn: bool = false
+var learning_origin_station_id: String = ""
+
 var is_defective: bool:
 	get: return defect_category != GameData.DefectCategory.NONE
 
@@ -82,6 +99,8 @@ func flag_defect(category: int, station_id: String, grace_seconds: float) -> voi
 ## specialist visit always does - so the familiarity bump itself lives in
 ## GameData, not here; this just clears the flag itself.
 func clear_defect() -> void:
+	nc_diagnosed = false
+	nc_diagnosis_elapsed = 0.0
 	defect_category = GameData.DefectCategory.NONE
 	defect_station_id = ""
 	defect_elapsed = 0.0
@@ -113,6 +132,11 @@ func to_dict() -> Dictionary:
 		"defect_grace_seconds": defect_grace_seconds,
 		"defect_escalated": defect_escalated,
 		"is_push_through": is_push_through,
+		"nc_diagnosed": nc_diagnosed,
+		"nc_diagnosis_elapsed": nc_diagnosis_elapsed,
+		"learning_only": learning_only,
+		"scan_to_learn": scan_to_learn,
+		"learning_origin_station_id": learning_origin_station_id,
 	}
 
 
@@ -132,6 +156,11 @@ static func from_dict(data: Dictionary) -> Part:
 	part.defect_grace_seconds = float(data.get("defect_grace_seconds", 0.0))
 	part.defect_escalated = bool(data.get("defect_escalated", false))
 	part.is_push_through = bool(data.get("is_push_through", false))
+	part.nc_diagnosed = bool(data.get("nc_diagnosed", false))
+	part.nc_diagnosis_elapsed = float(data.get("nc_diagnosis_elapsed", 0.0))
+	part.learning_only = bool(data.get("learning_only", false))
+	part.scan_to_learn = bool(data.get("scan_to_learn", false))
+	part.learning_origin_station_id = str(data.get("learning_origin_station_id", ""))
 	return part
 
 

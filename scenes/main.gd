@@ -51,6 +51,10 @@ const MIN_ZOOM: float = 0.25   # zoomed out - the whole floor visible at once
 const MAX_ZOOM: float = 2.0   # zoomed in - close look at a single station
 const DEFAULT_ZOOM: float = 1.0
 const ATTENTION_PAN_SECONDS: float = 0.35
+## The nonconformance shelf (design doc 28.1): center VIM Bay, beside Pour.
+## Pour's sprite covers nearly the whole island, so the shelf takes the free
+## strip down its left edge (VIM Bay spans x 720-1000).
+const NC_SHELF_POSITION := Vector2(762.0, 578.0)
 const ZOOM_STEP: float = 1.1
 
 ## A left click/tap that moves less than this many screen pixels between
@@ -205,6 +209,10 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var board_overlay: BoardOverlay = $BoardOverlay
 @onready var settings_overlay: SettingsOverlay = $SettingsOverlay
 @onready var admin_overlay: AdminOverlay = $AdminOverlay
+@onready var nc_overlay: NcOverlay = $NcOverlay
+
+var _nc_shelf: NcShelf
+var _nc_shelf_label: Label
 
 ## Every top-level overlay panel that should ever be mutually exclusive with
 ## every other one - populated in _ready() once all the @onready vars above
@@ -268,6 +276,7 @@ func _ready() -> void:
 
 	_build_floor()
 	_spawn_stations()
+	_spawn_nc_shelf()
 	_setup_camera()
 
 	factory_overlay.station_by_id = _stations_by_id
@@ -296,7 +305,7 @@ func _ready() -> void:
 	# .connect() block per pair (see that array's own comment for why).
 	_overlays = [
 		contracts_overlay, board_overlay, staff_overlay, factory_overlay,
-		settings_overlay, admin_overlay,
+		settings_overlay, admin_overlay, nc_overlay,
 		station_detail_menu,
 	]
 	for overlay in _overlays:
@@ -311,6 +320,7 @@ func _ready() -> void:
 		[factory_overlay, "Factory", "factory"],
 	], settings_overlay, station_detail_menu)
 	hud.bind_admin(admin_overlay)
+	hud.add_slot_overlay(nc_overlay)
 	hud.attention_requested.connect(_on_attention_requested)
 	board_overlay.station_requested.connect(func(station): _focus_station(station, true))
 
@@ -323,6 +333,13 @@ func _on_attention_requested(item: Dictionary) -> void:
 	for overlay in _overlays:
 		overlay.close()
 	match item.overlay:
+		"nc":
+			_focus_nc_shelf()
+			return
+		"contracts_active":
+			contracts_overlay.toggle()
+			contracts_overlay.get_node("Panel/TabContainer").current_tab = 1 # Active
+			return
 		"transfer":
 			board_overlay.open_transfer_tab()
 			return
@@ -349,6 +366,21 @@ func _focus_station(station: Station, open_popup: bool) -> void:
 	AttentionPulse.spawn(station, station.get_sprite_rect().grow(4.0))
 	if open_popup:
 		station_detail_menu.open_for(station)
+
+
+## Pans to the NC shelf and opens its menu - a shelf tap, or the Attention
+## button's shelf item.
+func _focus_nc_shelf() -> void:
+	for overlay in _overlays:
+		overlay.close()
+	if camera.zoom.x < DEFAULT_ZOOM:
+		camera.zoom = Vector2(DEFAULT_ZOOM, DEFAULT_ZOOM)
+		_apply_sprite_zoom_scale()
+	var tween := create_tween()
+	tween.tween_property(camera, "position", _clamp_camera_position(_nc_shelf.position), ATTENTION_PAN_SECONDS) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	AttentionPulse.spawn(_nc_shelf, Rect2(-NcShelf.SIZE * 0.5, NcShelf.SIZE).grow(4.0))
+	nc_overlay.toggle()
 
 
 func _on_overlay_opened(opened_overlay: Node) -> void:
@@ -407,7 +439,12 @@ func _update_floor_labels() -> void:
 	if zones_only:
 		for label: Label in _station_floor_labels.values():
 			label.visible = false
+		_nc_shelf_label.visible = false
 		return
+
+	_nc_shelf_label.text = _nc_shelf.label_text()
+	var shelf_label_pos := _nc_shelf.position + Vector2(-NcShelf.SIZE.x * 0.5, NcShelf.SIZE.y * 0.5 + 4.0)
+	_place_and_maybe_show_label(_nc_shelf_label, canvas_transform * shelf_label_pos, accepted_rects)
 
 	for id: String in _stations_by_id.keys():
 		var station: Station = _stations_by_id[id]
@@ -617,6 +654,13 @@ func _build_full_floor_tiles() -> void:
 			# own .import file).
 			tile.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 			add_child(tile)
+
+
+func _spawn_nc_shelf() -> void:
+	_nc_shelf = NcShelf.new()
+	_nc_shelf.position = NC_SHELF_POSITION
+	add_child(_nc_shelf)
+	_nc_shelf_label = _make_floor_label("NC Shelf")
 
 
 func _spawn_stations() -> void:
@@ -877,6 +921,9 @@ func _close_topmost_overlay() -> bool:
 ## space, see Station.get_click_rect()) against a world-space tap position,
 ## opening the detail popup for whichever one contains it first.
 func _try_click_station(world_pos: Vector2) -> void:
+	if _nc_shelf.get_click_rect().has_point(world_pos - _nc_shelf.position):
+		_focus_nc_shelf()
+		return
 	for station: Station in _stations_by_id.values():
 		var local_pos := world_pos - station.position
 		if station.get_click_rect().has_point(local_pos):

@@ -511,6 +511,14 @@ func bind_admin(admin_overlay: OverlayBase) -> void:
 	_layout()
 
 
+## An overlay with no button of its own (e.g. the NC shelf menu, opened from
+## the floor or the Attention button) that still opens into the shared panel
+## slot beside the rail.
+func add_slot_overlay(overlay: OverlayBase) -> void:
+	_slot_overlays.append(overlay)
+	_layout()
+
+
 ## Shown by the Settings overlay next to its cutout option.
 func detected_camera_side_name() -> String:
 	return ThemeManager.CUTOUT_SIDE_DISPLAY_NAMES[_detected_camera_side]

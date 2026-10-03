@@ -8,6 +8,8 @@ signal contract_updated(contract: Contract)
 ## polling contract_offers.size() every frame.
 signal contract_offers_changed()
 signal held_parts_changed()
+## The nonconformance shelf gained/lost a part or a diagnosis finished.
+signal nc_shelf_changed()
 signal technician_updated(tech: Technician)
 signal reputation_changed(new_amount: int)
 ## Fires whenever factory_exp changes, and again (in addition) whenever that
@@ -202,11 +204,6 @@ const STATION_GRACE_PERIOD_MINUTES := {
 ## mastered."
 const FAMILIARITY_MULTIPLIER: Array[float] = [1.0, 0.8, 0.6, 0.4, 0.2, 0.1]
 
-## Per-part rolling chance used when an ignored defect escalates (Section 9:
-## "a rolling chance the other parts pick up the same issue"). The doc gives
-## no concrete number - this is a first-pass placeholder, same spirit as the
-## Technician hire costs and contract payouts invented elsewhere.
-const DEFECT_CONTAMINATION_CHANCE: float = 0.25
 
 ## Design doc Section 21.7: familiarity is no longer a single score - "a part
 ## builds up to four separate familiarity values for its geometry, one each
@@ -900,10 +897,13 @@ func unregister_part(part: Part) -> void:
 	active_parts.erase(part)
 
 
+## Learning-only parts (design doc 28.3) are excluded here and below: they
+## can never ship, so counting them would stop the contract getting the
+## replacement parts it still needs.
 func count_parts_in_pipeline(contract_id: int) -> int:
 	var count := 0
 	for p in active_parts:
-		if p.contract_id == contract_id:
+		if p.contract_id == contract_id and not p.learning_only:
 			count += 1
 	return count
 
@@ -917,7 +917,7 @@ func count_parts_in_pipeline(contract_id: int) -> int:
 func in_flight_counts_for_contract(contract_id: int) -> Dictionary:
 	var counts := {}
 	for p in active_parts:
-		if p.contract_id == contract_id:
+		if p.contract_id == contract_id and not p.learning_only:
 			counts[p.line_item_index] = counts.get(p.line_item_index, 0) + 1
 	return counts
 
@@ -1323,7 +1323,8 @@ func _process_contracts(delta: float) -> void:
 ## station this way; see Technician.assigned_station_ids / productivity_multiplier
 ## for the walking penalty that creates (design doc Section 7).
 func assign_technician(tech: Technician, station: Station) -> void:
-	if station.assigned_technicians.has(tech):
+	# Engineers own contracts, not stations (design doc 28.2).
+	if tech.is_engineer or station.assigned_technicians.has(tech):
 		return
 
 	if not tech.assigned_station_ids.has(station.station_id):
@@ -1495,8 +1496,7 @@ func simulate(delta: float) -> void:
 	for station: Station in station_by_id.values():
 		station.simulate_step(delta)
 
-	_advance_defect_grace_periods(delta)
-	_check_defect_escalations()
+	_process_engineers(delta)
 	_process_contracts(delta)
 	_process_applicant_pool(delta)
 
@@ -1536,70 +1536,182 @@ func _stats_for(station_id: String) -> Dictionary:
 	return station_stats[station_id]
 
 
-## Burns down every flagged Part's grace period (design doc Section 9). Was
-## implicit in Part.defect_time_remaining reading a wall clock until the
-## save/load work - now the Part holds an accumulator and something has to
-## advance it, which is this. Runs over active_parts so a defect keeps
-## counting down wherever the Part physically sits, exactly as before.
-func _advance_defect_grace_periods(delta: float) -> void:
-	for part in active_parts:
-		if part.is_defective and not part.defect_escalated:
-			part.defect_elapsed += delta
+# --- Nonconformance shelf and Engineers (design doc Section 28) ------------
+
+## Every defective part, the moment it's flagged (Station quarantines it via
+## quarantine_part()). Saved as part ids, like held_parts.
+var nc_shelf: Array[Part] = []
+## Scrapped parts, counted only - the "scrap inventory" itself is a later idea
+## (design doc 28.3).
+var scrapped_part_count: int = 0
+
+## Base diagnosis time for an Apprentice-tier Engineer, before speed bonuses.
+const DIAGNOSIS_GAME_MINUTES: float = 10.0
+const ENGINEER_DIAGNOSIS_SPEED := {
+	Technician.SkillTier.APPRENTICE: 1.0,
+	Technician.SkillTier.TECHNICIAN: 1.25,
+	Technician.SkillTier.SENIOR_TECHNICIAN: 1.5,
+	Technician.SkillTier.MASTER: 2.0,
+}
+## Each undiagnosed shelf part raises the defect risk at the station that
+## flagged it by this fraction of its normal risk (design doc 28.1: "other
+## parts coming through will also have a chance to have that defect occur"),
+## up to UNDIAGNOSED_RISK_MAX_MULTIPLIER.
+const UNDIAGNOSED_RISK_PER_PART: float = 0.5
+const UNDIAGNOSED_RISK_MAX_MULTIPLIER: float = 3.0
+## An idle Engineer earns one star of familiarity on each of their contracts'
+## geometries per this many game minutes (design doc 28.2).
+const PASSIVE_LEARNING_GAME_MINUTES: float = 60.0
+const FAMILIARITY_GAIN_DIAGNOSIS: int = 1
+const FAMILIARITY_GAIN_LEARNING_SCAN: int = 1
 
 
-## Design doc Section 9, escalation: sweeps every live Part (wherever it
-## currently sits - a station, a rack, Awaiting Transfer, or a technician's
-## hands, active_parts covers all of them) for one whose grace period has
-## lapsed unaddressed, and escalates it exactly once. Centralized here rather
-## than on Station, since a flagged Part's grace period keeps counting down
-## no matter where it physically moves to after being flagged - it's the
-## Part's problem now, not something tied to standing at one station.
-func _check_defect_escalations() -> void:
-	for part in active_parts:
-		if not part.is_defective or part.defect_escalated:
+func quarantine_part(part: Part) -> void:
+	if not nc_shelf.has(part):
+		nc_shelf.append(part)
+	nc_shelf_changed.emit()
+
+
+## Where a diagnosed part can be reworked (design doc 28.3: printer defects at
+## Patching, shell cracks at Mold Prep), or "" if its defect can't be - those
+## can only be scrapped or scanned to learn.
+func rework_station_for(part: Part) -> String:
+	if part.defect_category == DefectCategory.SHELL_CRACK:
+		return "mold_prep"
+	if part.defect_station_id.begins_with("printing"):
+		return "patching"
+	return ""
+
+
+func undiagnosed_risk_multiplier(station_id: String) -> float:
+	var count := 0
+	for part in nc_shelf:
+		if not part.nc_diagnosed and part.defect_station_id == station_id:
+			count += 1
+	return minf(1.0 + UNDIAGNOSED_RISK_PER_PART * count, UNDIAGNOSED_RISK_MAX_MULTIPLIER)
+
+
+func engineers() -> Array[Technician]:
+	var out: Array[Technician] = []
+	for tech in technicians:
+		if tech.is_engineer:
+			out.append(tech)
+	return out
+
+
+func engineer_for_contract(contract_id: int) -> Technician:
+	for tech in technicians:
+		if tech.is_engineer and tech.assigned_contract_ids.has(contract_id):
+			return tech
+	return null
+
+
+## One Engineer per contract; null clears it.
+func assign_engineer_to_contract(contract_id: int, engineer: Technician) -> void:
+	for tech in technicians:
+		tech.assigned_contract_ids.erase(contract_id)
+	if engineer != null and engineer.is_engineer:
+		engineer.assigned_contract_ids.append(contract_id)
+	nc_shelf_changed.emit()
+
+
+func diagnosis_seconds_for(engineer: Technician) -> float:
+	var speed: float = ENGINEER_DIAGNOSIS_SPEED.get(engineer.skill_tier, 1.0) * engineer.seniority_speed_multiplier
+	return game_minutes_to_seconds(DIAGNOSIS_GAME_MINUTES) / maxf(speed, 0.1)
+
+
+## The shelf part this Engineer is diagnosing (or would diagnose next):
+## the oldest undiagnosed one from a contract they own.
+func diagnosis_target_for(engineer: Technician) -> Part:
+	for part in nc_shelf:
+		if not part.nc_diagnosed and engineer.assigned_contract_ids.has(part.contract_id):
+			return part
+	return null
+
+
+## Diagnosis runs in the background for now (design doc 28.2 - the
+## engineering-office scene comes later): each Engineer works on one shelved
+## part from their own contracts at a time, and when they have none, slowly
+## learns their contracts' geometries instead.
+func _process_engineers(delta: float) -> void:
+	for engineer in engineers():
+		var part := diagnosis_target_for(engineer)
+		if part != null:
+			part.nc_diagnosis_elapsed += delta
+			if part.nc_diagnosis_elapsed >= diagnosis_seconds_for(engineer):
+				_finish_diagnosis(part, engineer)
 			continue
-		if part.defect_time_remaining > 0.0:
+		if engineer.assigned_contract_ids.is_empty():
 			continue
-		_escalate_defect(part)
+		engineer.passive_learning_elapsed += delta
+		if engineer.passive_learning_elapsed < game_minutes_to_seconds(PASSIVE_LEARNING_GAME_MINUTES):
+			continue
+		engineer.passive_learning_elapsed = 0.0
+		for contract_id in engineer.assigned_contract_ids:
+			var contract := get_contract(contract_id)
+			if contract == null or contract.is_complete:
+				continue
+			for item in contract.line_items:
+				engineer.gain_general_experience(item.geometry_name, 1)
+		technician_updated.emit(engineer)
 
 
-## Point 1 of Section 9's escalation: "a rolling chance the other parts pick
-## up the same issue." "The rest of that batch" is interpreted as whoever
-## else is currently sitting in the station's queue_rack (plus current_part,
-## if a different Part has already cycled into the active slot since this
-## one was flagged) - the closest existing analog to a batch, since real
-## simultaneous multi-part batching (Section 4/17) isn't built. Point 2, the
-## reputation hit and the part not counting toward its contract, is handled
-## at the moment of shipping instead - see Station._ship_part() - since
-## that's specifically what Section 9 describes ("if it ships anyway, or
-## sits long enough that it ships"), not the escalation moment itself.
-## Reputation itself is stubbed - see the note in _ship_part().
-func _escalate_defect(part: Part) -> void:
-	part.defect_escalated = true
-	var station: Station = station_by_id.get(part.defect_station_id)
-	if station == null:
-		return
-	var batchmates: Array[Part] = station.queue_rack.duplicate()
-	if station.current_part != null and station.current_part != part:
-		batchmates.append(station.current_part)
-	# Parallel shelling (design doc Section 21.4) can have several Parts
-	# simultaneously mid-run or simultaneously ready, none of which are
-	# station.current_part (always null there) - include them too, same
-	# "closest existing analog to a batch" spirit as queue_rack/current_part
-	# above.
-	if station.is_parallel_shelling():
-		for run in station.shelling_active_parts:
-			if run.part != part:
-				batchmates.append(run.part)
-		for other_part in station.shelling_ready_parts:
-			if other_part != part:
-				batchmates.append(other_part)
-	var grace_seconds := grace_period_seconds_for(part.defect_station_id)
-	for other in batchmates:
-		if other.is_defective:
-			continue
-		if randf() < DEFECT_CONTAMINATION_CHANCE:
-			other.flag_defect(part.defect_category, part.defect_station_id, grace_seconds)
+func _finish_diagnosis(part: Part, engineer: Technician) -> void:
+	part.nc_diagnosed = true
+	var geometry := geometry_name_for_part(part)
+	raise_familiarity(geometry, part.defect_station_id, FAMILIARITY_GAIN_DIAGNOSIS)
+	engineer.gain_general_experience(geometry, FAMILIARITY_GAIN_DIAGNOSIS)
+	technician_updated.emit(engineer)
+	nc_shelf_changed.emit()
+
+
+## Disposition: scrap. Allowed with or without a diagnosis (you just learn
+## nothing). The contract will start a replacement part on its own.
+func scrap_nc_part(part: Part) -> void:
+	nc_shelf.erase(part)
+	unregister_part(part)
+	scrapped_part_count += 1
+	nc_shelf_changed.emit()
+
+
+## Disposition: rework for learning (design doc 28.3). Back onto the line
+## from the station after the one that flagged it - via Awaiting Transfer,
+## so technicians or the player carry it - repaired on the way at
+## rework_station_for(), but learning-only: it never ships.
+func rework_nc_part(part: Part) -> bool:
+	if not part.nc_diagnosed or rework_station_for(part) == "":
+		return false
+	_release_for_learning(part)
+	return true
+
+
+## Disposition for a defect that can't be reworked: send it to Structured
+## Light Scan to learn from it; it's retired once scanned.
+func scan_nc_part(part: Part) -> bool:
+	if not part.nc_diagnosed or rework_station_for(part) != "":
+		return false
+	part.scan_to_learn = true
+	part.current_station_index = PIPELINE_ORDER.find("scan") - 1
+	_release_for_learning(part)
+	return true
+
+
+func _release_for_learning(part: Part) -> void:
+	part.learning_only = true
+	part.learning_origin_station_id = part.defect_station_id
+	part.clear_defect()
+	nc_shelf.erase(part)
+	part.status = Part.Status.READY_TO_ROUTE
+	hold_part(part)
+	nc_shelf_changed.emit()
+
+
+## A learning-only part reaching the end of its usefulness (Ship, or Scan
+## for scan_to_learn): retired, never credited.
+func retire_learning_part(part: Part, at_station_id: String) -> void:
+	if part.scan_to_learn:
+		raise_familiarity(geometry_name_for_part(part), part.learning_origin_station_id, FAMILIARITY_GAIN_LEARNING_SCAN)
+	unregister_part(part)
 
 
 func _init() -> void:
@@ -1965,8 +2077,15 @@ func all_real_station_ids() -> Array[String]:
 
 
 ## 0.0 (no roll ever happens) for any station not in STATION_BASE_DEFECT_RISK.
+## Printer instances are "printing_1", "printing_2"... but the defect tables
+## are keyed by the shared "printing" template. Without this, printers never
+## rolled a defect at all.
+func defect_table_key(station_id: String) -> String:
+	return "printing" if station_id.begins_with("printing_") else station_id
+
+
 func base_defect_risk_for(station_id: String) -> float:
-	return STATION_BASE_DEFECT_RISK.get(station_id, 0.0)
+	return STATION_BASE_DEFECT_RISK.get(defect_table_key(station_id), 0.0)
 
 
 ## 0 for any geometry/station pair never raised, or for any station_id not in
@@ -2161,8 +2280,17 @@ func hire_specialist(type: SpecialistType) -> bool:
 	specialists_hired.append(type)
 	var categories: Array = SPECIALIST_CATEGORIES.get(type, [])
 	for part in active_parts:
-		if part.is_defective and categories.has(part.defect_category):
+		if not part.is_defective or not categories.has(part.defect_category):
+			continue
+		if nc_shelf.has(part):
+			# On the NC shelf (design doc 28.3) a specialist's expertise counts
+			# as the diagnosis - the player still chooses the disposition.
+			if not part.nc_diagnosed:
+				part.nc_diagnosed = true
+				raise_familiarity(geometry_name_for_part(part), part.defect_station_id, FAMILIARITY_GAIN_SPECIALIST)
+		else:
 			_clear_defect_and_raise_familiarity(part, FAMILIARITY_GAIN_SPECIALIST)
+	nc_shelf_changed.emit()
 	return true
 
 
@@ -2200,7 +2328,7 @@ func redesign_defect(part: Part) -> bool:
 ## odds - see STATION_DEFECT_CATEGORIES above), or DefectCategory.NONE if
 ## this station has none listed.
 func roll_defect_category(station_id: String) -> DefectCategory:
-	var candidates: Array = STATION_DEFECT_CATEGORIES.get(station_id, [])
+	var candidates: Array = STATION_DEFECT_CATEGORIES.get(defect_table_key(station_id), [])
 	if candidates.is_empty():
 		return DefectCategory.NONE
 	return candidates[randi() % candidates.size()]
@@ -2208,7 +2336,7 @@ func roll_defect_category(station_id: String) -> DefectCategory:
 
 ## Prototype-scale seconds, same conversion as StationDef.get_prototype_timer_seconds().
 func grace_period_seconds_for(station_id: String) -> float:
-	return game_minutes_to_seconds(STATION_GRACE_PERIOD_MINUTES.get(station_id, 0.0))
+	return game_minutes_to_seconds(STATION_GRACE_PERIOD_MINUTES.get(defect_table_key(station_id), 0.0))
 
 
 # =========================================================================
@@ -2294,6 +2422,8 @@ func to_save_dict() -> Dictionary:
 		"applicant_pool": applicants_data,
 		"stations": stations_data,
 		"station_stats": station_stats.duplicate(true),
+		"nc_shelf_ids": nc_shelf.map(func(p: Part): return p.part_id),
+		"scrapped_part_count": scrapped_part_count,
 		"stats_elapsed": stats_elapsed,
 	}
 
@@ -2366,6 +2496,13 @@ func load_from_dict(data: Dictionary) -> bool:
 		if part != null:
 			held_parts.append(part)
 
+	nc_shelf.clear()
+	for raw_id in data.get("nc_shelf_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			nc_shelf.append(part)
+	scrapped_part_count = int(data.get("scrapped_part_count", 0))
+
 	contracts.clear()
 	for raw in data.get("contracts", []):
 		contracts.append(Contract.from_dict(raw))
@@ -2402,6 +2539,18 @@ func load_from_dict(data: Dictionary) -> bool:
 			# so this should only ever hit on a real config change.
 			continue
 		station.load_save_dict(stations_data[station_id], parts_by_id, technicians)
+
+	# Saves from before design doc 28.2 have Engineers staffing stations; they
+	# own contracts now, so take them off the floor.
+	for engineer in engineers():
+		for station: Station in station_by_id.values():
+			station.unassign_technician(engineer)
+		engineer.assigned_station_ids.clear()
+		for part in engineer.carried_parts:
+			held_parts.append(part)
+		engineer.carried_parts.clear()
+		engineer.current_station_id = ""
+		engineer.is_traveling = false
 
 	_emit_all_loaded_signals()
 	return true
