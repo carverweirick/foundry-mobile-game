@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://scenes/station_detail_menu.gd" id="1_script"]
 
 [node name="StationDetailMenu" type="CanvasLayer"]
-layer = 2
+layer = 3
 script = ExtResource("1_script")
 
 [node name="Backdrop" type="Control" parent="."]

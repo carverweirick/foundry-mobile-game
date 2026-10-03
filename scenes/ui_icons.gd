@@ -1,0 +1,235 @@
+class_name UiIcons
+
+## Placeholder 16x16 pixel-art HUD icons, drawn from ASCII grids at runtime
+## (design doc Section 27.5: no UI icon art exists yet). Swap any of these
+## for a real texture later by changing get_icon() - nothing else reads the
+## grids. One char per pixel; see PALETTE for the legend, "." = transparent.
+
+const PALETTE := {
+	"k": Color(0.07, 0.06, 0.05), # outline
+	"w": Color(0.95, 0.92, 0.85), # off-white
+	"g": Color(0.92, 0.70, 0.20), # gold
+	"o": Color(0.90, 0.42, 0.15), # ember
+	"s": Color(0.62, 0.65, 0.70), # steel
+	"d": Color(0.22, 0.24, 0.28), # dark steel
+	"b": Color(0.45, 0.78, 0.96), # gem blue
+}
+
+const GRIDS := {
+	"contracts": [
+		"................",
+		"...kkkkkkkkk....",
+		"...kwwwwwwwkk...",
+		"...kwkkkkkwwkk..",
+		"...kwwwwwwwwwk..",
+		"...kwkkkkkkkwk..",
+		"...kwwwwwwwwwk..",
+		"...kwkkkkkkkwk..",
+		"...kwwwwwwwwwk..",
+		"...kwkkkkwwwwk..",
+		"...kwwwwwwggwk..",
+		"...kwwwwwgoogk..",
+		"...kwwwwwwggwk..",
+		"...kwwwwwwwwwk..",
+		"...kkkkkkkkkkk..",
+		"................",
+	],
+	"dashboard": [
+		"................",
+		".kkkkkkkkkkkkkk.",
+		".kssssssssssssk.",
+		".ksddddddddddsk.",
+		".ksddddddddgdsk.",
+		".ksdddddddgddsk.",
+		".ksdgdddddgddsk.",
+		".ksddgdddgdddsk.",
+		".ksdddgdgddddsk.",
+		".ksddddgdddddsk.",
+		".ksddddddddddsk.",
+		".kssssssssssssk.",
+		".kkkkkkkkkkkkkk.",
+		"......kssk......",
+		"....kkkkkkkk....",
+		"................",
+	],
+	"overview": [
+		"................",
+		"................",
+		"...........kkk..",
+		"...........kgk..",
+		".......kkk.kgk..",
+		".......kgk.kgk..",
+		".......kgk.kgk..",
+		"...kkk.kgk.kgk..",
+		"...kgk.kgk.kgk..",
+		"...kgk.kgk.kgk..",
+		"...kgk.kgk.kgk..",
+		"...kgk.kgk.kgk..",
+		".kkkkkkkkkkkkkk.",
+		".kwwwwwwwwwwwwk.",
+		".kkkkkkkkkkkkkk.",
+		"................",
+	],
+	"staff": [
+		"................",
+		".....kkkkkk.....",
+		"....kggggggk....",
+		"...kggggggggk...",
+		"..kkkkkkkkkkkk..",
+		"..kggggggggggk..",
+		"...kkkkkkkkkk...",
+		"....kwwwwwwk....",
+		"....kwkwwkwk....",
+		"....kwwwwwwk....",
+		".....kwwwwk.....",
+		"...kkkkkkkkkk...",
+		"..kssssssssssk..",
+		"..kssssggssssk..",
+		"..kssssssssssk..",
+		"..kkkkkkkkkkkk..",
+	],
+	"transfer": [
+		"................",
+		".........k......",
+		".........kk.....",
+		".kkkkkkkkkgk....",
+		".kggggggggggk...",
+		".kkkkkkkkkgk....",
+		".........kk.....",
+		".........k......",
+		"......k.........",
+		".....kk.........",
+		"....kokkkkkkkkk.",
+		"...koooooooooook",
+		"....kokkkkkkkkk.",
+		".....kk.........",
+		"......k.........",
+		"................",
+	],
+	"printers": [
+		"................",
+		"..kkkkkkkkkkkk..",
+		"..kssssssssssk..",
+		"..kskkkkkkkksk..",
+		"..kskwwwwwwksk..",
+		"..kskwwoowwksk..",
+		"..kskwwoowwksk..",
+		"..kskwoooowksk..",
+		"..kskkkkkkkksk..",
+		"..kssssssssssk..",
+		"..ksggsssssssk..",
+		"..kssssssssssk..",
+		"..kkkkkkkkkkkk..",
+		"...kk......kk...",
+		"................",
+		"................",
+	],
+	"settings": [
+		"................",
+		"......kkkk......",
+		"...kk.kssk.kk...",
+		"..kssksssskssk..",
+		"..kssssssssssk..",
+		"...ksssddsssk...",
+		".kkssdkkkkdsskk.",
+		".kssskk..kksssk.",
+		".kssskk..kksssk.",
+		".kkssdkkkkdsskk.",
+		"...ksssddsssk...",
+		"..kssssssssssk..",
+		"..kssksssskssk..",
+		"...kk.kssk.kk...",
+		"......kkkk......",
+		"................",
+	],
+	"gold": [
+		"................",
+		"................",
+		".....kkkkkk.....",
+		"....kggggggk....",
+		"...kgwwggggok...",
+		"..kgwggggggggk..",
+		"..kgwggkkgggok..",
+		"..kgggkggkggok..",
+		"..kgggkggkggok..",
+		"..kggggkkgggok..",
+		"..kgggggggggok..",
+		"...kggggggook...",
+		"....koooooook...",
+		".....kkkkkkk....",
+		"................",
+		"................",
+	],
+	"gems": [
+		"................",
+		"................",
+		"................",
+		"....kkkkkkkk....",
+		"...kbbwbbbbbk...",
+		"..kbwbbbbbbbbk..",
+		".kkkkkkkkkkkkkk.",
+		"..kbbbbbbbbbbk..",
+		"...kbbbbbbbbk...",
+		"....kbbbbbbk....",
+		".....kbbbbk.....",
+		"......kbbk......",
+		".......kk.......",
+		"................",
+		"................",
+		"................",
+	],
+	"reputation": [
+		"................",
+		".......kk.......",
+		"......kggk......",
+		"......kggk......",
+		".....kgwggk.....",
+		"kkkkkkgwgggkkkkk",
+		"kgggggwgggggggok",
+		".kggggggggggook.",
+		"..kggggggggook..",
+		"...kgggggggok...",
+		"...kgggkkggok...",
+		"..kgggk..kgook..",
+		"..kggk....kgok..",
+		".kgkk......kkok.",
+		".kk..........kk.",
+		"................",
+	],
+	"factory": [
+		"................",
+		"..kkk...........",
+		"..kok...........",
+		"..kgk...........",
+		"..kgk.k...k.....",
+		"..kgkksk.ksk....",
+		"..kgksssksssk...",
+		".kkkkkkkkkkkkkk.",
+		".kssssssssssssk.",
+		".kswwsswwsswwsk.",
+		".kswwsswwsswwsk.",
+		".kssssssssssssk.",
+		".kssssskkssssk..",
+		".kssssskkssssk..",
+		".kkkkkkkkkkkkk..",
+		"................",
+	],
+}
+
+static var _cache: Dictionary = {}
+
+
+static func get_icon(icon_name: String) -> Texture2D:
+	if _cache.has(icon_name):
+		return _cache[icon_name]
+	var grid: Array = GRIDS.get(icon_name, [])
+	var image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for y in range(mini(grid.size(), 16)):
+		var row: String = grid[y]
+		for x in range(mini(row.length(), 16)):
+			var ch := row[x]
+			if PALETTE.has(ch):
+				image.set_pixel(x, y, PALETTE[ch])
+	var texture := ImageTexture.create_from_image(image)
+	_cache[icon_name] = texture
+	return texture

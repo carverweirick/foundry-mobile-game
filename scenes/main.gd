@@ -195,10 +195,7 @@ const TECHNICIAN_SCALE: float = 0.032
 const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 
 @onready var camera: Camera2D = $Camera2D
-@onready var currency_label: Label = $HUD/CurrencyLabel
-@onready var gems_label: Label = $HUD/GemsLabel
-@onready var reputation_label: Label = $HUD/ReputationLabel
-@onready var factory_level_label: Label = $HUD/FactoryLevelLabel
+@onready var hud: Hud = $HUD
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
 @onready var station_detail_menu: StationDetailMenu = $StationDetailMenu
 @onready var overview_overlay: OverviewOverlay = $OverviewOverlay
@@ -286,27 +283,6 @@ func _ready() -> void:
 	# already run - otherwise it would overwrite the values just loaded.
 	_finish_save_boot.call_deferred()
 
-	GameData.currency_changed.connect(_on_currency_changed)
-	_on_currency_changed(GameData.currency)
-	# Second "harder to get" currency (this session, design request: "there
-	# will be an additional type of currency like the diamond").
-	GameData.gems_changed.connect(_on_gems_changed)
-	_on_gems_changed(GameData.gems)
-	GameData.reputation_changed.connect(_on_reputation_changed)
-	_on_reputation_changed(GameData.reputation)
-	# Design request (this session): "i want to be able to see my factory
-	# level, currency, and reputation" - factory_progress_changed already
-	# existed for the Printers overlay's own EXP readout (see GameData), this
-	# just gives the floor HUD a listener too.
-	GameData.factory_progress_changed.connect(func(): _on_factory_progress_changed())
-	_on_factory_progress_changed()
-
-	# See ThemeManager's own header comment: the HUD labels are direct
-	# CanvasLayer children too, so they need their own .theme set directly -
-	# Window.theme alone never reaches them.
-	ThemeManager.theme_changed.connect(func(_choice): _apply_hud_theme())
-	_apply_hud_theme()
-
 	# Bug fix (originally this session's split of one bundled Menu/Shop panel
 	# into individual per-category overlays, later generalized): "the shop
 	# button is over different menu screens" / "when i select a station the
@@ -326,6 +302,18 @@ func _ready() -> void:
 	]
 	for overlay in _overlays:
 		overlay.opened.connect(_on_overlay_opened.bind(overlay))
+
+	# Rail order, top to bottom. All six menus keep a button for now - the
+	# rail is due to be consolidated once the menus are redefined (design doc
+	# Section 27.3/27.5: Printers -> Upgrades, Transfer folded into Dashboard).
+	hud.bind([
+		[contracts_overlay, "Contracts", "contracts"],
+		[dashboard_overlay, "Dashboard", "dashboard"],
+		[overview_overlay, "Overview", "overview"],
+		[staff_overlay, "Staff", "staff"],
+		[awaiting_transfer_overlay, "Transfer", "transfer"],
+		[printers_overlay, "Printers", "printers"],
+	], settings_overlay, station_detail_menu)
 
 
 func _on_overlay_opened(opened_overlay: Node) -> void:
@@ -421,37 +409,6 @@ func _place_and_maybe_show_label(label: Label, screen_pos: Vector2, accepted_rec
 			return
 	label.visible = true
 	accepted_rects.append(rect)
-
-
-func _on_currency_changed(new_amount: int) -> void:
-	currency_label.text = "Currency: %dg" % new_amount
-	# Wage debt (GameData.level_up_factory() can push currency negative when
-	# payroll can't be covered) needs a visible signal beyond the number
-	# itself going negative - easy to miss at a glance otherwise.
-	if new_amount < 0:
-		currency_label.add_theme_color_override("font_color", Color(0.85, 0.2, 0.2))
-	else:
-		currency_label.remove_theme_color_override("font_color")
-
-
-func _on_gems_changed(new_amount: int) -> void:
-	gems_label.text = "Gems: %d" % new_amount
-
-
-func _on_reputation_changed(new_amount: int) -> void:
-	reputation_label.text = "Reputation: %d" % new_amount
-
-
-func _on_factory_progress_changed() -> void:
-	factory_level_label.text = "Factory Level: %d" % GameData.factory_level
-
-
-func _apply_hud_theme() -> void:
-	var theme: Theme = ThemeManager.get_current_theme_resource()
-	currency_label.theme = theme
-	gems_label.theme = theme
-	reputation_label.theme = theme
-	factory_level_label.theme = theme
 
 
 func _build_floor() -> void:

@@ -1,26 +1,21 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://copkiltkgp0oc"]
 
-[ext_resource type="Script" path="res://scenes/printers_overlay.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://ctf0bnssdi2dh" path="res://scenes/printers_overlay.gd" id="1_script"]
 
-[node name="PrintersOverlay" type="CanvasLayer"]
+[node name="PrintersOverlay" type="CanvasLayer" unique_id=1087785456]
 script = ExtResource("1_script")
 
-[node name="ToggleButton" type="Button" parent="."]
-unique_name_in_owner = true
-offset_left = 270.0
-offset_top = 30.0
-offset_right = 365.0
-offset_bottom = 50.0
-text = "Printers"
-
-[node name="Backdrop" type="Control" parent="."]
+[node name="Backdrop" type="Control" parent="." unique_id=99750478]
 unique_name_in_owner = true
 visible = false
+layout_mode = 3
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 0
+grow_horizontal = 2
+grow_vertical = 2
 
-[node name="Panel" type="Panel" parent="."]
+[node name="Panel" type="Panel" parent="." unique_id=1132368800]
 unique_name_in_owner = true
 visible = false
 offset_left = 15.0
@@ -28,46 +23,49 @@ offset_top = 54.0
 offset_right = 465.0
 offset_bottom = 258.0
 
-[node name="Content" type="VBoxContainer" parent="Panel"]
+[node name="Content" type="VBoxContainer" parent="Panel" unique_id=1564041737]
 layout_mode = 1
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
 
-[node name="PrinterHeader" type="Label" parent="Panel/Content"]
-autowrap_mode = 3
+[node name="PrinterHeader" type="Label" parent="Panel/Content" unique_id=1179964186]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
 theme_override_font_sizes/font_size = 18
 text = "Printers"
-
-[node name="PrinterStatusLabel" type="Label" parent="Panel/Content"]
 autowrap_mode = 3
+
+[node name="PrinterStatusLabel" type="Label" parent="Panel/Content" unique_id=884675430]
 unique_name_in_owner = true
 layout_mode = 2
 text = "0/0 printers owned"
-
-[node name="FactoryExpLabel" type="Label" parent="Panel/Content"]
 autowrap_mode = 3
+
+[node name="FactoryExpLabel" type="Label" parent="Panel/Content" unique_id=1661241719]
 unique_name_in_owner = true
 layout_mode = 2
 text = "0/0 EXP to Factory Level 2"
+autowrap_mode = 3
 
-[node name="LevelUpButton" type="Button" parent="Panel/Content"]
+[node name="LevelUpButton" type="Button" parent="Panel/Content" unique_id=1001671444]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Level Up"
 
-[node name="ProcessSpeedLabel" type="Label" parent="Panel/Content"]
-autowrap_mode = 3
+[node name="ProcessSpeedLabel" type="Label" parent="Panel/Content" unique_id=1439520436]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Process speed: +0% (Factory Level 1)"
+autowrap_mode = 3
 
-[node name="BuyPrinterButton" type="Button" parent="Panel/Content"]
+[node name="BuyPrinterButton" type="Button" parent="Panel/Content" unique_id=447752218]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Buy Printer"

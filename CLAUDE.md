@@ -155,9 +155,9 @@ general form of this lesson.
   16:9 gets a wider viewport (585x270 on a 19.5:9 iPhone) instead of black
   bars, so **never hardcode 480x270 in code**: `main.gd._view_size()` reads
   `get_viewport_rect().size` for camera clamping, zoom anchoring and label
-  culling. Overlays/HUD are still positioned for 480 wide and sit left-aligned
-  with extra floor visible to their right. Only export preset is `Xogot`
-  (iPhone remote deploy); no orientation lock.
+  culling, and `Hud._layout()` positions all HUD/menu chrome from it (see
+  HUD below). `window/handheld/orientation=4` (sensor landscape). Only
+  export preset is `Xogot` (iPhone remote deploy).
 
 **Timescale - one constant drives every duration in the game**
 - `GameData.SECONDS_PER_GAME_MINUTE = 2.0` (a 1/30 compression of real time).
@@ -700,10 +700,11 @@ general form of this lesson.
   freeze-while-open guard, via each overlay's `close()` wrapper).
 - Only one of the 6 overlays (+ this popup) is ever open at once - each
   emits an `opened()` signal, and `main.gd` cross-wires them all to close
-  each other. Every overlay `Panel`'s `offset_top` is set clear of the
-  fixed two-row HUD button strip; this file's own `CanvasLayer` is
-  `layer = 2` (others default to `layer = 1`) so its panels draw above the
-  persistent toggle buttons when needed.
+  each other. This file's `CanvasLayer` is `layer = 3`, above the Hud
+  (layer 2) - it's modal over everything, and the Hud hides its rail while
+  this panel is open (its two panels need ~464px, more than the slot left
+  of the rail). `Hud._layout()` positions `panel`/`rack_panel` below the top
+  bar, inset by the safe area; their widths (292/168) are unchanged.
 - Insert Part From Inventory uses real Part#/Contract/Familiarity/Defect
   columns, defective sorted first.
 - **Layout stability**: the Technician status section sits last (after
@@ -950,18 +951,42 @@ general form of this lesson.
 
 **Overview / Awaiting Transfer / Contracts overlays - entry-point split**
 (Section 6)
-- Three separate always-visible HUD toggle buttons (Overview/Transfer/
-  Contracts), each its own `Panel`, no tabs/bundling - split out of what was
-  originally one `Menu` button's `TabContainer`. `MenuOverlay` itself is
-  deleted (not deprecated-in-place).
+- Three separate overlays (Overview/Transfer/Contracts), each its own
+  `Panel`, no tabs/bundling - split out of what was originally one `Menu`
+  button's `TabContainer`. `MenuOverlay` itself is deleted.
 - **`OverlayBase`** (`scenes/overlay_base.gd`) is the shared open/close/
-  backdrop/toggle-button chrome (`opened()` signal, `close()`, `_set_open()`,
-  `_click_in_progress()`) used by all 6 toggleable overlays (this trio +
-  Staff, Printers, Dashboard). `StationDetailMenu` keeps its own near-
-  identical copy since it opens via `open_for(station)` from a floor tap,
-  not a persistent toggle button.
-- HUD is two button rows (still 480x270): row 1 = Overview/Transfer/
-  Contracts, row 2 = Staff/Printers/Dashboard. `main.gd` cross-wires
+  backdrop chrome (`opened()` signal, `toggle()`, `close()`, `_set_open()`,
+  `set_panel_rect()`, `_click_in_progress()`) used by all 7 rail/gear
+  overlays. Overlays have **no toggle button of their own** any more - the
+  Hud creates one, assigns `rail_button` (whose pressed state `_set_open()`
+  mirrors) and places `%Panel` into the shared slot. `StationDetailMenu`
+  keeps its own near-identical copy since it opens via `open_for(station)`
+  from a floor tap.
+- **HUD** (`scenes/hud.gd`, class `Hud`, the `HUD` CanvasLayer in
+  `main.tscn`, layer 2; design doc Section 27.2): a top resource bar
+  (Gold/Gems/Reputation/Factory Lv, each with an icon, plus a Settings gear
+  at its right end) and a right-edge rail of icon-over-label tiles, top to
+  bottom Contracts/Dashboard/Overview/Staff/Transfer/Printers (order set in
+  `main.gd`'s `hud.bind()` call). Every menu opens into one panel slot left
+  of the rail (max `PANEL_MAX_WIDTH` 400px). All positions come from
+  `_layout()` (live viewport size + `DisplayServer.get_display_safe_area()`
+  on mobile, re-run on `size_changed`) - nothing is a fixed offset in a
+  `.tscn`. Layer 2 sits above every overlay's Backdrop, so rail taps switch
+  menus directly instead of first closing the open one. Bar/rail reuse the
+  current Theme's StyleBoxes with thinner borders/margins, overriding
+  **every** Button state incl. `hover_pressed` and the `*_mirrored` ones
+  (an undefined state falls back to Godot's roomier default and silently
+  sets the button's minimum size). Rail tiles are a plain Button with a
+  VBox(icon, Label) child, not `Button.icon` with
+  `vertical_icon_alignment = TOP` - that mode reserves an extra text line
+  (45px tiles, six overflowed a 270px screen). Stats are polled each frame
+  (a save load doesn't emit their signals); gold turns red in wage debt.
+  Desktop testing: run with `-- --simulate-iphone-safe-area` to fake a 16
+  Pro's landscape insets (40/0/40/14 logical px). Icons are placeholders
+  from `scenes/ui_icons.gd` (`UiIcons.get_icon(name)`, 16x16 ASCII grids
+  drawn at runtime) until real icon art exists. **The six-tile rail is a
+  stopgap** - consolidate once menus are redefined (Section 27.5).
+- `main.gd` cross-wires
   exclusivity generically over a single `_overlays: Array` (all 6
   `OverlayBase` subclasses + `StationDetailMenu`, duck-typed) rather than
   hand-written pairwise close calls.
@@ -1051,8 +1076,8 @@ general form of this lesson.
   Debt already organically blocks every other purchase for free
   (`can_afford`/`can_afford_with_gems` both compare against `currency`, so a
   bigger shortfall just demands more Gems). `GameData.is_in_wage_debt()`
-  (`currency < 0`) drives two visible cues: the HUD `CurrencyLabel`
-  (`main.gd`) and the Staff overlay's `PayrollLabel` both turn red.
+  (`currency < 0`) drives two visible cues: the Hud's gold label and the
+  Staff overlay's `PayrollLabel` both turn red.
   `PayrollLabel` (`%PayrollLabel` in `staff_overlay.tscn`, between the
   Roster header and list) previews total standing payroll ("paid out
   whenever you level up the factory"); each roster row's header also shows
@@ -1081,7 +1106,7 @@ general form of this lesson.
 
 **Printers overlay - entry-point split** (`scenes/printers_overlay.gd` +
 `.tscn`, extends `OverlayBase`, Section 6)
-- Standalone HUD button (row 2). No tabs/roster - just
+- Its own rail tile. No tabs/roster - just
   `printer_cap()`/`owned_printer_count`/`factory_level` status text, a Buy
   button (`can_buy_printer()`/`printer_purchase_cost()`/`buy_printer()`),
   and a Factory EXP progress row (`"<exp>/<needed> EXP to Factory Level
@@ -1106,9 +1131,9 @@ autoload)
 - First real occupant of design doc Section 19's planned Settings Menu -
   scoped to just one option (switch the UI's visual theme) rather than the
   full audio/text-size/haptics/etc. list Section 19 describes; establishes
-  the entry point/pattern later settings would slot into. Its own HUD toggle
-  button sits in the bottom-left corner (below the currency stack, clear of
-  the two main button rows) rather than taking a 7th slot in either row.
+  the entry point/pattern later settings would slot into. Opened from the
+  gear button at the right end of the Hud's top bar, into the same panel
+  slot as every rail menu.
 - `ThemeManager` (autoload, not GameData) holds `current_theme: ThemeChoice`
   (`DARK`/`PARCHMENT`), persisted to its own `user://settings.cfg` - still
   deliberately separate from `SaveManager`'s `user://savegame.json` now that a
@@ -1138,7 +1163,7 @@ autoload)
   sets `.theme` directly on one Control, which correctly re-themes its whole
   Control-descendant subtree regardless of the CanvasLayer above it; every
   `OverlayBase` subclass, `StationDetailMenu` (its `panel` and `rack_panel`),
-  and `main.gd`'s four HUD labels all call this once at `_ready()` and again
+  and the Hud's bar and rail all call this once at `_ready()` and again
   on every `theme_changed`. `ThemeManager._apply_theme()` still also sets
   `get_tree().root.theme` as a harmless default for any future Control that
   genuinely is a Control-ancestor descendant of the root.
@@ -1221,10 +1246,8 @@ autoload)
   `MAX_ZOOM_SPRITE_SCALE` (0.75x) approaching `MAX_ZOOM`;
   `get_click_rect()` reads the sprite's live scale so click targets shrink
   in step.
-- HUD (`CanvasLayer`, top-left): `CurrencyLabel`, `GemsLabel`,
-  `ReputationLabel`, `FactoryLevelLabel`, stacked, each reactive off its own
-  signal (`currency_changed`/`gems_changed`/(reputation has no dedicated
-  signal, polled)/`factory_progress_changed`).
+- HUD: see the Hud bullet under the Overview/Transfer/Contracts overlays
+  section below.
 
 **Dashboard overlay** (`scenes/dashboard_overlay.gd` + `.tscn`)
 - An alternate, additive UI lens inspired by Game Dev Tycoon's layout -
@@ -1232,7 +1255,7 @@ autoload)
   world" specifically, not a full clone (the multi-room floor, free camera,
   and physical technician movement are all untouched and still the primary
   way to play). One overlay among the other 5, same `_overlays` mutual-
-  exclusivity wiring, its own HUD button at the end of row 2.
+  exclusivity wiring, its own rail tile.
 - **Stations tab**: every real station, grouped by room, each row with a
   big always-visible `ProgressBar` (tinted white/yellow/green for idle/
   running/ready, reusing `Station._apply_state_tint()`'s exact colors) plus
@@ -1274,8 +1297,11 @@ autoload)
   resource bar, right-edge icon rail, floating side panel, safe-area insets;
   Overview becomes factory statistics (yield/throughput - not tracked anywhere
   yet, needs a stats collector), Printers becomes an Upgrades screen,
-  Dashboard absorbs manual part moves. Overlays/HUD are still pinned to the
-  left 480px until the HUD shell lands.
+  Dashboard absorbs manual part moves. **Step 1 (HUD shell) is built** - see
+  the Hud bullet. Still to do: the Contracts row restyle (27.2), the menu
+  redefinition + stats collector (27.3/27.4), consolidating the six-tile
+  rail, and real icon art. The menu panels' own contents are unchanged and
+  still the user's main visual complaint.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,
   and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).
   No tutorial code of any kind exists.

@@ -1151,7 +1151,15 @@ The current seven overlays grew one at a time and overlap. Direction given:
 
 1. HUD shell first: top resource bar, right-edge rail, floating panel slot,
    safe-area insets, edge anchoring. Existing menus move into the panel slot
-   with their current contents.
+   with their current contents. **All six menus keep a rail button for now**
+   (Contracts, Dashboard, Overview, Staff, Transfer, Printers) with Settings as
+   a gear on the top bar, rail icons are code-drawn placeholders. **Must come
+   back to this:** once 27.3 lands, consolidate the rail (Printers -> Upgrades,
+   Transfer folded into Dashboard, Overview -> statistics) - six buttons is a
+   stopgap, not the design.
+   **Built 2026-10-03** (`scenes/hud.gd`): bar, rail, shared panel slot,
+   safe-area insets, landscape orientation lock. The menus' own contents are
+   untouched.
 2. Contracts row restyle (27.2).
 3. Menu redefinition (27.3), starting with the stats collector (27.4) since
    Overview and Upgrades both depend on it.

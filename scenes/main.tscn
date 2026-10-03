@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/staff_overlay.tscn" id="9_staff_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/printers_overlay.tscn" id="10_printers_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/settings_overlay.tscn" id="11_settings_overlay"]
+[ext_resource type="Script" path="res://scenes/hud.gd" id="12_hud"]
 
 [node name="Main" type="Node2D" unique_id=1774776552]
 script = ExtResource("1_script")
@@ -16,34 +17,7 @@ script = ExtResource("1_script")
 [node name="Camera2D" type="Camera2D" parent="." unique_id=1406116151]
 
 [node name="HUD" type="CanvasLayer" parent="."]
-
-[node name="CurrencyLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 6.0
-offset_right = 160.0
-offset_bottom = 26.0
-text = "Currency: 500g"
-
-[node name="GemsLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 26.0
-offset_right = 160.0
-offset_bottom = 46.0
-text = "Gems: 0"
-
-[node name="ReputationLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 46.0
-offset_right = 160.0
-offset_bottom = 66.0
-text = "Reputation: 0"
-
-[node name="FactoryLevelLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 66.0
-offset_right = 160.0
-offset_bottom = 86.0
-text = "Factory Level: 1"
+script = ExtResource("12_hud")
 
 [node name="FloorLabels" type="CanvasLayer" parent="."]
 
