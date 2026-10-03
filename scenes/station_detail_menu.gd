@@ -90,6 +90,8 @@ func _ready() -> void:
 	backdrop.visible = false
 	rack_panel.visible = false
 	close_button.pressed.connect(_on_close_pressed)
+	# Drags that start on a button inside the popup's scroll must still scroll it.
+	TouchScroll.watch(panel)
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
 	queue_button.pressed.connect(_on_queue_pressed)
 	collect_button.pressed.connect(_on_collect_pressed)

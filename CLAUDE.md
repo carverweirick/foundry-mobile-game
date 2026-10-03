@@ -818,6 +818,14 @@ general form of this lesson.
   so a drag starting on a row reaches `OffersScroll`, and a release only
   expands/collapses if the finger moved < `ROW_TAP_MOVE_THRESHOLD` (24px).
   Any future tap-to-expand row inside a ScrollContainer needs the same pair.
+- **Drags starting on a button scroll the list** (`scenes/touch_scroll.gd`,
+  `TouchScroll.watch(panel)`, called by `OverlayBase._ready()` and the
+  Station Detail Menu): every `BaseButton` inside a `ScrollContainer` - now
+  and added later, via `SceneTree.node_added` - gets `MOUSE_FILTER_PASS`, and
+  so does every STOP control between it and the ScrollContainer (a row's
+  `PanelContainer` box stops the press just as well as the button would).
+  A plain tap still presses the button; a drag doesn't. Any new menu built
+  on `OverlayBase` gets this automatically.
 - **Contract Offers screen** (design doc Section 24.1/24.9). `GameData.contract_offers` is a
   pool of rolled-but-unaccepted contracts, separate from `contracts` (the
   active/working list); an offer's deadline doesn't start until
