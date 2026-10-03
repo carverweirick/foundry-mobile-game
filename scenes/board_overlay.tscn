@@ -1,8 +1,8 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scenes/dashboard_overlay.gd" id="1_script"]
+[ext_resource type="Script" path="res://scenes/board_overlay.gd" id="1_script"]
 
-[node name="DashboardOverlay" type="CanvasLayer"]
+[node name="BoardOverlay" type="CanvasLayer"]
 script = ExtResource("1_script")
 
 [node name="Backdrop" type="Control" parent="."]
@@ -15,12 +15,11 @@ mouse_filter = 0
 [node name="Panel" type="Panel" parent="."]
 unique_name_in_owner = true
 visible = false
-offset_left = 15.0
-offset_top = 54.0
-offset_right = 465.0
-offset_bottom = 258.0
+offset_right = 400.0
+offset_bottom = 220.0
 
 [node name="TabContainer" type="TabContainer" parent="Panel"]
+unique_name_in_owner = true
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -43,17 +42,29 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="Contracts" type="Control" parent="Panel/TabContainer"]
+[node name="Transfer" type="Control" parent="Panel/TabContainer"]
 visible = false
 layout_mode = 2
 
-[node name="ContractsScroll" type="ScrollContainer" parent="Panel/TabContainer/Contracts"]
+[node name="TransferRoot" type="VBoxContainer" parent="Panel/TabContainer/Transfer"]
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
+
+[node name="TransferFilterRow" type="HBoxContainer" parent="Panel/TabContainer/Transfer/TransferRoot"]
+layout_mode = 2
+
+[node name="TransferDefectsOnlyCheck" type="CheckBox" parent="Panel/TabContainer/Transfer/TransferRoot/TransferFilterRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Defects only"
+
+[node name="TransferScroll" type="ScrollContainer" parent="Panel/TabContainer/Transfer/TransferRoot"]
+layout_mode = 2
+size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="ContractsList" type="VBoxContainer" parent="Panel/TabContainer/Contracts/ContractsScroll"]
+[node name="TransferList" type="VBoxContainer" parent="Panel/TabContainer/Transfer/TransferRoot/TransferScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3

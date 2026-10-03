@@ -692,7 +692,7 @@ general form of this lesson.
   refreshing synchronously, so a click finishes processing before any
   rebuild - avoids Godot's input-handling glitches from freeing a Control
   mid-click.
-- While this popup, the Staff/Printers/Overview/Transfer/Contracts/Dashboard
+- While this popup, the Team/Printers/Overview/Board/Contracts/Settings
   overlays are open, `main.gd` freezes background camera pan/zoom/click
   (`_unhandled_input` early-returns) so a scroll gesture inside a popup list
   doesn't fall through to the floor. All overlays close on outside-click
@@ -949,11 +949,11 @@ general form of this lesson.
   A miss destroys the part outright (never flagged, never reaches Ship)
   rather than just flagging it.
 
-**Overview / Awaiting Transfer / Contracts overlays - entry-point split**
-(Section 6)
-- Three separate overlays (Overview/Transfer/Contracts), each its own
-  `Panel`, no tabs/bundling - split out of what was originally one `Menu`
-  button's `TabContainer`. `MenuOverlay` itself is deleted.
+**Overview / Board / Contracts overlays** (Section 6, consolidated per
+design doc 27.7)
+- Overview and Contracts are separate overlays, each its own `Panel`.
+  `MenuOverlay`, `DashboardOverlay` and `AwaitingTransferOverlay` are
+  deleted - Dashboard + Transfer became the Board (below).
 - **`OverlayBase`** (`scenes/overlay_base.gd`) is the shared open/close/
   backdrop chrome (`opened()` signal, `toggle()`, `close()`, `_set_open()`,
   `set_panel_rect()`, `_click_in_progress()`) used by all 7 rail/gear
@@ -966,7 +966,7 @@ general form of this lesson.
   `main.tscn`, layer 2; design doc Section 27.2): a top resource bar
   (Gold/Gems/Reputation/Factory Lv, each with an icon, plus a Settings gear
   at its right end) and a right-edge rail of icon-over-label tiles, top to
-  bottom Contracts/Dashboard/Overview/Staff/Transfer/Printers (order set in
+  bottom Contracts/Board/Team/Overview/Printers (order set in
   `main.gd`'s `hud.bind()` call). Every menu opens into one panel slot left
   of the rail (max `PANEL_MAX_WIDTH` 400px). All positions come from
   `_layout()` (live viewport size + safe-area insets, re-run on
@@ -1024,11 +1024,19 @@ general form of this lesson.
   (`GameData.StationDef.room_name`, `all_real_station_ids()` already visits
   room-by-room). Persistent `Label`s reordered in place via `move_child()`
   each refresh, never destroyed/rebuilt.
-- **Awaiting Transfer**: grouped by associated contract (subheader per
-  contract with held Parts), a "Defects only" filter checkbox, real columns
-  per Part (Part# / Familiarity / Defect / "Send to `<next station>`"
-  button). Defective sorts first within each group. Full rebuild each
-  refresh (guarded by `_click_in_progress()`) since this list churns often.
+- **Board** (`scenes/board_overlay.gd`, class `BoardOverlay`, rail tile
+  "Board"): two tabs. **Stations** - every station grouped by room; each
+  row is the station name as a flat button (emits `station_requested` ->
+  `main._focus_station(station, true)`: close menus, pan/zoom, pulse, open
+  its Station Detail Menu), ONE action button with the most urgent verb
+  (`_primary_action()`: Fix > Collect > Queue > Upgrade; Fix opens the
+  station since fixes live in its popup; Upgrade only when affordable), a
+  two-line-floored status label, and an 8px state-colored bar.
+  **Transfer** - the old Awaiting Transfer list unchanged: grouped by
+  contract, "Defects only" filter, Part#/Familiarity/Defect/"Send to
+  `<next station>`" per Part, defective first, full rebuild each refresh
+  (guarded by `_click_in_progress()`); tab title shows the held count.
+  `open_transfer_tab()` is the Attention button's target for stranded parts.
 - **Contracts**: persistent per-contract rows (Customer / Progress+in-
   pipeline / Time-left), added/removed as contracts start/complete.
 - "Type of part" isn't its own filter axis yet - contract grouping is the
@@ -1279,35 +1287,11 @@ autoload)
 - HUD: see the Hud bullet under the Overview/Transfer/Contracts overlays
   section below.
 
-**Dashboard overlay** (`scenes/dashboard_overlay.gd` + `.tscn`)
-- An alternate, additive UI lens inspired by Game Dev Tycoon's layout -
-  "Stat/progress-bar dashboard" + "menu-driven interaction over clicking the
-  world" specifically, not a full clone (the multi-room floor, free camera,
-  and physical technician movement are all untouched and still the primary
-  way to play). One overlay among the other 5, same `_overlays` mutual-
-  exclusivity wiring, its own rail tile.
-- **Stations tab**: every real station, grouped by room, each row with a
-  big always-visible `ProgressBar` (tinted white/yellow/green for idle/
-  running/ready, reusing `Station._apply_state_tint()`'s exact colors) plus
-  inline Queue/Collect/Upgrade buttons calling the same public Station API
-  every other overlay uses. Persistent-widget rows, same jump-prevention
-  pattern as the Overview tab/Shop roster. Progress fraction is computed
-  externally from `Station.timer_bar`'s public `value`/`max_value` (no new
-  getter needed on `station.gd`), branching on `is_parallel_shelling()` to
-  read the soonest-run bar in that mode.
-- **Contracts tab**: same big-`ProgressBar` treatment for contract
-  fulfillment (0 to `quantity_required`, filled to `quantity_shipped`)
-  alongside customer/tier/time-left/in-pipeline text.
-- **Explicitly out of scope for this first pass**: defect fix buttons, Push
-  Through, batch size, the visual queue rack, Insert-from-Inventory - all
-  still only reachable via the Station Detail Menu (tapping a station on
-  the floor), which stays the fallback for anything Dashboard doesn't
-  cover.
-- Global class registration note: `class_name Dashboard` (or any new script
-  `class_name`) doesn't take effect for other scripts' static typing until
-  Godot's `global_script_class_cache.cfg` regenerates - a plain
-  `--headless --quit-after N` run doesn't trigger that, `--headless
-  --editor --quit` does.
+- Global class registration note: a new or renamed `class_name` doesn't
+  take effect for other scripts' static typing until Godot's
+  `global_script_class_cache.cfg` regenerates - a plain `--headless
+  --quit-after N` run doesn't trigger that, `--headless --editor --quit`
+  does.
 
 **Art assets on disk**
 - `print_room_floor_tileset.png` sliced into 25 individual tiles plus a
@@ -1334,11 +1318,12 @@ autoload)
   resource bar, right-edge icon rail, floating side panel, safe-area insets;
   Overview becomes factory statistics (yield/throughput - not tracked anywhere
   yet, needs a stats collector), Printers becomes an Upgrades screen,
-  Dashboard absorbs manual part moves. **Built:** the HUD shell and the
-  Attention button (see the Hud bullets). **Decided next (27.7):** rail
-  consolidated to Board / Contracts / Team / Factory (Factory = 27.3
-  statistics + upgrades + printers + level-up, needs a stats collector),
-  then floor status badges. Option A's other ideas are tabled for a future
+  Dashboard absorbs manual part moves. **Built:** the HUD shell, the
+  Attention button, and the Board (Dashboard + Transfer merged; Staff's rail
+  tile renamed Team). **Next (27.7):** merge Overview + Printers into
+  Factory (27.3 statistics + upgrades + printers + level-up - needs a stats
+  collector first), leaving the rail at Contracts/Board/Team/Factory; then
+  floor status badges. Option A's other ideas are tabled for a future
   update (27.7). Real icon art still to do. The menu panels' own contents are unchanged and
   still the user's main visual complaint.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,

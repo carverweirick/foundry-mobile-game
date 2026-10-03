@@ -200,11 +200,10 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
 @onready var station_detail_menu: StationDetailMenu = $StationDetailMenu
 @onready var overview_overlay: OverviewOverlay = $OverviewOverlay
-@onready var awaiting_transfer_overlay: AwaitingTransferOverlay = $AwaitingTransferOverlay
 @onready var contracts_overlay: ContractsOverlay = $ContractsOverlay
 @onready var staff_overlay: StaffOverlay = $StaffOverlay
 @onready var printers_overlay: PrintersOverlay = $PrintersOverlay
-@onready var dashboard_overlay: Dashboard = $DashboardOverlay
+@onready var board_overlay: BoardOverlay = $BoardOverlay
 @onready var settings_overlay: SettingsOverlay = $SettingsOverlay
 
 ## Every top-level overlay panel that should ever be mutually exclusive with
@@ -272,9 +271,8 @@ func _ready() -> void:
 	_setup_camera()
 
 	overview_overlay.station_by_id = _stations_by_id
-	awaiting_transfer_overlay.station_by_id = _stations_by_id
 	staff_overlay.station_by_id = _stations_by_id
-	dashboard_overlay.station_by_id = _stations_by_id
+	board_overlay.station_by_id = _stations_by_id
 	GameData.station_by_id = _stations_by_id
 
 	# Step 2/3 of the boot sequence, now that every Station exists and
@@ -297,25 +295,25 @@ func _ready() -> void:
 	# is ever visible. Generic over _overlays rather than one hardcoded
 	# .connect() block per pair (see that array's own comment for why).
 	_overlays = [
-		overview_overlay, awaiting_transfer_overlay, contracts_overlay,
-		staff_overlay, printers_overlay, dashboard_overlay, settings_overlay,
+		overview_overlay, contracts_overlay,
+		staff_overlay, printers_overlay, board_overlay, settings_overlay,
 		station_detail_menu,
 	]
 	for overlay in _overlays:
 		overlay.opened.connect(_on_overlay_opened.bind(overlay))
 
-	# Rail order, top to bottom. All six menus keep a button for now - the
-	# rail is due to be consolidated once the menus are redefined (design doc
-	# Section 27.3/27.5: Printers -> Upgrades, Transfer folded into Dashboard).
+	# Rail order, top to bottom (design doc 27.7). Board already absorbs the
+	# old Dashboard + Transfer; Overview and Printers are still separate until
+	# they merge into Factory.
 	hud.bind([
 		[contracts_overlay, "Contracts", "contracts"],
-		[dashboard_overlay, "Dashboard", "dashboard"],
+		[board_overlay, "Board", "dashboard"],
+		[staff_overlay, "Team", "staff"],
 		[overview_overlay, "Overview", "overview"],
-		[staff_overlay, "Staff", "staff"],
-		[awaiting_transfer_overlay, "Transfer", "transfer"],
 		[printers_overlay, "Printers", "printers"],
 	], settings_overlay, station_detail_menu)
 	hud.attention_requested.connect(_on_attention_requested)
+	board_overlay.station_requested.connect(func(station): _focus_station(station, true))
 
 
 ## Attention button tap (design doc 27.6): pan to the station that needs the
@@ -327,15 +325,22 @@ func _on_attention_requested(item: Dictionary) -> void:
 		overlay.close()
 	match item.overlay:
 		"transfer":
-			awaiting_transfer_overlay.toggle()
+			board_overlay.open_transfer_tab()
 			return
 		"contracts":
 			contracts_overlay.toggle()
 			contracts_overlay.get_node("Panel/TabContainer").current_tab = 0 # Offers
 			return
-	var station: Station = item.station
-	if station == null:
-		return
+	if item.station != null:
+		_focus_station(item.station, false)
+
+
+## Pans (and if needed zooms) the camera to a station and pulses it; with
+## open_popup, also opens its Station Detail Menu - the Board's station-name
+## tap and its Fix action.
+func _focus_station(station: Station, open_popup: bool) -> void:
+	for overlay in _overlays:
+		overlay.close()
 	if camera.zoom.x < DEFAULT_ZOOM:
 		camera.zoom = Vector2(DEFAULT_ZOOM, DEFAULT_ZOOM)
 		_apply_sprite_zoom_scale()
@@ -343,6 +348,8 @@ func _on_attention_requested(item: Dictionary) -> void:
 	tween.tween_property(camera, "position", _clamp_camera_position(station.position), ATTENTION_PAN_SECONDS) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	AttentionPulse.spawn(station, station.get_sprite_rect().grow(4.0))
+	if open_popup:
+		station_detail_menu.open_for(station)
 
 
 func _on_overlay_opened(opened_overlay: Node) -> void:
