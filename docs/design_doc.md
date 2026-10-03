@@ -1044,9 +1044,12 @@ Two consequences worth recording, because both were near-misses:
 1. ~~Save/load~~ - **done**, see Section 18.
 2. ~~Offline catch-up~~ - **done**, capped and clock-guarded.
 3. ~~Commit to a real timescale~~ - **done**, see 26.3.
-4. **Android export and one real on-device session.** Landscape lock, thumb-reach
-   audit on the two-row HUD, and verification that the existing pinch-zoom code
-   behaves on actual glass. Nothing below this is worth tuning before it happens.
+4. ~~One real on-device session~~ - **done** (2026-10-03), on an iPhone 16 Pro
+   via Xogot remote deploy rather than Android. Text size at the 480x270 base
+   is fine; black side bars, zoomed-out label crowding, and drag-scrolling on
+   Contract Offers rows were found and fixed. Open finding: the menus need a
+   visual and feel rework. The MVP sentence's "Android phone" should read
+   "phone" - the build target in practice is iPhone.
 5. **Onboarding** - the founder handoff, the deliberately zero-risk first part,
    and the Traveler Card (Section 6) as the tutorial's spine.
 6. **Progressive unlock gating** - hide every overlay and system not reachable in

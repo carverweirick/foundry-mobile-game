@@ -23,10 +23,13 @@ punch list. Two consequences already landed and are reflected below: a real
 save/load + offline catch-up system, and a committed timescale
 (`GameData.SECONDS_PER_GAME_MINUTE = 2.0`, one part print-to-ship in ~10 real
 minutes) that makes this a real-time factory sim rather than the idle game
-design doc Sections 2/14 still describe. **Next up, and blocking everything
-else: an Android export and one real on-device session** - the only export
-preset is still `Xogot`, there's no orientation lock, and the two-row seven-
-button HUD has never been touched by a thumb at real DPI.
+design doc Sections 2/14 still describe. **The on-device session has
+happened**: the user plays on an iPhone 16 Pro via Xogot remote deploy (no
+Android device). Findings: 16px text at the 480x270 base reads well; menus
+are functional but need a visual/feel rework; there were black side bars
+(fixed, stretch aspect `expand`); zoomed out, one station label crowded out
+the rest (fixed, zone-only labels); drag-scrolling failed when it started on
+a Contract Offers row (fixed).
 
 **Current branch status (as of 2026-08-28):** `gdt-layout-experiment` was
 fast-forward merged into `main` and pushed - the GDT-inspired rework (dark
@@ -147,9 +150,14 @@ general form of this lesson.
 - `autoload/save_manager.gd` registered as `SaveManager` (see Save/load below).
 - `res://scenes/main.tscn` is the main scene.
 - `project.godot`: renderer is Vulkan (the D3D12 backend silently broke mouse
-  input on at least one dev machine); viewport is explicitly 480x270 with
-  `stretch/aspect="keep"`. **No `display/window/handheld/orientation` lock and
-  no Android/iOS export preset yet** - the only preset is `Xogot`.
+  input on at least one dev machine); base viewport 480x270,
+  `stretch/mode="viewport"`, `stretch/aspect="expand"` - a phone wider than
+  16:9 gets a wider viewport (585x270 on a 19.5:9 iPhone) instead of black
+  bars, so **never hardcode 480x270 in code**: `main.gd._view_size()` reads
+  `get_viewport_rect().size` for camera clamping, zoom anchoring and label
+  culling. Overlays/HUD are still positioned for 480 wide and sit left-aligned
+  with extra floor visible to their right. Only export preset is `Xogot`
+  (iPhone remote deploy); no orientation lock.
 
 **Timescale - one constant drives every duration in the game**
 - `GameData.SECONDS_PER_GAME_MINUTE = 2.0` (a 1/30 compression of real time).
@@ -309,8 +317,13 @@ general form of this lesson.
   blurry/unreadable at typical zoomed-out play. Visibility is decided by
   on-screen overlap suppression (`_place_and_maybe_show_label()`: rooms
   first, then stations in stable order, shown only if on-screen and not
-  colliding with an already-accepted rect) rather than a fixed zoom cutoff -
-  so a fully zoomed-out view still shows whichever labels fit. Station
+  colliding with an already-accepted rect). **Below `ZONE_LABEL_ZOOM` (0.7)
+  station labels are hidden entirely and each room's name is centered in its
+  room instead** - otherwise whichever station label claimed space first hid
+  all its neighbours. The floor status label uses
+  `Station._idle_status_text(true)` (compact: "Idle - no contracts" etc.);
+  the full sentences, up to 322px wide, stay in Overview/the detail menu.
+  Station
   labels are one combined two-line `"name\nstatus"` block, white text with a
   black outline (so they read over arbitrary floor content). The timer bar
   and its embedded countdown text are unchanged/still world-space,
@@ -777,6 +790,10 @@ general form of this lesson.
   `REPUTATION_QUALITY_BONUS_MAX` (0.35) scales every generated contract's
   quantity/payout up continuously (not just at tier thresholds) as
   Reputation climbs from 0 to `REPUTATION_MAX`.
+- **Offer rows scroll on touch**: `row.box` is `MOUSE_FILTER_PASS` (not STOP)
+  so a drag starting on a row reaches `OffersScroll`, and a release only
+  expands/collapses if the finger moved < `ROW_TAP_MOVE_THRESHOLD` (24px).
+  Any future tap-to-expand row inside a ScrollContainer needs the same pair.
 - **Contract Offers screen** (design doc Section 24.1/24.9). `GameData.contract_offers` is a
   pool of rolled-but-unaccepted contracts, separate from `contracts` (the
   active/working list); an offer's deadline doesn't start until
@@ -1252,11 +1269,10 @@ autoload)
 ## Not built yet
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
-- **Android export and one real on-device session** - the next thing to do, and
-  nothing below is worth tuning before it happens. Needs an Android export
-  preset (only `Xogot` exists), a landscape orientation lock in
-  `project.godot`, and a thumb-reach audit of the two-row seven-button HUD at
-  real DPI. The pinch-zoom code in `main.gd` is real but has never run on glass.
+- **UI visual/feel rework** - the user's main open complaint after playing on
+  device: menus work but don't look or play the way they want. Includes
+  re-laying out overlays/HUD for the variable-width viewport (they're still
+  pinned to the left 480px).
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,
   and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).
   No tutorial code of any kind exists.

@@ -32,6 +32,11 @@ class_name ContractsOverlay
 
 const REFRESH_INTERVAL: float = 0.25
 
+## A press/release on an offer row that moves less than this many screen
+## pixels is a tap (expand/collapse); more is a scroll drag and is ignored.
+## Same value as main.gd's CLICK_MOVE_THRESHOLD for floor taps.
+const ROW_TAP_MOVE_THRESHOLD: float = 24.0
+
 @onready var contracts_list: VBoxContainer = %ContractsList
 @onready var offers_root: VBoxContainer = %OffersRoot
 
@@ -142,6 +147,7 @@ class OfferRow:
 	var deadline_label: Label
 	var familiarity_label: Label
 	var offer: Contract = null
+	var press_position: Vector2 = Vector2.ZERO
 
 var _offer_rows: Dictionary = {} # contract_id -> OfferRow
 var _offers_empty_label: Label = null
@@ -243,10 +249,12 @@ func _create_offer_row() -> OfferRow:
 
 	row.box = PanelContainer.new()
 	row.box.add_theme_stylebox_override("panel", _row_box_style())
-	# The box itself is the click target now (no separate "View" button) -
-	# Control's default MOUSE_FILTER_STOP is exactly what's needed here so
-	# it actually receives gui_input rather than passing it through.
-	row.box.mouse_filter = Control.MOUSE_FILTER_STOP
+	# The box itself is the click target (no separate "View" button). PASS,
+	# not STOP: the box still gets gui_input, but the press also reaches the
+	# OffersScroll ScrollContainer, so a drag that starts on a row scrolls the
+	# list. STOP swallowed it - on a phone, scrolling only worked if the drag
+	# happened to start in the gaps between rows.
+	row.box.mouse_filter = Control.MOUSE_FILTER_PASS
 	row.box.gui_input.connect(_on_offer_row_gui_input.bind(row))
 
 	row.container = HBoxContainer.new()
@@ -295,7 +303,11 @@ func _update_offer_row(row: OfferRow, offer: Contract) -> void:
 
 
 func _on_offer_row_gui_input(event: InputEvent, row: OfferRow) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if event.pressed:
+		row.press_position = event.global_position
+	elif event.global_position.distance_to(row.press_position) < ROW_TAP_MOVE_THRESHOLD:
 		_on_offer_row_selected(row)
 
 

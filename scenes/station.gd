@@ -1480,7 +1480,7 @@ func _update_display() -> void:
 	match current_state:
 		State.IDLE:
 			_clear_timer_bar()
-			status_label.text = _idle_status_text()
+			status_label.text = _idle_status_text(true)
 		State.RUNNING:
 			status_label.text = "Running"
 		State.READY:
@@ -1527,17 +1527,21 @@ func _parallel_shelling_status_text() -> String:
 ## Shared by the floor's own status label (_update_display()) and
 ## get_overview_status() (Overview tab / Station Detail Menu) so both stay in
 ## sync rather than drifting into two different "Idle" messages.
-func _idle_status_text() -> String:
+## compact = the floor label's version: the full sentences run up to 322px
+## at 16px, wider than two-thirds of the screen, and a label that wide wins
+## the floor's overlap suppression and hides every station label near it.
+## The Overview tab and Station Detail Menu have the room for the full text.
+func _idle_status_text(compact: bool = false) -> String:
 	if not is_pipeline_entry:
 		return "Waiting for part"
 	if assigned_technicians.is_empty():
 		return "Idle"
 	if GameData.get_active_contracts().is_empty():
-		return "Idle - no active contracts (accept one from Contract Offers)"
+		return "Idle - no contracts" if compact else "Idle - no active contracts (accept one from Contract Offers)"
 	if not can_start_new_work():
-		return "Idle - blocked, clear the backlog first"
+		return "Idle - backlog" if compact else "Idle - blocked, clear the backlog first"
 	if GameData.next_contract_needing_parts() == null:
-		return "Idle - every contracted part already in production"
+		return "Idle - all in production" if compact else "Idle - every contracted part already in production"
 	return "Idle"
 
 

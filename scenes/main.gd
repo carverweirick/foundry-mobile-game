@@ -8,7 +8,11 @@ extends Node2D
 
 const StationScene: PackedScene = preload("res://scenes/station.tscn")
 
-const VIEWPORT_SIZE: Vector2 = Vector2(480.0, 270.0)
+## The visible viewport size, read live rather than hardcoded to the 480x270
+## base: project.godot's stretch aspect is "expand", so a phone wider than
+## 16:9 gets a wider viewport (more floor) instead of black side bars.
+func _view_size() -> Vector2:
+	return get_viewport_rect().size
 
 # Overall floor bounds, a little outside the outermost room edges so there's
 # breathing room at max zoom-out. Drives camera pan/zoom clamping.
@@ -38,8 +42,8 @@ const GRID_CELL_SIZE: float = 20.0
 ## briefly had the clamp math built on the opposite assumption, which is
 ## exactly what caused stations to be unreachable near one edge while
 ## zoomed in: half_view (how much world space is visible on each side of
-## the camera) is VIEWPORT_SIZE * 0.5 / zoom, not * zoom.
-## 0.25 is low enough that half_view (VIEWPORT_SIZE * 0.5 / zoom) exceeds half
+## the camera) is _view_size() * 0.5 / zoom, not * zoom.
+## 0.25 is low enough that half_view (_view_size() * 0.5 / zoom) exceeds half
 ## of FLOOR_MAX in both axes (1720x960 floor bounds below), so at max zoom-out
 ## the whole floor fits on screen at once and _clamp_camera_position() centers
 ## it automatically, rather than just showing "most of" it.
@@ -76,6 +80,13 @@ const MAX_ZOOM_SPRITE_SCALE: float = 0.75
 ## because the camera is zoomed way out) getting label text that would
 ## overlap. See _update_floor_labels() for how that's handled.
 const FLOOR_LABEL_OFFSET: Vector2 = Vector2(-20.0, 66.0) # matches station.tscn's NameLabel top-left, in station-local space
+
+## Below this camera zoom the floor shows zone names only, centered in each
+## room, and no station labels (player feedback: zoomed out, "only one station
+## overpowers the others" - overlap suppression keeps whichever label claims
+## the space first). Stations in a row sit 120 world-px apart and a typical
+## label is 85-115px wide, so below ~0.7x they can't fit side by side anyway.
+const ZONE_LABEL_ZOOM: float = 0.7
 
 # Room zones: rect (x, y, width, height), fill color, border color, label.
 # Colors loosely follow the Art Style section's room palettes.
@@ -237,6 +248,7 @@ var _pinch_last_distance: float = 0.0
 class RoomFloorLabel:
 	var label: Label
 	var world_position: Vector2
+	var room_rect: Rect2
 
 var _room_floor_labels: Array[RoomFloorLabel] = []
 
@@ -361,9 +373,18 @@ func _sync_technician_sprites() -> void:
 func _update_floor_labels() -> void:
 	var canvas_transform: Transform2D = get_viewport().get_canvas_transform()
 	var accepted_rects: Array[Rect2] = []
+	var zones_only: bool = camera.zoom.x < ZONE_LABEL_ZOOM
 
 	for entry: RoomFloorLabel in _room_floor_labels:
-		_place_and_maybe_show_label(entry.label, canvas_transform * entry.world_position, accepted_rects)
+		var screen_pos: Vector2 = canvas_transform * entry.world_position
+		if zones_only:
+			screen_pos = canvas_transform * entry.room_rect.get_center() - entry.label.get_minimum_size() * 0.5
+		_place_and_maybe_show_label(entry.label, screen_pos, accepted_rects)
+
+	if zones_only:
+		for label: Label in _station_floor_labels.values():
+			label.visible = false
+		return
 
 	for id: String in _stations_by_id.keys():
 		var station: Station = _stations_by_id[id]
@@ -388,8 +409,9 @@ func _update_floor_labels() -> void:
 func _place_and_maybe_show_label(label: Label, screen_pos: Vector2, accepted_rects: Array[Rect2]) -> void:
 	label.position = screen_pos
 	var rect := Rect2(screen_pos, label.get_minimum_size())
+	var view_size := _view_size()
 	var on_screen := rect.position.x + rect.size.x >= 0.0 and rect.position.y + rect.size.y >= 0.0 \
-		and rect.position.x <= VIEWPORT_SIZE.x and rect.position.y <= VIEWPORT_SIZE.y
+		and rect.position.x <= view_size.x and rect.position.y <= view_size.y
 	if not on_screen:
 		label.visible = false
 		return
@@ -455,6 +477,7 @@ func _build_floor() -> void:
 func _add_room_label(rect: Rect2, label_text: String) -> void:
 	var entry := RoomFloorLabel.new()
 	entry.world_position = rect.position + Vector2(10.0, 6.0)
+	entry.room_rect = rect
 	entry.label = _make_floor_label(label_text)
 	_room_floor_labels.append(entry)
 
@@ -776,7 +799,7 @@ func _apply_sprite_zoom_scale() -> void:
 func _clamp_camera_position(target: Vector2) -> Vector2:
 	# Divide, not multiply: higher zoom = more magnified = LESS world space
 	# visible on each side of the camera. See the MIN_ZOOM/MAX_ZOOM comment above.
-	var half_view := VIEWPORT_SIZE * 0.5 / camera.zoom
+	var half_view := _view_size() * 0.5 / camera.zoom
 	var result := target
 
 	if FLOOR_MAX.x - FLOOR_MIN.x <= half_view.x * 2.0:
@@ -956,7 +979,7 @@ func _zoom_camera(factor: float, anchor_screen_pos: Vector2) -> void:
 	if is_equal_approx(new_zoom, old_zoom):
 		return
 
-	var offset_from_center := anchor_screen_pos - VIEWPORT_SIZE * 0.5
+	var offset_from_center := anchor_screen_pos - _view_size() * 0.5
 	var world_before: Vector2 = camera.position + offset_from_center / old_zoom
 	var world_after: Vector2 = camera.position + offset_from_center / new_zoom
 
