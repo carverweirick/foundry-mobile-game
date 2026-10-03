@@ -1163,3 +1163,78 @@ The current seven overlays grew one at a time and overlap. Direction given:
 2. Contracts row restyle (27.2).
 3. Menu redefinition (27.3), starting with the stats collector (27.4) since
    Overview and Upgrades both depend on it.
+
+### 27.6 External menu-structure proposal (2026-10-03) - recorded, NOT yet adopted
+
+Response from an external AI to the "menu structure" prompt (the user's own
+direction in 27.3 still stands until a choice is made). Its framing: at 270px
+tall a rail fits ~5 comfortable targets; the floor already *is* an overview,
+so Overview and Dashboard are two list renderings of what the map shows; and
+Printers bundles two unrelated jobs (expansion vs. progression) and should
+split.
+
+**Option A - Floor-first, contextual (its recommendation).**
+- Floor is home; stations carry status badges (idle / done / defect). The
+  Overview screen goes away.
+- Rail of 3: Contracts, Stations, Team. Menus open as sheets over the floor.
+- **Stations** merges Overview + Dashboard: rows grouped by room, status chip,
+  progress bar, and **one** action button showing the most urgent verb
+  (Collect > Fix > Queue > Upgrade). Tapping a row name pans the camera there
+  and opens the popup.
+- **Transfer becomes a HUD tray** (bottom-left, with a count): tap a part,
+  valid destinations glow on the floor, tap one. Once technicians automate
+  routing the tray empties itself, which makes hiring feel rewarding.
+- **Attention button** (bottom-right, "!" + count): each tap pans to the next
+  station needing input - "this was the Dashboard's real job."
+- **Printers split**: buy new printers by tapping empty "+" bays on the floor;
+  Factory EXP becomes a level chip in the top HUD that opens the level panel
+  with the paid level-up.
+- Specialists offered contextually in the Defects tab ("Hire specialist to
+  fix: $X") and as a Team tab.
+- Station popup becomes a ~320px right-side sheet, collapses while routing;
+  its tabs unlock one at a time: Queue -> Defects -> Crew -> Upgrades.
+- Settings: gear, always visible.
+- Unlock order: scripted offer card on the floor -> accepting it adds
+  Contracts to the rail -> tap the glowing printer (popup shows only Queue)
+  -> Collect -> tray appears, route by tapping the glowing destination,
+  through a shortened route with unused rooms dark -> deliver, contract
+  completes, cash + XP chip = end of tutorial. Then by event: Attention
+  button (first time 2+ things need input), Defects tab (first defect),
+  Stations list (second room / ~6 stations), Team + Crew tab (factory level
+  2; routing strategy on second hire), expansion bays (first time cash
+  covers a printer), Upgrades tab (first affordable upgrade), Specialists +
+  paid level-up (first hard defect / first level wall).
+- Its stated costs: a crowded 585x270 floor needs good pan/zoom and very
+  legible badges (real UX + art work); spatial routing is slow in bulk (add
+  "route all to default" in the tray once Team unlocks); contextual features
+  are less discoverable, so badges carry a lot.
+
+**Option B - Consolidated Board (conservative).** Rail: Board, Contracts,
+Team, Factory + gear. Board = Overview + Dashboard + Transfer as tabs
+(Stations | Transfer) with room filter chips; Contracts = Active/Offers;
+Team = Roster/Hire/Specialists; Factory = Printers/Level. Least rework (mostly
+merging/relabeling), everything within 2 taps, scales to list-heavy late
+game - but players live in menus instead of on the floor, and Transfer as a
+list doesn't teach the process flow.
+
+**Option C - Order Pipeline (contract-centric).** Rail: Orders, Team,
+Factory. Each contract is a horizontal swimlane across process steps grouped
+by room; parts are chips in their current column, routed inline. Clearest
+"why", suits landscape, teaches the casting sequence - but station-level
+problems not tied to an order disappear, every lane shows the same
+bottleneck with 4+ contracts, and it's the most UI to build.
+
+**Its recommendation:** A, borrowing C's swimlane as the detail view when
+tapping a contract. **Three rules it says hold for any option:** unlock by
+event, not level, wherever possible (a menu appears the moment it's first
+needed, with a badge); hide locked items entirely during the tutorial, then
+show locked silhouettes ("Unlocks at Lv 3") as goals; one verb per row in
+any list.
+
+**Where it conflicts with the user's own 27.3 direction (to resolve):**
+27.3 keeps Overview, repurposed as factory statistics (cycle time, yield,
+throughput) feeding informed upgrades - Option A deletes Overview outright,
+and none of A/B/C has a statistics screen. 27.3's "Dashboard = status +
+manual part moves" lines up with A's Stations list + tray, or B's Board.
+Rail side: A says left; the built HUD rail is on the right by the user's
+choice (27.2), now with camera-side-aware insets.

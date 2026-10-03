@@ -1310,6 +1310,15 @@ autoload)
 
 ## Not built yet
 
+**Pending user verification (ask about these at the start of a session):**
+- **Camera-side HUD insets on the iPhone** (2026-10-03): with Settings ->
+  Camera cutout on Auto, does the rail move away from the Dynamic Island
+  when the phone is flipped? If not, get the `[Hud] gravity=...` log lines
+  from Xogot - the gravity sign convention in `Hud._detect_camera_side()`
+  is a guess.
+- **Menu structure decision**: design doc 27.6 records an external
+  proposal (Options A/B/C); the user hasn't picked one yet.
+
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - the user's main open complaint after playing on
   device. Direction is decided and recorded in **design doc Section 27**: top
