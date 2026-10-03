@@ -204,6 +204,7 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var factory_overlay: FactoryOverlay = $FactoryOverlay
 @onready var board_overlay: BoardOverlay = $BoardOverlay
 @onready var settings_overlay: SettingsOverlay = $SettingsOverlay
+@onready var admin_overlay: AdminOverlay = $AdminOverlay
 
 ## Every top-level overlay panel that should ever be mutually exclusive with
 ## every other one - populated in _ready() once all the @onready vars above
@@ -295,7 +296,7 @@ func _ready() -> void:
 	# .connect() block per pair (see that array's own comment for why).
 	_overlays = [
 		contracts_overlay, board_overlay, staff_overlay, factory_overlay,
-		settings_overlay,
+		settings_overlay, admin_overlay,
 		station_detail_menu,
 	]
 	for overlay in _overlays:
@@ -309,6 +310,7 @@ func _ready() -> void:
 		[staff_overlay, "Team", "staff"],
 		[factory_overlay, "Factory", "factory"],
 	], settings_overlay, station_detail_menu)
+	hud.bind_admin(admin_overlay)
 	hud.attention_requested.connect(_on_attention_requested)
 	board_overlay.station_requested.connect(func(station): _focus_station(station, true))
 

@@ -696,6 +696,15 @@ const CLICK_PADDING: float = 24.0
 ## below it, then padded. Computed fresh each call since it depends on
 ## whatever texture is currently assigned, not a fixed guess - see the
 ## LABEL_STACK_RECT comment.
+## Admin overlay: jump every in-progress run to its finish line so the next
+## simulate step completes it through the normal path.
+func debug_finish_run() -> void:
+	if current_state == State.RUNNING:
+		_run_elapsed = _run_duration
+	for run in shelling_active_parts:
+		run.elapsed = run.duration
+
+
 func get_click_rect() -> Rect2:
 	return get_sprite_rect().merge(LABEL_STACK_RECT).grow(CLICK_PADDING)
 
@@ -1400,6 +1409,12 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 	var base_risk := GameData.base_defect_risk_for(station_id)
 	if base_risk <= 0.0:
 		return GameData.DefectCategory.NONE
+	match GameData.debug_defect_mode:
+		GameData.DebugDefectMode.NONE:
+			return GameData.DefectCategory.NONE
+		GameData.DebugDefectMode.FORCE_NEXT:
+			GameData.debug_defect_mode = GameData.DebugDefectMode.NORMAL
+			return GameData.roll_defect_category(station_id)
 	var geometry_name := GameData.geometry_name_for_part(part)
 	var department := GameData.department_for_station(station_id)
 	# Department-mapped stations (Printing/Shelling/Pour/Grinding - Patching

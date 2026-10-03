@@ -1274,3 +1274,71 @@ contract swimlane as the contract detail view.
 
 **Later, separately** (user, 2026-10-03): event-driven unlocking and the
 tutorial - see 26.4 items 5-6 and 27.6's unlock order and three rules.
+
+---
+
+## 28. Defects, Engineers and Quality Rework (2026-10-03)
+
+*From the user's answers after the first device session. Supersedes the
+defect flow in Sections 9 and 21.6 where they disagree: flagged parts no
+longer ride along the line with a grace period.*
+
+### 28.1 The nonconformance (NC) shelf
+- **Every defect, from every station, sends the part off the line
+  immediately** to one centralized nonconformance shelf, which acts as its
+  own station. It sits in the center VIM Bay, beside Pour.
+- Tapping the shelf (or the Attention button) shows what's on it; that is
+  the only place a defective part is dispositioned and released.
+- **The cost of leaving a part there:** until it's diagnosed, parts still
+  coming through the station that flagged it have a raised chance of the
+  same defect. (Replaces the old grace-period contamination of parts at the
+  flagging station.)
+
+### 28.2 Engineers own contracts, not stations
+- Engineers are **not assigned to stations** the way technicians are.
+  Immediately after accepting a contract, the player assigns it to an
+  Engineer, who is then responsible for assessing that contract's defects
+  and running its trials.
+- An Engineer's skill drives how much familiarity a trial gains on the part.
+- An Engineer with nothing going on slowly, passively gains familiarity on
+  the geometries of the contracts assigned to them.
+- **For now diagnosis happens in the background.** Later: a separate scene
+  (an engineering office) where Engineers live and work on assessments
+  until called down to the production floor - the player watches them walk
+  down when called to disposition a part.
+
+### 28.3 Diagnosis and disposition
+- The contract's Engineer diagnoses a shelved part (takes time). Diagnosis
+  is what unlocks the learning dispositions and lifts the raised risk.
+- **Scrap** - available anytime, even undiagnosed (learn nothing). Scrapped
+  parts go to a **scrap inventory** - an idea kept for later use.
+- **Rework / repair** - the part goes back to the station that repairs its
+  defect (printer defects at Patching, shell cracks at Mold Prep) and
+  continues down the line **for learning only**: it gains familiarity as it
+  goes but never ships, "knowing it's not going to make a good part."
+- **Non-repairable defects** (Pour's porosity/misrun, and similar) can't be
+  reworked; the disposition can instead send the part to **Structured Light
+  Scan to learn more about it**.
+
+### 28.4 Trials and manual production
+- Production should **not start automatically**. The player queues prints
+  onto the production floor, and **entering parts into the system costs
+  money**.
+- A **trial** is something the Engineer runs with the next batch the player
+  queues, informed by a diagnosis; after assessing a trial, the player
+  chooses how many parts to queue.
+
+### 28.5 Quality %
+- A part's **quality %** correlates with familiarity on that part once it's
+  been turned into a casting; **only parts above a quality threshold can be
+  shipped**.
+
+### 28.6 Build phases
+1. **Phase 1 (2026-10-03):** the NC shelf (quarantine, raised risk while
+   undiagnosed, VIM Bay placement), contract -> Engineer assignment,
+   background diagnosis, dispositions (scrap / learning-only rework / scan
+   to learn), Engineers removed from station assignment, passive idle
+   familiarity.
+2. **Phase 2 (numbers to be agreed with the user first):** quality % and the
+   ship threshold, trials, manual print queueing with a per-part cost.
+3. **Later:** the engineering-office scene, the scrap inventory.

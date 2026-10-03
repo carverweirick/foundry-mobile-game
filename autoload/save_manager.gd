@@ -219,6 +219,16 @@ func save_game() -> bool:
 	return true
 
 
+## Admin overlay's "Delete save": wipes the save and quits WITHOUT the
+## on-close autosave writing the current shop straight back, so the next
+## launch is a genuinely fresh game. (GameData is an autoload, so reloading
+## the scene alone would keep the old shop in memory.)
+func delete_save_and_quit() -> void:
+	_ready_to_autosave = false
+	delete_save()
+	get_tree().quit()
+
+
 ## Wipes the save. The Settings overlay's "reset save" option (design doc
 ## Section 19) would call this behind a confirmation step.
 func delete_save() -> bool:

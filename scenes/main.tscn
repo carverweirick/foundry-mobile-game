@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://scenes/factory_overlay.tscn" id="10_factory_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/settings_overlay.tscn" id="11_settings_overlay"]
 [ext_resource type="Script" path="res://scenes/hud.gd" id="12_hud"]
+[ext_resource type="PackedScene" path="res://scenes/admin_overlay.tscn" id="13_admin_overlay"]
 
 [node name="Main" type="Node2D" unique_id=1774776552]
 script = ExtResource("1_script")
@@ -30,3 +31,5 @@ script = ExtResource("12_hud")
 [node name="BoardOverlay" parent="." instance=ExtResource("5_board_overlay")]
 
 [node name="SettingsOverlay" parent="." instance=ExtResource("11_settings_overlay")]
+
+[node name="AdminOverlay" parent="." instance=ExtResource("13_admin_overlay")]

@@ -70,6 +70,9 @@ var _gems_label: Label
 var _reputation_label: Label
 var _level_label: Label
 var _settings_button: Button
+## Debug builds only - see bind_admin().
+var _admin_button: Button = null
+var _speed_badge: Label
 var _rail_buttons: Array[Button] = []
 ## Every OverlayBase that opens into the panel slot (rail menus + Settings).
 var _slot_overlays: Array[OverlayBase] = []
@@ -144,6 +147,9 @@ func _process(delta: float) -> void:
 	_gems_label.text = "Gems: %d" % GameData.gems
 	_reputation_label.text = "Reputation: %d" % GameData.reputation
 	_level_label.text = "Factory Lv: %d" % GameData.factory_level
+	_speed_badge.visible = GameData.debug_sim_speed != 1.0
+	if _speed_badge.visible:
+		_speed_badge.text = "PAUSED" if GameData.debug_sim_speed == 0.0 else "%dx" % int(GameData.debug_sim_speed)
 	# The Station Detail Menu's two panels need ~464px, more than the slot
 	# left of the rail on any phone shape, and it's modal anyway (a tap
 	# outside closes it) - so the rail steps aside while it's open rather
@@ -235,6 +241,19 @@ func _build_bar() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(spacer)
+	# Shown only while the admin game speed isn't 1x, so a sped-up or paused
+	# test session is never mistaken for normal pacing.
+	_speed_badge = Label.new()
+	_speed_badge.add_theme_color_override("font_color", Color(0.95, 0.72, 0.2))
+	_speed_badge.visible = false
+	row.add_child(_speed_badge)
+	if OS.is_debug_build():
+		_admin_button = Button.new()
+		_admin_button.icon = UiIcons.get_icon("admin")
+		_admin_button.toggle_mode = true
+		_admin_button.focus_mode = Control.FOCUS_NONE
+		_admin_button.tooltip_text = "Admin / test controls"
+		row.add_child(_admin_button)
 	_settings_button = Button.new()
 	_settings_button.icon = UiIcons.get_icon("settings")
 	_settings_button.toggle_mode = true
@@ -307,7 +326,11 @@ func _apply_theme() -> void:
 	bar_style.content_margin_top = 1.0
 	bar_style.content_margin_bottom = 1.0
 	_bar.add_theme_stylebox_override("panel", bar_style)
-	for button: Button in _rail_buttons + [_settings_button, _attention_button]:
+	var styled: Array[Button] = _rail_buttons.duplicate()
+	styled.append_array([_settings_button, _attention_button])
+	if _admin_button != null:
+		styled.append(_admin_button)
+	for button: Button in styled:
 		# EVERY state, including ones this Theme doesn't define: a Button's
 		# minimum size is its largest stylebox across all states, and an
 		# undefined one (hover_pressed, the *_mirrored RTL variants) falls back
@@ -472,6 +495,19 @@ func _poll_camera_side() -> void:
 		return
 	_detected_camera_side = reading
 	print("[Hud] gravity=%s -> camera side %s" % [Input.get_gravity(), ThemeManager.CUTOUT_SIDE_DISPLAY_NAMES[reading]])
+	_layout()
+
+
+## Wires the debug-only wrench to the Admin overlay, which opens into the same
+## panel slot as every rail menu. A release build has no wrench, so the
+## overlay is simply never reachable there.
+func bind_admin(admin_overlay: OverlayBase) -> void:
+	if _admin_button == null:
+		return
+	_admin_button.pressed.connect(admin_overlay.toggle)
+	admin_overlay.rail_button = _admin_button
+	_slot_overlays.append(admin_overlay)
+	_apply_theme()
 	_layout()
 
 

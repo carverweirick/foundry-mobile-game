@@ -1409,7 +1409,69 @@ var is_catching_up: bool = false
 func _process(delta: float) -> void:
 	if is_catching_up:
 		return
-	simulate(delta)
+	# Stepped in slices for the same reason offline catch-up is: at high admin
+	# speeds one frame's simulated time would let a walking technician
+	# overshoot a station and skip its arrival logic.
+	var remaining := delta * debug_sim_speed
+	while remaining > 0.0:
+		var step := minf(remaining, DEBUG_SIM_SLICE_SECONDS)
+		simulate(step)
+		remaining -= step
+
+
+# --- Admin / test controls (the Admin overlay; debug builds only) ----------
+
+## Game speed for testing (user request: "a slider to speed up the game so I
+## can test without having to wait"). Multiplies every clock uniformly -
+## stations, technicians, deadlines, defect timers - because it scales the
+## delta fed to simulate() rather than any one duration. 0 pauses. Not saved.
+var debug_sim_speed: float = 1.0
+const DEBUG_SIM_SLICE_SECONDS: float = 0.25
+
+enum DebugDefectMode { NORMAL, FORCE_NEXT, NONE }
+## FORCE_NEXT makes the next roll at any defect-rolling station hit (then
+## reverts to NORMAL); NONE suppresses every roll. Read by
+## Station._roll_defect_outcome().
+var debug_defect_mode: DebugDefectMode = DebugDefectMode.NORMAL
+
+
+## Advances the whole simulation by seconds, in the same 0.25s slices as
+## offline catch-up.
+func debug_skip_ahead(seconds: float) -> void:
+	var remaining := seconds
+	while remaining > 0.0:
+		var step := minf(remaining, DEBUG_SIM_SLICE_SECONDS)
+		simulate(step)
+		remaining -= step
+
+
+## Puts every running station run at its finish line; the next simulate()
+## step completes them through the normal path.
+func debug_finish_running_stations() -> void:
+	for station: Station in station_by_id.values():
+		station.debug_finish_run()
+
+
+func debug_add_currency(amount: int) -> void:
+	currency += amount
+	currency_changed.emit(currency)
+
+
+func debug_add_gems(amount: int) -> void:
+	gems += amount
+	gems_changed.emit(gems)
+
+
+func debug_add_reputation(amount: int) -> void:
+	reputation = clampi(reputation + amount, 0, REPUTATION_MAX)
+	reputation_changed.emit(reputation)
+
+
+func debug_exp_to_next_level() -> void:
+	if is_factory_level_maxed():
+		return
+	factory_exp = maxi(factory_exp, factory_exp_for_level(factory_level + 1))
+	factory_progress_changed.emit()
 
 
 ## The single steppable entry point for the whole simulation - every clock in
@@ -1574,10 +1636,11 @@ func _init() -> void:
 		# not batched - Tier 2+ replaces batching entirely with parallel
 		# independent per-part timers (see Station.shelling_active_parts), a
 		# genuinely different runtime model rather than a bigger batch_cap.
-		# 20 min/coat * 8 coats required at Tier 1, still one combined timer at
-		# Tier 1 specifically.
+		# One combined timer at Tier 1. 30 game-minutes = 60 real seconds (user
+		# decision 2026-10-03) - was Section 17's 160 (320s), over half the
+		# whole pipeline. Still the longest step.
 		StationDef.new("shelling", "Shelling", Station.StationType.QUEUE,
-			2, "Shell Building", 160.0, 1),
+			2, "Shell Building", 30.0, 1),
 
 		StationDef.new("burnout", "Burnout", Station.StationType.BATCHED,
 			3, "Furnace Room", 45.0, 8, BURNOUT_SPRITES),
