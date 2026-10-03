@@ -285,6 +285,8 @@ func _process(delta: float) -> void:
 ## advanced (and a finished run resolved) before the technician loop, so a part
 ## that just became READY is actionable on this same step instead of the next.
 func simulate_step(delta: float) -> void:
+	if current_state == State.RUNNING or not shelling_active_parts.is_empty():
+		GameData.record_station_busy(station_id, delta)
 	if is_parallel_shelling():
 		_advance_parallel_shelling(delta)
 	elif current_state == State.RUNNING:
@@ -399,7 +401,7 @@ func _finish_shelling_run(run: ShellingRun) -> void:
 		return
 	var part := run.part
 	part.status = Part.Status.READY_TO_ROUTE
-	_maybe_flag_defect(part)
+	_maybe_flag_defect(part, run.duration)
 	shelling_ready_parts.append(part)
 	_update_parallel_state()
 	_update_display()
@@ -1310,7 +1312,7 @@ func _on_run_finished() -> void:
 	current_state = State.READY
 	if current_part != null:
 		current_part.status = Part.Status.READY_TO_ROUTE
-		_maybe_flag_defect(current_part)
+		_maybe_flag_defect(current_part, _run_duration)
 		if station_id == "patching":
 			_resolve_patching(current_part)
 	_update_display()
@@ -1356,9 +1358,12 @@ func _resolve_patching(part: Part) -> void:
 ## (mortar_patch_defect() / redesign_defect() / hire_specialist()) - and the
 ## Reputation consequence lands for real at Ship if it's still unresolved by
 ## then (see _ship_part() / GameData.report_lost_defective_shipment()).
-func _maybe_flag_defect(part: Part) -> void:
+## Runs once per completed run, so it's also where the run is recorded for
+## the Factory screen's stats (cycle_seconds = that run's real duration).
+func _maybe_flag_defect(part: Part, cycle_seconds: float) -> void:
 	_gain_worker_experience(part)
 	var category := _roll_defect_outcome(part)
+	GameData.record_station_run(station_id, cycle_seconds, category != GameData.DefectCategory.NONE)
 	if category == GameData.DefectCategory.NONE:
 		return
 	part.flag_defect(category, station_id, GameData.grace_period_seconds_for(station_id))

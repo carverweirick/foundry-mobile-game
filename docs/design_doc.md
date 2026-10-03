@@ -1254,8 +1254,9 @@ now, growing toward A's floor-first feel later.**
    unstaffed station; parts in Awaiting Transfer whose next station has
    nobody assigned; an unstaffed printer that could start a print for an
    active contract; no active contract while offers wait.
-2. **Rail consolidated to four** (Board BUILT 2026-10-03 - Dashboard and
-   Transfer merged, Staff's tile renamed Team; Factory next): **Board** (station list with one action
+2. **Rail consolidated to four** - BUILT 2026-10-03 (Board = Dashboard +
+   Transfer, Team = Staff renamed, Factory = Overview + Printers + a new
+   per-station stats collector): **Board** (station list with one action
    per row - the most urgent verb - plus a Transfer tab), **Contracts**,
    **Team** (today's Staff), **Factory** (the user's 27.3 statistics idea -
    cycle time, yield, throughput - plus upgrades, printer purchase and the

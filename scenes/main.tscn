@@ -3,10 +3,9 @@
 [ext_resource type="Script" uid="uid://dy315sqjox5g" path="res://scenes/main.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://scenes/station_detail_menu.tscn" id="3_station_detail_menu"]
 [ext_resource type="PackedScene" path="res://scenes/board_overlay.tscn" id="5_board_overlay"]
-[ext_resource type="PackedScene" path="res://scenes/overview_overlay.tscn" id="6_overview_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/contracts_overlay.tscn" id="8_contracts_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/staff_overlay.tscn" id="9_staff_overlay"]
-[ext_resource type="PackedScene" path="res://scenes/printers_overlay.tscn" id="10_printers_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/factory_overlay.tscn" id="10_factory_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/settings_overlay.tscn" id="11_settings_overlay"]
 [ext_resource type="Script" path="res://scenes/hud.gd" id="12_hud"]
 
@@ -22,13 +21,11 @@ script = ExtResource("12_hud")
 
 [node name="StationDetailMenu" parent="." instance=ExtResource("3_station_detail_menu")]
 
-[node name="OverviewOverlay" parent="." instance=ExtResource("6_overview_overlay")]
-
 [node name="ContractsOverlay" parent="." instance=ExtResource("8_contracts_overlay")]
 
 [node name="StaffOverlay" parent="." instance=ExtResource("9_staff_overlay")]
 
-[node name="PrintersOverlay" parent="." instance=ExtResource("10_printers_overlay")]
+[node name="FactoryOverlay" parent="." instance=ExtResource("10_factory_overlay")]
 
 [node name="BoardOverlay" parent="." instance=ExtResource("5_board_overlay")]
 

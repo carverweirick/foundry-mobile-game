@@ -322,7 +322,7 @@ general form of this lesson.
   room instead** - otherwise whichever station label claimed space first hid
   all its neighbours. The floor status label uses
   `Station._idle_status_text(true)` (compact: "Idle - no contracts" etc.);
-  the full sentences, up to 322px wide, stay in Overview/the detail menu.
+  the full sentences, up to 322px wide, stay in the Board/the detail menu.
   Station
   labels are one combined two-line `"name\nstatus"` block, white text with a
   black outline (so they read over arbitrary floor content). The timer bar
@@ -360,7 +360,7 @@ general form of this lesson.
   (`FACTORY_LEVEL_PRINTER_CAP`, populated through Level 5). Buying emits
   `printer_purchased` -> `main.gd` spawns the instance live, re-wires every
   printer's `next_station` to Clean, applies current zoom scale. Bought from
-  the Printers overlay. Each printer's own tier gates its batching
+  the Factory overlay's Growth tab. Each printer's own tier gates its batching
   (`PRINTER_TIER_BATCH_CAP`: unbatched through Tier 2, batching from Tier
   3+). `GameData.PIPELINE_ORDER`'s `"printing"` entry is a placeholder/
   Tier-1 template only - no live Station ever has `station_id == "printing"`.
@@ -550,7 +550,7 @@ general form of this lesson.
   first" when gated.
 - `Station.get_overview_status()` appends a current-part suffix
   (`" - Part #N (Customer)"`, or a bracketed list for parallel-tier
-  Shelling) - used by the Overview tab and the Station Detail Menu's status
+  Shelling) - used by the Board's status lines and the Station Detail Menu's status
   line; deliberately not added to the floor's own compact status label.
 - Technician sprites are free-floating (`main.gd._sync_technician_sprites()`
   owns one `Sprite2D` per hired `Technician`, positioned every frame from
@@ -617,7 +617,7 @@ general form of this lesson.
   each remaining time (`_parallel_timer_text()`, up to
   `MAX_TIMERS_ON_FLOOR` = 3 then a `+N` tail, sized to the bar's 150px), and
   `_parallel_shelling_status_text()` adds part-numbered countdowns
-  (`3/4 running, (#1 308s, #2 312s, #3 316s)`) for the Overview tab and
+  (`3/4 running, (#1 308s, #2 312s, #3 316s)`) for the Board and
   Station Detail Menu, which have the room. `_current_part_suffix()` lists
   only the READY parts in parallel mode, since the running ones are already
   named with their timers. Known rough edge:
@@ -668,7 +668,7 @@ general form of this lesson.
   correctly end to end, so the far more likely real cause was a staffed
   entry station legitimately idle for a reason the player had no way to
   see). `Station._idle_status_text()` (shared by the floor's own status
-  label and `get_overview_status()`, so the floor, Overview tab, and this
+  label and `get_overview_status()`, so the floor, the Board, and this
   popup's status line all agree) reads "Idle - no active contracts (accept
   one from Contract Offers)" or "Idle - blocked, clear the backlog first"
   for a staffed pipeline-entry station instead of a bare "Idle" - the two
@@ -692,7 +692,7 @@ general form of this lesson.
   refreshing synchronously, so a click finishes processing before any
   rebuild - avoids Godot's input-handling glitches from freeing a Control
   mid-click.
-- While this popup, the Team/Printers/Overview/Board/Contracts/Settings
+- While this popup, the Contracts/Board/Team/Factory/Settings
   overlays are open, `main.gd` freezes background camera pan/zoom/click
   (`_unhandled_input` early-returns) so a scroll gesture inside a popup list
   doesn't fall through to the floor. All overlays close on outside-click
@@ -747,7 +747,7 @@ general form of this lesson.
   crossing `FACTORY_LEVEL_EXP_THRESHOLD` only flips
   `can_level_up_factory()` true - it no longer auto-levels.
   `GameData.level_up_factory()` is the deliberate paid action (a "Level Up"
-  button on the Printers overlay, next to the EXP progress row): spends
+  button on the Factory overlay's Growth tab): spends
   `FACTORY_LEVEL_UP_PRICE` (400/800/1400/2200 for levels 2-5, gold-first-
   then-gems via `try_spend_with_gems()` - a hard affordability gate, disables
   the button), THEN raises `factory_level`, THEN pays every hired
@@ -949,11 +949,12 @@ general form of this lesson.
   A miss destroys the part outright (never flagged, never reaches Ship)
   rather than just flagging it.
 
-**Overview / Board / Contracts overlays** (Section 6, consolidated per
-design doc 27.7)
-- Overview and Contracts are separate overlays, each its own `Panel`.
-  `MenuOverlay`, `DashboardOverlay` and `AwaitingTransferOverlay` are
-  deleted - Dashboard + Transfer became the Board (below).
+**Rail menus: Contracts / Board / Team / Factory** (Section 6,
+consolidated per design doc 27.7)
+- `MenuOverlay`, `DashboardOverlay`, `AwaitingTransferOverlay`,
+  `OverviewOverlay` and `PrintersOverlay` are all deleted: Dashboard +
+  Transfer became the Board, Overview + Printers became Factory (both
+  below); Team is `StaffOverlay` under a new rail label.
 - **`OverlayBase`** (`scenes/overlay_base.gd`) is the shared open/close/
   backdrop chrome (`opened()` signal, `toggle()`, `close()`, `_set_open()`,
   `set_panel_rect()`, `_click_in_progress()`) used by all 7 rail/gear
@@ -966,7 +967,7 @@ design doc 27.7)
   `main.tscn`, layer 2; design doc Section 27.2): a top resource bar
   (Gold/Gems/Reputation/Factory Lv, each with an icon, plus a Settings gear
   at its right end) and a right-edge rail of icon-over-label tiles, top to
-  bottom Contracts/Board/Team/Overview/Printers (order set in
+  bottom Contracts/Board/Team/Factory (order set in
   `main.gd`'s `hud.bind()` call). Every menu opens into one panel slot left
   of the rail (max `PANEL_MAX_WIDTH` 400px). All positions come from
   `_layout()` (live viewport size + safe-area insets, re-run on
@@ -1017,13 +1018,9 @@ design doc 27.7)
   drawn at runtime) until real icon art exists. **The six-tile rail is a
   stopgap** - consolidate once menus are redefined (Section 27.5).
 - `main.gd` cross-wires
-  exclusivity generically over a single `_overlays: Array` (all 6
-  `OverlayBase` subclasses + `StationDetailMenu`, duck-typed) rather than
+  exclusivity generically over a single `_overlays: Array` (every
+  `OverlayBase` subclass + `StationDetailMenu`, duck-typed) rather than
   hand-written pairwise close calls.
-- **Overview**: every station grouped under a bold room-name subheader
-  (`GameData.StationDef.room_name`, `all_real_station_ids()` already visits
-  room-by-room). Persistent `Label`s reordered in place via `move_child()`
-  each refresh, never destroyed/rebuilt.
 - **Board** (`scenes/board_overlay.gd`, class `BoardOverlay`, rail tile
   "Board"): two tabs. **Stations** - every station grouped by room; each
   row is the station name as a flat button (emits `station_requested` ->
@@ -1087,7 +1084,7 @@ design doc 27.7)
   the poll/`technician_updated`, via a separate `_refresh_live_only()`.
 - **Persistent-widget pattern** used throughout for anything on the
   unconditional poll - the roster (`_roster_rows: Dictionary`) and the
-  Overview tab's rows are built once and updated in place
+  Board's and Factory's rows are built once and updated in place
   (`CheckBox.set_pressed_no_signal()` for re-synced checkboxes, so it
   doesn't refire `toggled`), never freed/recreated, avoiding a visible
   "pop"/reflow every 250ms. New checkboxes/rows are still added lazily when
@@ -1142,26 +1139,30 @@ design doc 27.7)
   walking-penalty in `Station._effective_timer_duration()` - "faster
   processing time."
 
-**Printers overlay - entry-point split** (`scenes/printers_overlay.gd` +
-`.tscn`, extends `OverlayBase`, Section 6)
-- Its own rail tile. No tabs/roster - just
-  `printer_cap()`/`owned_printer_count`/`factory_level` status text, a Buy
-  button (`can_buy_printer()`/`printer_purchase_cost()`/`buy_printer()`),
-  and a Factory EXP progress row (`"<exp>/<needed> EXP to Factory Level
-  N+1"`, or the maxed-out message). Individual printer tiers/rack capacity
-  are still managed per-instance from that printer's own Station Detail
-  Menu. Refreshes off `currency_changed`/`factory_progress_changed` plus the
-  0.25s poll, `_click_in_progress()`-guarded like every overlay.
-- **LevelUpButton** (`%LevelUpButton`, this session) is the sole place
-  `GameData.level_up_factory()` gets called - see Factory Level under
-  Contracts above for the full price+payroll mechanics. Its own text
-  previews both numbers before commit (`"Level Up to N (Xg price + Yg
-  payroll)"`), disabled whenever `can_level_up_factory()` is false (not
-  enough EXP yet) or `can_afford_factory_level_up()` is false (price alone
-  unaffordable - payroll never gates this button, it can push into debt
-  instead, see Wage economy under Staff overlay). `ProcessSpeedLabel`
-  (`%ProcessSpeedLabel`) shows the live shop-wide speed bonus
-  (`GameData.factory_process_speed_multiplier()`) as a flat percentage.
+**Factory overlay** (`scenes/factory_overlay.gd` + `.tscn`, class
+`FactoryOverlay`, rail tile "Factory"; design doc 27.3/27.7 - "see the
+bottleneck, then buy the fix in the same place")
+- **Stations tab**: per station, grouped by room (Ship excluded): average
+  cycle time, Yield (only at defect-rolling stations), Busy % and parts/hr
+  from `GameData.station_stat_summary()`, with the busiest station (above
+  `BOTTLENECK_MIN_UTILIZATION` 25%) marked BOTTLENECK in red, and Tier /
+  Rack upgrade buttons in an `HFlowContainer` on each row. Persistent rows.
+- **Growth tab**: the old Printers screen - factory EXP, the **Level Up
+  button** (the sole caller of `GameData.level_up_factory()`; text previews
+  price + payroll, disabled until `can_level_up_factory()` and
+  `can_afford_factory_level_up()` - payroll never gates it, it can push into
+  debt, see Wage economy), process speed bonus, printers owned/cap and Buy
+  Printer.
+- **Stats collector** (`GameData.station_stats`/`stats_elapsed`):
+  per station `completed`/`flagged`/`cycle_total`/`busy`, cumulative since
+  the save began (no rolling window yet). `Station.simulate_step()` adds busy
+  time; `Station._maybe_flag_defect(part, cycle_seconds)` - called once per
+  completed run - records the run and whether it flagged a new defect.
+  Advanced only through `simulate()`, so offline catch-up counts; saved and
+  loaded (older saves start from zero). Verified: 10 simulated minutes on a
+  real staffed save showed Shelling at 99.7% busy (the bottleneck CLAUDE.md
+  already predicted) and Burnout at 57% yield; values round-trip exactly
+  through the save JSON.
 
 **Settings overlay** (`scenes/settings_overlay.gd` + `.tscn`, extends
 `OverlayBase`; `autoload/theme_manager.gd`, registered as the `ThemeManager`
@@ -1284,8 +1285,7 @@ autoload)
   `MAX_ZOOM_SPRITE_SCALE` (0.75x) approaching `MAX_ZOOM`;
   `get_click_rect()` reads the sprite's live scale so click targets shrink
   in step.
-- HUD: see the Hud bullet under the Overview/Transfer/Contracts overlays
-  section below.
+- HUD: see the Hud bullet under the "Rail menus" section below.
 
 - Global class registration note: a new or renamed `class_name` doesn't
   take effect for other scripts' static typing until Godot's
@@ -1319,11 +1319,9 @@ autoload)
   Overview becomes factory statistics (yield/throughput - not tracked anywhere
   yet, needs a stats collector), Printers becomes an Upgrades screen,
   Dashboard absorbs manual part moves. **Built:** the HUD shell, the
-  Attention button, and the Board (Dashboard + Transfer merged; Staff's rail
-  tile renamed Team). **Next (27.7):** merge Overview + Printers into
-  Factory (27.3 statistics + upgrades + printers + level-up - needs a stats
-  collector first), leaving the rail at Contracts/Board/Team/Factory; then
-  floor status badges. Option A's other ideas are tabled for a future
+  Attention button, and the four-tile rail (Contracts / Board / Team /
+  Factory, with a stats collector behind Factory). **Next (27.7):** floor
+  status badges (reuse `Station.attention_need()`). Option A's other ideas are tabled for a future
   update (27.7). Real icon art still to do. The menu panels' own contents are unchanged and
   still the user's main visual complaint.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,

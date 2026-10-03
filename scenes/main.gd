@@ -199,10 +199,9 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 @onready var hud: Hud = $HUD
 @onready var floor_labels_layer: CanvasLayer = $FloorLabels
 @onready var station_detail_menu: StationDetailMenu = $StationDetailMenu
-@onready var overview_overlay: OverviewOverlay = $OverviewOverlay
 @onready var contracts_overlay: ContractsOverlay = $ContractsOverlay
 @onready var staff_overlay: StaffOverlay = $StaffOverlay
-@onready var printers_overlay: PrintersOverlay = $PrintersOverlay
+@onready var factory_overlay: FactoryOverlay = $FactoryOverlay
 @onready var board_overlay: BoardOverlay = $BoardOverlay
 @onready var settings_overlay: SettingsOverlay = $SettingsOverlay
 
@@ -270,7 +269,7 @@ func _ready() -> void:
 	_spawn_stations()
 	_setup_camera()
 
-	overview_overlay.station_by_id = _stations_by_id
+	factory_overlay.station_by_id = _stations_by_id
 	staff_overlay.station_by_id = _stations_by_id
 	board_overlay.station_by_id = _stations_by_id
 	GameData.station_by_id = _stations_by_id
@@ -295,22 +294,20 @@ func _ready() -> void:
 	# is ever visible. Generic over _overlays rather than one hardcoded
 	# .connect() block per pair (see that array's own comment for why).
 	_overlays = [
-		overview_overlay, contracts_overlay,
-		staff_overlay, printers_overlay, board_overlay, settings_overlay,
+		contracts_overlay, board_overlay, staff_overlay, factory_overlay,
+		settings_overlay,
 		station_detail_menu,
 	]
 	for overlay in _overlays:
 		overlay.opened.connect(_on_overlay_opened.bind(overlay))
 
-	# Rail order, top to bottom (design doc 27.7). Board already absorbs the
-	# old Dashboard + Transfer; Overview and Printers are still separate until
-	# they merge into Factory.
+	# Rail order, top to bottom (design doc 27.7): Board = old Dashboard +
+	# Transfer, Team = Staff, Factory = old Overview + Printers + stats.
 	hud.bind([
 		[contracts_overlay, "Contracts", "contracts"],
 		[board_overlay, "Board", "dashboard"],
 		[staff_overlay, "Team", "staff"],
-		[overview_overlay, "Overview", "overview"],
-		[printers_overlay, "Printers", "printers"],
+		[factory_overlay, "Factory", "factory"],
 	], settings_overlay, station_detail_menu)
 	hud.attention_requested.connect(_on_attention_requested)
 	board_overlay.station_requested.connect(func(station): _focus_station(station, true))

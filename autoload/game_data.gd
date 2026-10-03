@@ -11,7 +11,7 @@ signal held_parts_changed()
 signal technician_updated(tech: Technician)
 signal reputation_changed(new_amount: int)
 ## Fires whenever factory_exp changes, and again (in addition) whenever that
-## pushes factory_level up - PrintersOverlay listens for this the same way
+## pushes factory_level up - FactoryOverlay listens for this the same way
 ## it already listens for currency_changed, since factory progress doesn't
 ## otherwise correlate with any existing signal.
 signal factory_progress_changed()
@@ -227,6 +227,17 @@ const FAMILIARITY_TRACKED_STATIONS: Array[String] = ["shelling", "burnout", "mol
 ## attempts all raise it" - now scoped to whichever specific station the
 ## defect/push-through actually happened at, not a blanket score.
 var geometry_familiarity: Dictionary = {}
+
+## Per-station production stats for the Factory screen (design doc 27.3/
+## 27.4: cycle time, yield and throughput, to make informed upgrades).
+## station_id -> {"completed": runs finished, "flagged": runs that flagged a
+## new defect here, "cycle_total": summed real seconds of those runs, "busy":
+## real seconds spent running}. stats_elapsed is the shared clock busy time
+## is measured against. All advanced from simulate() (via
+## Station.simulate_step()), so offline catch-up counts too, and saved.
+## Cumulative since the save began - no rolling window yet.
+var station_stats: Dictionary = {}
+var stats_elapsed: float = 0.0
 
 ## First-pass placeholder currency costs for the two per-Part fix paths
 ## (Section 9). The doc gives no concrete numbers, only that a mortar patch
@@ -1414,6 +1425,7 @@ func _process(delta: float) -> void:
 ## settle), where before the relative order of GameData._process() and each
 ## Station._process() was whatever the SceneTree happened to pick.
 func simulate(delta: float) -> void:
+	stats_elapsed += delta
 	for tech in technicians:
 		if tech.tick(delta, station_by_id):
 			technician_updated.emit(tech)
@@ -1425,6 +1437,41 @@ func simulate(delta: float) -> void:
 	_check_defect_escalations()
 	_process_contracts(delta)
 	_process_applicant_pool(delta)
+
+
+func record_station_run(station_id: String, cycle_seconds: float, flagged_defect: bool) -> void:
+	var stats := _stats_for(station_id)
+	stats.completed += 1
+	stats.cycle_total += cycle_seconds
+	if flagged_defect:
+		stats.flagged += 1
+
+
+func record_station_busy(station_id: String, delta: float) -> void:
+	_stats_for(station_id).busy += delta
+
+
+## Read-only view with derived numbers - every field defined even before the
+## station has run once. yield_rate/utilization/per_hour are null-safe fractions.
+func station_stat_summary(station_id: String) -> Dictionary:
+	var stats: Dictionary = station_stats.get(station_id, {})
+	var completed: int = stats.get("completed", 0)
+	var flagged: int = stats.get("flagged", 0)
+	var busy: float = stats.get("busy", 0.0)
+	return {
+		"completed": completed,
+		"flagged": flagged,
+		"avg_cycle_seconds": stats.get("cycle_total", 0.0) / completed if completed > 0 else 0.0,
+		"yield_rate": 1.0 - float(flagged) / completed if completed > 0 else 1.0,
+		"utilization": clampf(busy / stats_elapsed, 0.0, 1.0) if stats_elapsed > 0.0 else 0.0,
+		"per_hour": completed / stats_elapsed * 3600.0 if stats_elapsed > 0.0 else 0.0,
+	}
+
+
+func _stats_for(station_id: String) -> Dictionary:
+	if not station_stats.has(station_id):
+		station_stats[station_id] = {"completed": 0, "flagged": 0, "cycle_total": 0.0, "busy": 0.0}
+	return station_stats[station_id]
 
 
 ## Burns down every flagged Part's grace period (design doc Section 9). Was
@@ -1844,7 +1891,7 @@ func printer_station_ids() -> Array[String]:
 ## every owned printer instance, plus every other PIPELINE_ORDER entry except
 ## the "printing" placeholder itself (which has no single matching node - see
 ## printer_station_ids() above). UI that needs to walk every real station
-## (StaffOverlay's technician assignment checkboxes, OverviewOverlay's list)
+## (StaffOverlay's technician assignment checkboxes, FactoryOverlay and BoardOverlay lists)
 ## uses this instead of PIPELINE_ORDER directly.
 func all_real_station_ids() -> Array[String]:
 	var ids := printer_station_ids()
@@ -2183,6 +2230,8 @@ func to_save_dict() -> Dictionary:
 		"technicians": techs_data,
 		"applicant_pool": applicants_data,
 		"stations": stations_data,
+		"station_stats": station_stats.duplicate(true),
+		"stats_elapsed": stats_elapsed,
 	}
 
 
@@ -2220,6 +2269,18 @@ func load_from_dict(data: Dictionary) -> bool:
 
 	# Relationships are genuinely fractional (RELATIONSHIP_LOSS_MISSED_DEADLINE
 	# is 1.5), so these stay floats.
+	# Saves from before the stats collector simply start counting from zero.
+	station_stats = {}
+	var saved_stats: Dictionary = data.get("station_stats", {})
+	for station_id in saved_stats:
+		var entry: Dictionary = saved_stats[station_id]
+		station_stats[str(station_id)] = {
+			"completed": int(entry.get("completed", 0)),
+			"flagged": int(entry.get("flagged", 0)),
+			"cycle_total": float(entry.get("cycle_total", 0.0)),
+			"busy": float(entry.get("busy", 0.0)),
+		}
+	stats_elapsed = float(data.get("stats_elapsed", 0.0))
 	company_relationships = {}
 	for customer in data.get("company_relationships", {}):
 		company_relationships[str(customer)] = float(data["company_relationships"][customer])
