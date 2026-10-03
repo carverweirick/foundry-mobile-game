@@ -189,12 +189,12 @@ general form of this lesson.
   game. `Station.INTERACT_ANIM_FRAME_COUNT` still derives Clean's 3-frame
   interaction flourish from `Technician.interact_seconds()` rather than a fixed
   0.5s/frame, so it tracks any retune.
-- **Tier 1 Shelling is 160 game-minutes = 320 real seconds, over half the whole
-  604s pipeline.** Faithful to design doc Section 17 (shelling is meant to be
-  the bottleneck), but it dominates the felt pace and is the first number to
-  revisit in a balance pass.
-- `GameData.time_scale_multiplier` (static, default 1.0) is a debug override for
-  running the shop fast in tests without re-tuning anything.
+- **Tier 1 Shelling is 30 game-minutes = 60 real seconds** (user decision
+  2026-10-03; was Section 17's 160 = 320s, over half the pipeline). Still the
+  longest single step.
+- `GameData.time_scale_multiplier` (static, default 1.0) shortens durations as
+  they're created; for play-testing use the Admin overlay's game speed
+  (`GameData.debug_sim_speed`) instead, which speeds every clock uniformly.
 
 **Save/load and offline catch-up** (`autoload/save_manager.gd`,
 `GameData.to_save_dict()`/`load_from_dict()`)
@@ -979,11 +979,11 @@ consolidated per design doc 27.7)
   (40/0/40/14) with top 0 (landscape-locked). **Only the camera side is
   inset** (`_camera_side()`): the player's Settings choice
   (`ThemeManager.cutout_side`, Auto/Left/Right/Both, saved in
-  `settings.cfg`), or in Auto a gravity-sensor guess
+  `settings.cfg`), or in Auto a gravity-sensor reading
   (`_detect_camera_side()`; sensors enabled in `project.godot`) - Godot
   can't report the current landscape direction and iOS reports symmetric
-  insets. The gravity sign convention is **unverified on hardware**; until
-  a confident reading arrives Auto insets both sides. The bar's ends keep
+  insets. Confirmed working on the user's iPhone (2026-10-03); until a
+  confident reading arrives Auto insets both sides. The bar's ends keep
   `CORNER_INSET` (22px) from both edges on wide handhelds regardless (rounded
   corners, gear). `[Hud] ...` lines print at startup and on each detected
   side change - read them from a device run before changing this logic
@@ -1164,6 +1164,22 @@ bottleneck, then buy the fix in the same place")
   already predicted) and Burnout at 57% yield; values round-trip exactly
   through the save JSON.
 
+**Admin overlay** (`scenes/admin_overlay.gd` + `.tscn`, class
+`AdminOverlay`) - play-testing controls, opened from a wrench in the Hud's
+top bar that only exists when `OS.is_debug_build()`; opens into the shared
+panel slot. Game speed slider (Pause/1/2/5/10/25/50x ->
+`GameData.debug_sim_speed`, which `GameData._process()` multiplies into the
+delta and steps in 0.25s slices like offline catch-up; a gold "10x"/"PAUSED"
+badge shows in the top bar while not 1x), skip ahead 1 min/10 min/1 hr
+(`debug_skip_ahead()`), Finish runs (`Station.debug_finish_run()`),
++1000 gold / +10 gems / +10 rep / EXP to next level, accept an offer, a
+defect mode cycle (`GameData.debug_defect_mode`: normal / force the next
+roll / off, read at the top of `Station._roll_defect_outcome()`), Save now,
+and a two-tap Delete save (`SaveManager.delete_save_and_quit()` - disables
+the on-close autosave first, since GameData is an autoload and a scene
+reload would keep the old shop). Everything goes through `GameData.debug_*`
+helpers or normal APIs so the HUD's signals still fire. Speed isn't saved.
+
 **Settings overlay** (`scenes/settings_overlay.gd` + `.tscn`, extends
 `OverlayBase`; `autoload/theme_manager.gd`, registered as the `ThemeManager`
 autoload)
@@ -1304,13 +1320,6 @@ autoload)
 ---
 
 ## Not built yet
-
-**Pending user verification (ask about these at the start of a session):**
-- **Camera-side HUD insets on the iPhone** (2026-10-03): with Settings ->
-  Camera cutout on Auto, does the rail move away from the Dynamic Island
-  when the phone is flipped? If not, get the `[Hud] gravity=...` log lines
-  from Xogot - the gravity sign convention in `Hud._detect_camera_side()`
-  is a guess.
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - the user's main open complaint after playing on
