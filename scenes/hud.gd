@@ -19,6 +19,14 @@ class_name Hud
 ## the open menu; below StationDetailMenu (layer 3), which is modal over
 ## everything since it's opened from a floor tap rather than the rail (the
 ## rail hides while it's open, see _process()).
+##
+## Bottom-left: the Attention ("!") button (design doc 27.6). Shows how many
+## things need the player (Attention.collect()); each tap emits
+## attention_requested with the next one, and main.gd pans the camera there
+## or opens the relevant menu. A short toast beside it says what it is.
+
+## Emitted by an Attention tap - see Attention for the item's shape.
+signal attention_requested(item: Dictionary)
 
 const BAR_HEIGHT: float = 20.0
 const RAIL_WIDTH: float = 62.0
@@ -46,6 +54,9 @@ const SIMULATE_CAMERA_RIGHT_ARG := "--simulate-camera-right"
 ## Gravity is re-read this often; a side change needs two agreeing reads.
 const CAMERA_SIDE_POLL_SECONDS: float = 0.5
 const DEBT_COLOR := Color(0.85, 0.2, 0.2)
+const ATTENTION_SIZE := Vector2(38.0, 36.0)
+const ATTENTION_POLL_SECONDS: float = 0.25
+const TOAST_SECONDS: float = 2.5
 const BUTTON_STATES: Array[String] = [
 	"normal", "normal_mirrored", "hover", "hover_mirrored", "pressed",
 	"pressed_mirrored", "hover_pressed", "hover_pressed_mirrored", "disabled",
@@ -67,6 +78,13 @@ var _station_detail_menu: StationDetailMenu = null
 var _detected_camera_side: ThemeManager.CutoutSide = ThemeManager.CutoutSide.BOTH
 var _pending_camera_side: ThemeManager.CutoutSide = ThemeManager.CutoutSide.BOTH
 var _camera_poll_elapsed: float = 0.0
+var _attention_button: Button
+var _attention_count_label: Label
+var _attention_toast: Label
+var _attention_toast_tween: Tween
+var _attention_items: Array[Dictionary] = []
+var _attention_last_key: String = ""
+var _attention_poll_elapsed: float = ATTENTION_POLL_SECONDS
 
 
 func _ready() -> void:
@@ -75,6 +93,7 @@ func _ready() -> void:
 	_rail = VBoxContainer.new()
 	_rail.add_theme_constant_override("separation", 2)
 	add_child(_rail)
+	_build_attention()
 	ThemeManager.theme_changed.connect(func(_choice): _apply_theme())
 	_apply_theme()
 	get_viewport().size_changed.connect(_layout)
@@ -111,6 +130,10 @@ func _process(delta: float) -> void:
 	if _camera_poll_elapsed >= CAMERA_SIDE_POLL_SECONDS:
 		_camera_poll_elapsed = 0.0
 		_poll_camera_side()
+	_attention_poll_elapsed += delta
+	if _attention_poll_elapsed >= ATTENTION_POLL_SECONDS:
+		_attention_poll_elapsed = 0.0
+		_refresh_attention()
 	# Polled rather than signal-driven: a save load can replace every one of
 	# these values without emitting, and set_text() is a no-op when unchanged.
 	_gold_label.text = "Gold: %dg" % GameData.currency
@@ -127,6 +150,75 @@ func _process(delta: float) -> void:
 	# than drawing half-covered underneath it.
 	if _station_detail_menu != null:
 		_rail.visible = not _station_detail_menu.panel.visible
+	# A floor tool, not a menu one - and the bottom-left corner is under the
+	# panel slot on narrower screens - so it steps aside while a menu is open.
+	_attention_button.visible = not _any_menu_open()
+	if not _attention_button.visible:
+		_attention_toast.visible = false
+
+
+func _any_menu_open() -> bool:
+	if _station_detail_menu != null and _station_detail_menu.panel.visible:
+		return true
+	for overlay in _slot_overlays:
+		if overlay.panel.visible:
+			return true
+	return false
+
+
+func _build_attention() -> void:
+	_attention_button = _make_rail_tile("0", "attention")
+	_attention_button.tooltip_text = "Jump to the next thing that needs you"
+	_attention_button.focus_mode = Control.FOCUS_NONE
+	_attention_button.size = ATTENTION_SIZE
+	_attention_count_label = _attention_button.get_child(0).get_child(1)
+	_attention_button.pressed.connect(_on_attention_pressed)
+	add_child(_attention_button)
+	# Same white-on-black-outline treatment as the floor's station labels, so
+	# it reads over any floor tile without a panel behind it.
+	_attention_toast = Label.new()
+	_attention_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_attention_toast.add_theme_color_override("font_color", Color(0.98, 0.95, 0.88))
+	_attention_toast.add_theme_color_override("font_outline_color", Color(0.1, 0.06, 0.03))
+	_attention_toast.add_theme_constant_override("outline_size", 3)
+	_attention_toast.visible = false
+	add_child(_attention_toast)
+
+
+func _refresh_attention() -> void:
+	_attention_items = Attention.collect()
+	_attention_count_label.text = str(_attention_items.size())
+	_attention_button.disabled = _attention_items.is_empty()
+
+
+## Steps to the item after the last one visited, so repeated taps tour every
+## need; once that one is resolved it drops out and the tour restarts at the
+## most urgent.
+func _on_attention_pressed() -> void:
+	_refresh_attention()
+	if _attention_items.is_empty():
+		return
+	var index := 0
+	for i in _attention_items.size():
+		if _attention_items[i].key == _attention_last_key:
+			index = (i + 1) % _attention_items.size()
+			break
+	var item: Dictionary = _attention_items[index]
+	_attention_last_key = item.key
+	_show_attention_toast("%s  (%d/%d)" % [item.label, index + 1, _attention_items.size()])
+	attention_requested.emit(item)
+
+
+func _show_attention_toast(text: String) -> void:
+	_attention_toast.text = text
+	_attention_toast.visible = true
+	_attention_toast.modulate.a = 1.0
+	if _attention_toast_tween != null:
+		_attention_toast_tween.kill()
+	_attention_toast_tween = create_tween()
+	_attention_toast_tween.tween_interval(TOAST_SECONDS)
+	_attention_toast_tween.tween_property(_attention_toast, "modulate:a", 0.0, 0.4)
+	_attention_toast_tween.tween_callback(func(): _attention_toast.visible = false)
 
 
 func _build_bar() -> void:
@@ -204,6 +296,8 @@ func _add_stat(row: HBoxContainer, icon_name: String) -> Label:
 func _apply_theme() -> void:
 	ThemeManager.apply_theme_to(_bar)
 	ThemeManager.apply_theme_to(_rail)
+	ThemeManager.apply_theme_to(_attention_button)
+	ThemeManager.apply_theme_to(_attention_toast)
 	var theme: Theme = ThemeManager.get_current_theme_resource()
 	var bar_style: StyleBox = theme.get_stylebox("panel", "Panel").duplicate()
 	if bar_style is StyleBoxFlat:
@@ -213,7 +307,7 @@ func _apply_theme() -> void:
 	bar_style.content_margin_top = 1.0
 	bar_style.content_margin_bottom = 1.0
 	_bar.add_theme_stylebox_override("panel", bar_style)
-	for button: Button in _rail_buttons + [_settings_button]:
+	for button: Button in _rail_buttons + [_settings_button, _attention_button]:
 		# EVERY state, including ones this Theme doesn't define: a Button's
 		# minimum size is its largest stylebox across all states, and an
 		# undefined one (hover_pressed, the *_mirrored RTL variants) falls back
@@ -262,6 +356,13 @@ func _layout() -> void:
 	var slot := Rect2(slot_left, top, slot_right - slot_left, bottom - top)
 	for overlay in _slot_overlays:
 		overlay.set_panel_rect(slot)
+
+	var attention_x: float = maxf(left, corner) + EDGE_GAP
+	_attention_button.position = Vector2(attention_x, bottom - ATTENTION_SIZE.y)
+	_attention_button.size = ATTENTION_SIZE
+	_attention_toast.position = Vector2(
+		attention_x + ATTENTION_SIZE.x + EDGE_GAP,
+		bottom - (ATTENTION_SIZE.y + _attention_toast.get_combined_minimum_size().y) * 0.5)
 
 	if _station_detail_menu != null:
 		var sdm_panel: Control = _station_detail_menu.panel

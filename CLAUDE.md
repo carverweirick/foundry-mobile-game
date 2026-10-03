@@ -987,7 +987,18 @@ general form of this lesson.
   corners, gear). `[Hud] ...` lines print at startup and on each detected
   side change - read them from a device run before changing this logic
   again. Desktop testing args: `--simulate-iphone-safe-area`,
-  `--simulate-camera-left`/`--simulate-camera-right`. Menu content must fit ~384px inner panel width: the
+  `--simulate-camera-left`/`--simulate-camera-right`.
+- **Attention button** (design doc 27.6/27.7): bottom-left "!" tile in the
+  Hud with a count; `Attention.collect()` (`scenes/attention.gd`) builds
+  the list from `Station.attention_need()` (defect anywhere > ready to
+  collect at an unstaffed station > start a print at an unstaffed printer)
+  plus two shop-wide items (stranded Awaiting Transfer parts, no active
+  contract). Each tap emits `Hud.attention_requested(item)`; `main.gd`
+  pans/zooms to the station and spawns an `AttentionPulse` outline around
+  `Station.get_sprite_rect()`, or opens Transfer/Contracts. Hidden while
+  any menu is open. Test gotcha: a `--script` test that names `Attention`
+  directly compiles it before autoloads exist and breaks it for the run -
+  go through `main.hud._refresh_attention()`/`_attention_items` instead. Menu content must fit ~384px inner panel width: the
   Contracts Active rows were rebuilt as stacked lines (customer + time
   left / gold progress bar / shipped count + relationship) after four
   fixed columns (~434px) overflowed the slot. Layer 2 sits above every overlay's Backdrop, so rail taps switch
@@ -1316,8 +1327,6 @@ autoload)
   when the phone is flipped? If not, get the `[Hud] gravity=...` log lines
   from Xogot - the gravity sign convention in `Hud._detect_camera_side()`
   is a guess.
-- **Menu structure decision**: design doc 27.6 records an external
-  proposal (Options A/B/C); the user hasn't picked one yet.
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - the user's main open complaint after playing on
@@ -1325,10 +1334,12 @@ autoload)
   resource bar, right-edge icon rail, floating side panel, safe-area insets;
   Overview becomes factory statistics (yield/throughput - not tracked anywhere
   yet, needs a stats collector), Printers becomes an Upgrades screen,
-  Dashboard absorbs manual part moves. **Step 1 (HUD shell) is built** - see
-  the Hud bullet. Still to do: the Contracts row restyle (27.2), the menu
-  redefinition + stats collector (27.3/27.4), consolidating the six-tile
-  rail, and real icon art. The menu panels' own contents are unchanged and
+  Dashboard absorbs manual part moves. **Built:** the HUD shell and the
+  Attention button (see the Hud bullets). **Decided next (27.7):** rail
+  consolidated to Board / Contracts / Team / Factory (Factory = 27.3
+  statistics + upgrades + printers + level-up, needs a stats collector),
+  then floor status badges. Option A's other ideas are tabled for a future
+  update (27.7). Real icon art still to do. The menu panels' own contents are unchanged and
   still the user's main visual complaint.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,
   and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).

@@ -1238,3 +1238,37 @@ and none of A/B/C has a statistics screen. 27.3's "Dashboard = status +
 manual part moves" lines up with A's Stations list + tray, or B's Board.
 Rail side: A says left; the built HUD rail is on the right by the user's
 choice (27.2), now with camera-side-aware insets.
+
+### 27.7 Decision (2026-10-03): consolidated rail now, floor-first ideas tabled
+
+The user chose the hybrid recommended against 27.6: **Option B's structure
+now, growing toward A's floor-first feel later.**
+
+**Adopted, in build order:**
+1. **Attention button** - BUILT (`scenes/attention.gd`, Hud bottom-left).
+   A "!" tile with a count of things that need the player; each tap pans
+   the camera to the next one (zooming in to at least 1.0x and pulsing a
+   gold outline on the station) or opens the menu a shop-wide item lives
+   in. What counts, most urgent first: a defective part anywhere (even at
+   staffed stations - technicians never fix defects); a finished part at an
+   unstaffed station; parts in Awaiting Transfer whose next station has
+   nobody assigned; an unstaffed printer that could start a print for an
+   active contract; no active contract while offers wait.
+2. **Rail consolidated to four**: **Board** (station list with one action
+   per row - the most urgent verb - plus a Transfer tab), **Contracts**,
+   **Team** (today's Staff), **Factory** (the user's 27.3 statistics idea -
+   cycle time, yield, throughput - plus upgrades, printer purchase and the
+   paid level-up). Settings stays the gear in the top bar.
+3. **Status badges on stations** on the floor, reusing
+   `Station.attention_need()`.
+
+**Tabled for a future update** (from Option A, not rejected): Transfer as
+a floor tray with tap-to-route and glowing destinations (+ "route all to
+default" once technicians unlock); buying printers by tapping empty "+"
+bays on the floor; Factory level as a tappable chip in the top HUD;
+contextual specialist hiring from the Defects tab; the station popup as a
+~320px right-side sheet with tabs that unlock one at a time; Option C's
+contract swimlane as the contract detail view.
+
+**Later, separately** (user, 2026-10-03): event-driven unlocking and the
+tutorial - see 26.4 items 5-6 and 27.6's unlock order and three rules.

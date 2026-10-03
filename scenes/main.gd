@@ -50,6 +50,7 @@ const GRID_CELL_SIZE: float = 20.0
 const MIN_ZOOM: float = 0.25   # zoomed out - the whole floor visible at once
 const MAX_ZOOM: float = 2.0   # zoomed in - close look at a single station
 const DEFAULT_ZOOM: float = 1.0
+const ATTENTION_PAN_SECONDS: float = 0.35
 const ZOOM_STEP: float = 1.1
 
 ## A left click/tap that moves less than this many screen pixels between
@@ -314,6 +315,34 @@ func _ready() -> void:
 		[awaiting_transfer_overlay, "Transfer", "transfer"],
 		[printers_overlay, "Printers", "printers"],
 	], settings_overlay, station_detail_menu)
+	hud.attention_requested.connect(_on_attention_requested)
+
+
+## Attention button tap (design doc 27.6): pan to the station that needs the
+## player and pulse it, or open the menu a shop-wide item lives in. Zooms in
+## to at least DEFAULT_ZOOM first - a pulse on a station at MIN_ZOOM is too
+## small to find, which is the whole point of the button.
+func _on_attention_requested(item: Dictionary) -> void:
+	for overlay in _overlays:
+		overlay.close()
+	match item.overlay:
+		"transfer":
+			awaiting_transfer_overlay.toggle()
+			return
+		"contracts":
+			contracts_overlay.toggle()
+			contracts_overlay.get_node("Panel/TabContainer").current_tab = 0 # Offers
+			return
+	var station: Station = item.station
+	if station == null:
+		return
+	if camera.zoom.x < DEFAULT_ZOOM:
+		camera.zoom = Vector2(DEFAULT_ZOOM, DEFAULT_ZOOM)
+		_apply_sprite_zoom_scale()
+	var tween := create_tween()
+	tween.tween_property(camera, "position", _clamp_camera_position(station.position), ATTENTION_PAN_SECONDS) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	AttentionPulse.spawn(station, station.get_sprite_rect().grow(4.0))
 
 
 func _on_overlay_opened(opened_overlay: Node) -> void:

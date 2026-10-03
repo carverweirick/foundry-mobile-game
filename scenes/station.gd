@@ -613,6 +613,39 @@ func has_actionable_work() -> bool:
 	return false
 
 
+## What, if anything, this station needs the player for right now - drives
+## the Hud's Attention button (design doc 27.6) and is meant to drive floor
+## status badges later. Empty when nothing; otherwise {"priority": int,
+## 0 = most urgent, "label": String}. Only counts what no technician will do
+## on their own: defects (technicians never fix them, so even a staffed
+## station asks), and Collect/Queue at a station with nobody assigned.
+## Priorities are shared with Attention.collect()'s non-station items.
+func attention_need() -> Dictionary:
+	for part in _parts_here():
+		if part.is_defective:
+			return {"priority": 0, "label": "Defect - %s" % GameData.DEFECT_CATEGORY_LABEL[part.defect_category]}
+	if station_type == StationType.AUTOMATIC or not assigned_technicians.is_empty():
+		return {}
+	if _has_ready_part_to_send():
+		return {"priority": 1, "label": "Ready to collect"}
+	if is_pipeline_entry and current_part == null and can_start_new_work() \
+			and GameData.next_contract_needing_parts() != null:
+		return {"priority": 3, "label": "Ready to start a print"}
+	return {}
+
+
+## Every Part physically at this station, in whichever slot model it uses.
+func _parts_here() -> Array[Part]:
+	var parts: Array[Part] = []
+	if current_part != null:
+		parts.append(current_part)
+	for run in shelling_active_parts:
+		parts.append(run.part)
+	parts.append_array(shelling_ready_parts)
+	parts.append_array(queue_rack)
+	return parts
+
+
 ## Whether there's currently a finished Part here worth a technician carrying
 ## onward - current_part (normal model) or the front of shelling_ready_parts
 ## (parallel shelling, design doc Section 21.4, where more than one Part can
@@ -662,12 +695,16 @@ const CLICK_PADDING: float = 24.0
 ## whatever texture is currently assigned, not a fixed guess - see the
 ## LABEL_STACK_RECT comment.
 func get_click_rect() -> Rect2:
+	return get_sprite_rect().merge(LABEL_STACK_RECT).grow(CLICK_PADDING)
+
+
+## The sprite's current footprint in station-local space, at its live scale.
+func get_sprite_rect() -> Rect2:
 	var local_sprite_rect := station_sprite.get_rect()
-	var sprite_rect := Rect2(
+	return Rect2(
 		station_sprite.position + local_sprite_rect.position * station_sprite.scale,
 		local_sprite_rect.size * station_sprite.scale
 	)
-	return sprite_rect.merge(LABEL_STACK_RECT).grow(CLICK_PADDING)
 
 
 ## Whether this station can currently take an incoming Part. Ship never
