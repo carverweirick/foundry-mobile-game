@@ -82,6 +82,9 @@ var _long_press_fired: bool = false
 var _show_familiarity_detail: bool = false
 
 
+var _start_cycle_button: Button
+
+
 func _ready() -> void:
 	panel.visible = false
 	backdrop.visible = false
@@ -90,6 +93,12 @@ func _ready() -> void:
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
 	queue_button.pressed.connect(_on_queue_pressed)
 	collect_button.pressed.connect(_on_collect_pressed)
+	# Batch stations (Burnout/Clean/UV Cure): an unstaffed one only runs a
+	# cycle when the player starts it.
+	_start_cycle_button = Button.new()
+	_start_cycle_button.visible = false
+	_start_cycle_button.pressed.connect(_on_start_cycle_pressed)
+	collect_button.add_sibling(_start_cycle_button)
 	push_through_check_box.toggled.connect(_on_push_through_toggled)
 	batch_spin_box.value_changed.connect(_on_batch_size_changed)
 	upgrade_button.pressed.connect(_on_upgrade_pressed)
@@ -306,6 +315,11 @@ func _refresh() -> void:
 	)
 	if collect_button.visible:
 		collect_button.text = "Collect" if not staffed else "Collect (technician is elsewhere)"
+
+	_start_cycle_button.visible = _station.can_start_batch_cycle_manually()
+	if _start_cycle_button.visible:
+		var loaded := mini(_station.batch_cap, _station.batch_load.size() + _station.queue_rack.size())
+		_start_cycle_button.text = "Start cycle (%d/%d loaded)" % [loaded, _station.batch_cap]
 
 	# Design doc Section 21.6: Push Through is generalized beyond Pour to
 	# Shelling/Burnout/Mold Prep too - see GameData.PUSH_THROUGH_ELIGIBLE_STATIONS.
@@ -783,3 +797,9 @@ func _defect_marker(part: Part) -> String:
 	if part.defect_escalated:
 		return " - DEFECT: %s (ESCALATED)" % label
 	return " - DEFECT: %s" % label
+
+
+func _on_start_cycle_pressed() -> void:
+	if _station != null:
+		_station.start_batch_cycle_manually()
+	_refresh.call_deferred()

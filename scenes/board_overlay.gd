@@ -187,6 +187,9 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 		"fix":
 			row.action_button.text = "Fix"
 			row.action_button.tooltip_text = "A part here has a defect - open the station to fix it"
+		"start":
+			row.action_button.text = "Start"
+			row.action_button.tooltip_text = "Start this batch station's cycle with everything loaded"
 		"collect":
 			row.action_button.text = "Collect"
 			row.action_button.tooltip_text = "Move the finished part to Awaiting Transfer"
@@ -213,6 +216,8 @@ func _primary_action(station: Station) -> String:
 		return "fix"
 	if station.current_state == Station.State.READY and not station.is_technician_present():
 		return "collect"
+	if station.can_start_batch_cycle_manually():
+		return "start"
 	if station.assigned_technicians.is_empty() and station.is_pipeline_entry \
 			and station.current_state == Station.State.IDLE and station.can_start_new_work() \
 			and GameData.has_print_order():
@@ -228,6 +233,8 @@ func _on_action_pressed(row: StationRow) -> void:
 	match row.action:
 		"fix":
 			station_requested.emit(row.station)
+		"start":
+			row.station.start_batch_cycle_manually()
 		"collect":
 			row.station.collect_ready_part()
 		"queue":

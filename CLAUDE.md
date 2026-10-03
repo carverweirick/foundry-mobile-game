@@ -593,19 +593,30 @@ general form of this lesson.
   Burnout's load size (`Station._apply_tier_batch_effects()`, also run in
   `_ready()` and on load); every other `BATCHED` station's `batch_cap` stays
   flat at Tier 1.
-- **Burnout fires loads** (user request 2026-10-03): `Station.is_furnace()`.
-  It uses the parallel-run model (`uses_parallel_runs()`, renamed from
-  `is_parallel_shelling()`, is true for Tier 2+ Shelling and Burnout at every
-  tier), but every part in a load starts together with one shared duration
-  (`_try_fire_furnace_load()`). Load size by tier:
-  `GameData.BURNOUT_TIER_LOAD_CAP` {4,6,8,10,12}. Parts gather in the rack
-  (which holds `rack_capacity + batch_cap` for a furnace); a load fires when
-  full, when nothing more is upstream (`_parts_still_coming()`), or after
-  `FURNACE_FILL_WAIT_GAME_MINUTES` (15 = 30s). `_has_open_slot_to_fill()` is
-  "idle and ready to fire" for a furnace so the technician route predictor
-  agrees with the actor. Status reads "Loading 2/4 - fires in Ns" / "Firing
-  4/4 - 90s". Old saves' single-part Burnout migrates on load (a READY part
-  goes straight to the ready list, not re-run).
+- **Batch stations: Burnout, Clean, UV Cure** (user request 2026-10-03,
+  explicitly NOT the Shelling model): `Station.is_batch_station()` (keys of
+  `GameData.BATCH_TIER_LOAD_CAP`, load size by tier: Burnout 4-12, Clean
+  4-10, UV Cure 4-12). An arriving part is loaded into `Station.batch_load`
+  (saved) and **its timer does not start** until the next cycle is started;
+  then every loaded part runs on one shared duration. Who starts it: a
+  present technician (`_try_start_batch_cycle()`, once the load is full,
+  nothing more is upstream - `_parts_still_coming()` - or it's waited
+  `BATCH_FILL_WAIT_GAME_MINUTES` = 15 = 30s), or at an unstaffed station only
+  the player (Start cycle button in the Station Detail Menu, a "Start" Board
+  action, and a "Loaded - start the cycle" Attention item;
+  `start_batch_cycle_manually()`). The machine only loads once the previous
+  cycle's parts are all unloaded (`_batch_machine_free()`). Overflow waits
+  on the queue rack (normal `rack_capacity`). Shares only the bookkeeping
+  with Tier 2+ Shelling (`uses_parallel_runs()`: ShellingRuns while
+  running, `shelling_ready_parts` while unloading). `_has_open_slot_to_fill()`
+  means "a cycle is ready to start" for a batch station so the route
+  predictor matches the actor. Old saves' single-part Clean/UV Cure/Burnout
+  migrate on load.
+- **Rack first, everywhere** (user request 2026-10-03): `receive_part()`
+  always appends an arriving part (a technician's delivery, a held-part
+  claim, a player insert) to the BACK of the queue rack and then pulls from
+  the front - so parts already waiting go in before anything newly brought,
+  and whatever doesn't fit stays on the rack.
 - **A staffed station's racked part doesn't start until the technician is
   physically present** (not just assigned) - `_fill_active_slot_if_possible()`'s
   rack-pull step requires `assigned_technician == null or

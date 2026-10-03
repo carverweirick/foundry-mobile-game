@@ -206,22 +206,39 @@ var shelling_ready_parts: Array[Part] = []
 ## independent timers at Tier 2+." Checked before almost every state-mutating
 ## method below so the exact same Station scene/script serves both models
 ## without duplicating the whole class.
-## Stations whose parts run as several simultaneous ShellingRuns instead of
-## one current_part: Tier 2+ Shelling (independent timers) and Burnout at
-## every tier (a furnace load - see is_furnace()).
+## Stations whose finished parts sit in shelling_ready_parts and whose
+## running parts are ShellingRuns instead of one current_part: Tier 2+
+## Shelling (each part its own timer, started the moment it goes in) and
+## every batch station (see is_batch_station()). The two share only this
+## bookkeeping - how a run STARTS is completely different.
 func uses_parallel_runs() -> bool:
-	return (station_id == "shelling" and current_tier >= 2) or is_furnace()
+	return (station_id == "shelling" and current_tier >= 2) or is_batch_station()
 
 
-## Burnout fires a whole load at once: parts gather in the rack, then every
-## one starts together with the same duration (_try_fire_furnace_load()).
-## Load size comes from GameData.BURNOUT_TIER_LOAD_CAP via batch_cap.
-func is_furnace() -> bool:
-	return station_id == "burnout"
+## Burnout, Clean and UV Cure run a load per cycle (user request,
+## 2026-10-03). A part put in is loaded into batch_load and WAITS - no timer
+## runs - until the next cycle is started: by the technician when present
+## (_try_start_batch_cycle(), once the load is full, nothing more is coming,
+## or it's waited BATCH_FILL_WAIT), or by the player at an unstaffed station
+## (start_batch_cycle_manually()). Everything in the load then runs on one
+## shared clock. Load size is batch_cap, from GameData.BATCH_TIER_LOAD_CAP.
+## Parts that don't fit in the load wait on the queue rack, and the rack is
+## always loaded first.
+func is_batch_station() -> bool:
+	return GameData.BATCH_TIER_LOAD_CAP.has(station_id)
 
 
-## Seconds the current part-full load has been waiting to fire.
-var _furnace_wait: float = 0.0
+## Parts loaded into a batch station's machine, waiting for the next cycle.
+## Saved.
+var batch_load: Array[Part] = []
+## Seconds the current part-full load has been waiting for a cycle start.
+var _batch_wait: float = 0.0
+
+
+## The machine is free to load: no cycle running and the last cycle's
+## parts all unloaded.
+func _batch_machine_free() -> bool:
+	return shelling_active_parts.is_empty() and shelling_ready_parts.is_empty()
 
 ## Design doc Section 9, "Push Through" - Pour only. Armed by
 ## StationDetailMenu's Push Through checkbox (only shown for the Pour
@@ -302,12 +319,8 @@ func _process(delta: float) -> void:
 func simulate_step(delta: float) -> void:
 	if current_state == State.RUNNING or not shelling_active_parts.is_empty():
 		GameData.record_station_busy(station_id, delta)
-	if is_furnace() and shelling_active_parts.is_empty() and not queue_rack.is_empty():
-		_furnace_wait += delta
-		# Unstaffed, nothing else would ever re-check the fire conditions as
-		# the wait runs out; staffed, the technician's act loop does.
-		if assigned_technicians.is_empty():
-			_try_fire_furnace_load()
+	if is_batch_station() and _batch_machine_free() and not batch_load.is_empty():
+		_batch_wait += delta
 	if uses_parallel_runs():
 		_advance_parallel_shelling(delta)
 	elif current_state == State.RUNNING:
@@ -402,38 +415,62 @@ func _parallel_timer_text() -> String:
 	return text
 
 
-## Fires every waiting part (up to batch_cap) as one load: same duration,
-## started together, finished together. Needs a technician present if the
-## furnace is staffed, like any rack pull.
-func _try_fire_furnace_load() -> bool:
-	if not shelling_active_parts.is_empty() or queue_rack.is_empty():
+## Moves queue-rack parts into the machine while there's room - the rack
+## is always loaded before anything newly arriving.
+func _top_up_batch_load() -> void:
+	if not _batch_machine_free():
+		return
+	while batch_load.size() < batch_cap and not queue_rack.is_empty():
+		batch_load.append(queue_rack.pop_front())
+
+
+## Technician-started cycle: needs a technician physically present, and only
+## goes once the load is worth running (_batch_should_start()).
+func _try_start_batch_cycle() -> bool:
+	if not is_technician_present():
 		return false
-	if not _furnace_should_fire():
+	_top_up_batch_load()
+	if not _batch_machine_free() or not _batch_should_start():
 		return false
-	if not (assigned_technicians.is_empty() or is_technician_present()):
+	_start_batch_cycle()
+	return true
+
+
+## The player's Start Cycle button at a station nobody is running.
+func can_start_batch_cycle_manually() -> bool:
+	return is_batch_station() and not is_technician_present() and _batch_machine_free() \
+		and (not batch_load.is_empty() or not queue_rack.is_empty())
+
+
+func start_batch_cycle_manually() -> bool:
+	if not can_start_batch_cycle_manually():
 		return false
+	_top_up_batch_load()
+	_start_batch_cycle()
+	return true
+
+
+func _start_batch_cycle() -> void:
 	var duration := _effective_timer_duration()
-	var count := mini(batch_cap, queue_rack.size())
-	for i in count:
-		var part: Part = queue_rack.pop_front()
+	for part in batch_load:
 		if push_through_armed:
 			part.is_push_through = true
 			push_through_armed = false
 		shelling_active_parts.append(ShellingRun.new(part, duration))
-	_furnace_wait = 0.0
+	batch_load.clear()
+	_batch_wait = 0.0
 	_update_parallel_state()
 	_update_display()
-	return true
 
 
-## A load fires when it's full, when it's waited FURNACE_FILL_WAIT for more,
-## or when nothing more is on its way to Burnout (no point waiting).
-func _furnace_should_fire() -> bool:
-	if queue_rack.is_empty():
+## A technician starts the cycle when the load is full, when nothing more is
+## on its way here (no point waiting), or once it's waited BATCH_FILL_WAIT.
+func _batch_should_start() -> bool:
+	if batch_load.is_empty():
 		return false
-	if queue_rack.size() >= batch_cap:
+	if batch_load.size() >= batch_cap:
 		return true
-	if _furnace_wait >= GameData.game_minutes_to_seconds(GameData.FURNACE_FILL_WAIT_GAME_MINUTES):
+	if _batch_wait >= GameData.game_minutes_to_seconds(GameData.BATCH_FILL_WAIT_GAME_MINUTES):
 		return true
 	return not _parts_still_coming()
 
@@ -442,7 +479,7 @@ func _parts_still_coming() -> bool:
 	var my_index := GameData.PIPELINE_ORDER.find(station_id)
 	for part in GameData.active_parts:
 		if part.current_station_index < my_index and not GameData.nc_shelf.has(part) \
-				and not part.scan_to_learn and not queue_rack.has(part):
+				and not part.scan_to_learn and not queue_rack.has(part) and not batch_load.has(part):
 			return true
 	return false
 
@@ -681,7 +718,9 @@ func has_actionable_work() -> bool:
 	if _has_ready_part_to_send():
 		return true
 	if _has_open_slot_to_fill():
-		if not queue_rack.is_empty():
+		# For a batch station an "open slot" already means a load is ready to
+		# start - see _has_open_slot_to_fill().
+		if is_batch_station() or not queue_rack.is_empty():
 			return true
 		for part in GameData.held_parts:
 			if GameData.next_station_id_for(part) == station_id:
@@ -719,6 +758,8 @@ func attention_need() -> Dictionary:
 		return {}
 	if _has_ready_part_to_send():
 		return {"priority": 1, "label": "Ready to collect"}
+	if can_start_batch_cycle_manually():
+		return {"priority": 3, "label": "Loaded - start the cycle"}
 	if is_pipeline_entry and current_part == null and can_start_new_work() \
 			and GameData.has_print_order():
 		return {"priority": 3, "label": "Ready to start a print"}
@@ -733,6 +774,7 @@ func _parts_here() -> Array[Part]:
 	for run in shelling_active_parts:
 		parts.append(run.part)
 	parts.append_array(shelling_ready_parts)
+	parts.append_array(batch_load)
 	parts.append_array(queue_rack)
 	return parts
 
@@ -752,8 +794,16 @@ func _has_ready_part_to_send() -> bool:
 ## why this can't just be "current_state == IDLE" once a station can be
 ## simultaneously part-busy and part-free.
 func _has_open_slot_to_fill() -> bool:
-	if is_furnace():
-		return shelling_active_parts.is_empty() and _furnace_should_fire()
+	if is_batch_station():
+		# "Worth a technician's visit to start a cycle" - must match exactly
+		# what _try_start_batch_cycle() would do on arrival.
+		if not _batch_machine_free():
+			return false
+		var loadable := mini(batch_cap, batch_load.size() + queue_rack.size())
+		if loadable == 0:
+			return false
+		return loadable >= batch_cap or _batch_wait >= GameData.game_minutes_to_seconds(GameData.BATCH_FILL_WAIT_GAME_MINUTES) \
+			or not _parts_still_coming()
 	if uses_parallel_runs():
 		return shelling_active_parts.size() < max(batch_cap, 1)
 	return current_part == null
@@ -816,10 +866,10 @@ func get_sprite_rect() -> Rect2:
 func can_accept_part() -> bool:
 	if station_type == StationType.AUTOMATIC:
 		return true
-	# A furnace's rack doubles as its loading area, so it holds a full load
-	# on top of the purchased rack slots.
-	if is_furnace():
-		return queue_rack.size() < rack_capacity + batch_cap
+	if is_batch_station():
+		if _batch_machine_free() and batch_load.size() + queue_rack.size() < batch_cap:
+			return true
+		return queue_rack.size() < rack_capacity
 	if _has_open_slot_to_fill():
 		return true
 	return queue_rack.size() < rack_capacity
@@ -840,25 +890,26 @@ func receive_part(part: Part) -> void:
 
 	part.status = Part.Status.IN_STATION
 
-	if is_furnace():
+	# Every arriving part joins the BACK of the line: parts already waiting on
+	# the queue rack always go in first (user request, 2026-10-03), and
+	# whatever doesn't fit waits on the rack.
+	if is_batch_station():
 		queue_rack.append(part)
-		_fill_active_slot_if_possible()
+		_top_up_batch_load()
 		_update_display()
 		return
 
 	if uses_parallel_runs():
-		if _has_open_slot_to_fill():
-			_start_shelling_run(part)
-		else:
-			queue_rack.append(part)
+		queue_rack.append(part)
+		while _has_open_slot_to_fill() and not queue_rack.is_empty():
+			_start_shelling_run(queue_rack.pop_front())
 		_update_display()
 		return
 
+	queue_rack.append(part)
 	if current_part == null:
-		current_part = part
+		current_part = queue_rack.pop_front()
 		_start_running()
-	else:
-		queue_rack.append(part)
 
 	_update_display()
 
@@ -997,6 +1048,10 @@ func remove_part(part: Part) -> bool:
 		queue_rack.erase(part)
 		_update_display()
 		return true
+	if batch_load.has(part):
+		batch_load.erase(part)
+		_update_display()
+		return true
 	for run in shelling_active_parts:
 		if run.part == part:
 			shelling_active_parts.erase(run)
@@ -1058,8 +1113,8 @@ func _apply_tier_batch_effects() -> void:
 		batch_cap = GameData.SHELLING_TIER_PARALLEL_CAP.get(current_tier, batch_cap)
 		if uses_parallel_runs():
 			_migrate_to_parallel_shelling()
-	elif is_furnace():
-		batch_cap = GameData.BURNOUT_TIER_LOAD_CAP.get(current_tier, batch_cap)
+	elif is_batch_station():
+		batch_cap = GameData.BATCH_TIER_LOAD_CAP[station_id].get(current_tier, batch_cap)
 
 
 ## Called from StationDetailMenu's Push Through checkbox (Pour only - see
@@ -1298,9 +1353,9 @@ func _fill_active_slot_if_possible() -> bool:
 ## same ordering (rack first, then held parts, then auto-queue), just against
 ## an open ShellingRun slot instead of the single current_part.
 func _fill_parallel_slot_if_possible() -> bool:
-	if is_furnace():
+	if is_batch_station():
 		_claim_held_parts_bound_here()
-		return _try_fire_furnace_load()
+		return _try_start_batch_cycle()
 	if not _has_open_slot_to_fill():
 		return false
 	if not queue_rack.is_empty() and (assigned_technicians.is_empty() or is_technician_present()):
@@ -1687,8 +1742,8 @@ func _update_display() -> void:
 ## which a single IDLE/RUNNING/READY line can't represent precisely - shared
 ## by the floor status label and get_overview_status() below.
 func _parallel_shelling_status_text() -> String:
-	if is_furnace():
-		return _furnace_status_text()
+	if is_batch_station():
+		return _batch_status_text()
 	if shelling_active_parts.is_empty() and shelling_ready_parts.is_empty():
 		return "Idle"
 	var parts: Array[String] = []
@@ -1723,18 +1778,20 @@ func _parallel_shelling_status_text() -> String:
 ## at 16px, wider than two-thirds of the screen, and a label that wide wins
 ## the floor's overlap suppression and hides every station label near it.
 ## The Overview tab and Station Detail Menu have the room for the full text.
-## One shared clock per load, so a single countdown says it all.
-func _furnace_status_text() -> String:
+## One shared clock per cycle, so a single countdown says it all.
+func _batch_status_text() -> String:
 	var parts: Array[String] = []
 	if not shelling_active_parts.is_empty():
-		parts.append("Firing %d/%d - %.0fs" % [shelling_active_parts.size(), batch_cap, shelling_active_parts[0].time_left])
-	elif not queue_rack.is_empty():
-		var wait_left := GameData.game_minutes_to_seconds(GameData.FURNACE_FILL_WAIT_GAME_MINUTES) - _furnace_wait
-		parts.append("Loading %d/%d - fires in %.0fs" % [queue_rack.size(), batch_cap, maxf(wait_left, 0.0)])
-	else:
+		parts.append("Cycle %d/%d - %.0fs" % [shelling_active_parts.size(), batch_cap, shelling_active_parts[0].time_left])
+	elif not batch_load.is_empty():
+		if assigned_technicians.is_empty():
+			parts.append("Loaded %d/%d - start the cycle" % [batch_load.size(), batch_cap])
+		else:
+			parts.append("Loaded %d/%d - waiting for more" % [batch_load.size(), batch_cap])
+	elif shelling_ready_parts.is_empty():
 		parts.append("Empty - holds %d" % batch_cap)
 	if not shelling_ready_parts.is_empty():
-		parts.append("%d ready" % shelling_ready_parts.size())
+		parts.append("%d ready to unload" % shelling_ready_parts.size())
 	return ", ".join(PackedStringArray(parts))
 
 
@@ -1757,9 +1814,7 @@ func _idle_status_text(compact: bool = false) -> String:
 func _rack_suffix() -> String:
 	if queue_rack.is_empty():
 		return ""
-	# A gathering furnace load already reports its rack as "Loading N/M".
-	if is_furnace() and shelling_active_parts.is_empty():
-		return ""
+
 	return " (+%d waiting)" % queue_rack.size()
 
 
@@ -1896,6 +1951,8 @@ func to_save_dict(tech_indices: Dictionary) -> Dictionary:
 		"queue_rack_ids": rack_ids,
 		"shelling_active": shelling_runs,
 		"shelling_ready_ids": shelling_ready_ids,
+		"batch_load_ids": batch_load.map(func(p: Part): return p.part_id),
+		"batch_wait": _batch_wait,
 		"assigned_technician_indices": assigned_indices,
 		"active_worker_index": tech_indices.get(active_worker, -1),
 		"incoming_technician_index": tech_indices.get(incoming_technician, -1),
@@ -1940,10 +1997,21 @@ func load_save_dict(data: Dictionary, parts_by_id: Dictionary, techs: Array) -> 
 		if part != null:
 			shelling_ready_parts.append(part)
 
-	# Saves from before Burnout used loads hold its part in current_part.
+	batch_load.clear()
+	for raw_id in data.get("batch_load_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			batch_load.append(part)
+	_batch_wait = float(data.get("batch_wait", 0.0))
+
+	# Saves from before batch stations hold the part in current_part, and a
+	# rack that may now be over its own capacity (Burnout briefly used the
+	# rack as its loading area) - top the load up from it.
 	_apply_tier_batch_effects()
-	if is_furnace() and current_part != null:
-		_migrate_to_parallel_shelling()
+	if is_batch_station():
+		if current_part != null:
+			_migrate_to_parallel_shelling()
+		_top_up_batch_load()
 
 	assigned_technicians.clear()
 	for raw_index in data.get("assigned_technician_indices", []):

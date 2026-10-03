@@ -607,14 +607,20 @@ const ABRASIVE_BLAST_TIER_BATCH_CAP := {1: 1, 2: 3, 3: 4, 4: 5, 5: 6}
 ## thresholds given - first-pass placeholder, one extra parallel slot per tier
 ## starting at Tier 2.
 const SHELLING_TIER_PARALLEL_CAP := {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
-## Burnout is a furnace: every part in a load fires together (user request,
-## 2026-10-03: "burnout should be able to hold more than 1 part at a time.
-## the level should depend on how many it can hold during a cycle").
-## Placeholder numbers, by tier.
-const BURNOUT_TIER_LOAD_CAP := {1: 4, 2: 6, 3: 8, 4: 10, 5: 12}
-## A part-full furnace waits this long for more parts before firing anyway
-## (it also fires straight away when nothing more is on its way upstream).
-const FURNACE_FILL_WAIT_GAME_MINUTES: float = 15.0
+## Batch stations (user request, 2026-10-03): Burnout, Clean and UV Cure
+## run a whole load per cycle. A part put in waits, loaded, and its timer
+## only starts when the technician starts the next cycle - unlike Shelling,
+## where each part starts its own timer the moment it goes in. Load size by
+## tier, placeholder numbers.
+const BATCH_TIER_LOAD_CAP := {
+	"burnout": {1: 4, 2: 6, 3: 8, 4: 10, 5: 12},
+	"clean": {1: 4, 2: 5, 3: 6, 4: 8, 5: 10},
+	"uv_cure": {1: 4, 2: 6, 3: 8, 4: 10, 5: 12},
+}
+## A technician holding a part-full load starts the cycle once it's waited
+## this long for more parts (or right away if it's full or nothing more is
+## coming). Unstaffed, only the player starts a cycle.
+const BATCH_FILL_WAIT_GAME_MINUTES: float = 15.0
 
 
 ## Design doc Section 8: Contracts (reputation, randomized generation, repeat
