@@ -25,7 +25,7 @@ enum State { IDLE, RUNNING, READY }
 ## Each ShellingRun ticks its own elapsed time independently in
 ## _advance_parallel_shelling() below, rather than sharing the single
 ## _run_elapsed/_run_duration clock the rest of this class uses. Only used when
-## is_parallel_shelling() is true (station_id=="shelling" and
+## uses_parallel_runs() is true (station_id=="shelling" and
 ## current_tier>=2); Tier 1 Shelling still runs through the normal
 ## current_part run-clock path unchanged.
 class ShellingRun:
@@ -189,7 +189,7 @@ func _interact_anim_frame_seconds() -> float:
 var _interact_anim_elapsed: float = 0.0
 
 ## Parallel-shelling-only state (design doc Section 21.4) - see
-## is_parallel_shelling(). shelling_active_parts holds one ShellingRun per
+## uses_parallel_runs(). shelling_active_parts holds one ShellingRun per
 ## Part currently mid-cycle, up to batch_cap of them running at once, each on
 ## its own independent clock. shelling_ready_parts holds Parts whose run
 ## finished but haven't been sent/collected onward yet - the parallel
@@ -206,8 +206,22 @@ var shelling_ready_parts: Array[Part] = []
 ## independent timers at Tier 2+." Checked before almost every state-mutating
 ## method below so the exact same Station scene/script serves both models
 ## without duplicating the whole class.
-func is_parallel_shelling() -> bool:
-	return station_id == "shelling" and current_tier >= 2
+## Stations whose parts run as several simultaneous ShellingRuns instead of
+## one current_part: Tier 2+ Shelling (independent timers) and Burnout at
+## every tier (a furnace load - see is_furnace()).
+func uses_parallel_runs() -> bool:
+	return (station_id == "shelling" and current_tier >= 2) or is_furnace()
+
+
+## Burnout fires a whole load at once: parts gather in the rack, then every
+## one starts together with the same duration (_try_fire_furnace_load()).
+## Load size comes from GameData.BURNOUT_TIER_LOAD_CAP via batch_cap.
+func is_furnace() -> bool:
+	return station_id == "burnout"
+
+
+## Seconds the current part-full load has been waiting to fire.
+var _furnace_wait: float = 0.0
 
 ## Design doc Section 9, "Push Through" - Pour only. Armed by
 ## StationDetailMenu's Push Through checkbox (only shown for the Pour
@@ -240,6 +254,7 @@ var run_time_left: float:
 
 
 func _ready() -> void:
+	_apply_tier_batch_effects()
 	batch_size = batch_cap
 
 	name_label.text = station_name
@@ -287,7 +302,13 @@ func _process(delta: float) -> void:
 func simulate_step(delta: float) -> void:
 	if current_state == State.RUNNING or not shelling_active_parts.is_empty():
 		GameData.record_station_busy(station_id, delta)
-	if is_parallel_shelling():
+	if is_furnace() and shelling_active_parts.is_empty() and not queue_rack.is_empty():
+		_furnace_wait += delta
+		# Unstaffed, nothing else would ever re-check the fire conditions as
+		# the wait runs out; staffed, the technician's act loop does.
+		if assigned_technicians.is_empty():
+			_try_fire_furnace_load()
+	if uses_parallel_runs():
 		_advance_parallel_shelling(delta)
 	elif current_state == State.RUNNING:
 		# Completion fires from here now rather than a Timer node's `timeout`
@@ -321,7 +342,7 @@ func _advance_parallel_shelling(delta: float) -> void:
 ## and the old inline RUNNING branch so that both models' *visual* half sits
 ## here, on the visuals-only side of the simulate_step() split above.
 func _update_timer_bar_readout() -> void:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		if shelling_active_parts.is_empty():
 			_clear_timer_bar()
 			return
@@ -379,6 +400,51 @@ func _parallel_timer_text() -> String:
 	if runs.size() > MAX_TIMERS_ON_FLOOR:
 		text += " +%d" % (runs.size() - MAX_TIMERS_ON_FLOOR)
 	return text
+
+
+## Fires every waiting part (up to batch_cap) as one load: same duration,
+## started together, finished together. Needs a technician present if the
+## furnace is staffed, like any rack pull.
+func _try_fire_furnace_load() -> bool:
+	if not shelling_active_parts.is_empty() or queue_rack.is_empty():
+		return false
+	if not _furnace_should_fire():
+		return false
+	if not (assigned_technicians.is_empty() or is_technician_present()):
+		return false
+	var duration := _effective_timer_duration()
+	var count := mini(batch_cap, queue_rack.size())
+	for i in count:
+		var part: Part = queue_rack.pop_front()
+		if push_through_armed:
+			part.is_push_through = true
+			push_through_armed = false
+		shelling_active_parts.append(ShellingRun.new(part, duration))
+	_furnace_wait = 0.0
+	_update_parallel_state()
+	_update_display()
+	return true
+
+
+## A load fires when it's full, when it's waited FURNACE_FILL_WAIT for more,
+## or when nothing more is on its way to Burnout (no point waiting).
+func _furnace_should_fire() -> bool:
+	if queue_rack.is_empty():
+		return false
+	if queue_rack.size() >= batch_cap:
+		return true
+	if _furnace_wait >= GameData.game_minutes_to_seconds(GameData.FURNACE_FILL_WAIT_GAME_MINUTES):
+		return true
+	return not _parts_still_coming()
+
+
+func _parts_still_coming() -> bool:
+	var my_index := GameData.PIPELINE_ORDER.find(station_id)
+	for part in GameData.active_parts:
+		if part.current_station_index < my_index and not GameData.nc_shelf.has(part) \
+				and not part.scan_to_learn and not queue_rack.has(part):
+			return true
+	return false
 
 
 func _start_shelling_run(part: Part) -> void:
@@ -441,12 +507,19 @@ func _update_parallel_state() -> void:
 ## the normal single-current_part way (Tier 1) at the moment it crossed into
 ## Tier 2 - without this, that in-progress run would keep ticking under the
 ## old single run clock (which _process() stops advancing entirely once
-## is_parallel_shelling() flips
+## uses_parallel_runs() flips
 ## true, leaving current_part silently stuck instead of visibly wrong. Wraps
 ## whatever time was already spent into a ShellingRun with the same time_left
 ## the player was already looking at, then hands off to the parallel model.
 func _migrate_to_parallel_shelling() -> void:
 	if current_part == null:
+		return
+	# A finished-but-uncollected part (only possible from a save made before
+	# Burnout used loads) is already done - don't run it again.
+	if current_state == State.READY:
+		shelling_ready_parts.append(current_part)
+		current_part = null
+		_update_parallel_state()
 		return
 	var duration := timer_bar.max_value
 	var time_left := run_time_left
@@ -669,7 +742,7 @@ func _parts_here() -> Array[Part]:
 ## (parallel shelling, design doc Section 21.4, where more than one Part can
 ## be simultaneously done at once).
 func _has_ready_part_to_send() -> bool:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		return not shelling_ready_parts.is_empty()
 	return current_state == State.READY and current_part != null
 
@@ -679,7 +752,9 @@ func _has_ready_part_to_send() -> bool:
 ## why this can't just be "current_state == IDLE" once a station can be
 ## simultaneously part-busy and part-free.
 func _has_open_slot_to_fill() -> bool:
-	if is_parallel_shelling():
+	if is_furnace():
+		return shelling_active_parts.is_empty() and _furnace_should_fire()
+	if uses_parallel_runs():
 		return shelling_active_parts.size() < max(batch_cap, 1)
 	return current_part == null
 
@@ -741,6 +816,10 @@ func get_sprite_rect() -> Rect2:
 func can_accept_part() -> bool:
 	if station_type == StationType.AUTOMATIC:
 		return true
+	# A furnace's rack doubles as its loading area, so it holds a full load
+	# on top of the purchased rack slots.
+	if is_furnace():
+		return queue_rack.size() < rack_capacity + batch_cap
 	if _has_open_slot_to_fill():
 		return true
 	return queue_rack.size() < rack_capacity
@@ -761,7 +840,13 @@ func receive_part(part: Part) -> void:
 
 	part.status = Part.Status.IN_STATION
 
-	if is_parallel_shelling():
+	if is_furnace():
+		queue_rack.append(part)
+		_fill_active_slot_if_possible()
+		_update_display()
+		return
+
+	if uses_parallel_runs():
 		if _has_open_slot_to_fill():
 			_start_shelling_run(part)
 		else:
@@ -867,7 +952,7 @@ func collect_ready_part() -> bool:
 	if is_technician_present():
 		return false
 
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		if shelling_ready_parts.is_empty():
 			return false
 		var part: Part = shelling_ready_parts.pop_front()
@@ -960,7 +1045,7 @@ func try_upgrade_rack() -> bool:
 ## rather than a shared batch timer... Abrasive Blast tiers unlock batching
 ## that does not exist at Tier 1"). For Shelling, batch_cap is repurposed as
 ## the parallel-run cap (how many independent ShellingRuns at once) rather
-## than a shared-timer batch size - see is_parallel_shelling(). Every other
+## than a shared-timer batch size - see uses_parallel_runs(). Every other
 ## BATCHED station's batch_cap stays flat at its Tier 1 value - Section 21.8
 ## only calls out these three cases, general per-tier batch growth for
 ## everything else is still "not built yet."
@@ -971,8 +1056,10 @@ func _apply_tier_batch_effects() -> void:
 		batch_cap = GameData.ABRASIVE_BLAST_TIER_BATCH_CAP.get(current_tier, batch_cap)
 	elif station_id == "shelling":
 		batch_cap = GameData.SHELLING_TIER_PARALLEL_CAP.get(current_tier, batch_cap)
-		if is_parallel_shelling():
+		if uses_parallel_runs():
 			_migrate_to_parallel_shelling()
+	elif is_furnace():
+		batch_cap = GameData.BURNOUT_TIER_LOAD_CAP.get(current_tier, batch_cap)
 
 
 ## Called from StationDetailMenu's Push Through checkbox (Pour only - see
@@ -1099,7 +1186,7 @@ func _try_send_to_next_station(tech: Technician) -> bool:
 	if next_station == null:
 		return false
 
-	var part := shelling_ready_parts[0] if is_parallel_shelling() else current_part
+	var part := shelling_ready_parts[0] if uses_parallel_runs() else current_part
 
 	if next_station.station_type == StationType.AUTOMATIC:
 		if not next_station.can_accept_part():
@@ -1130,7 +1217,7 @@ func _try_send_to_next_station(tech: Technician) -> bool:
 ## regardless of whether it's headed to Ship, a technician's carry inventory,
 ## or Awaiting Transfer.
 func _clear_sent_ready_part(part: Part) -> void:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		shelling_ready_parts.erase(part)
 		_update_parallel_state()
 	else:
@@ -1193,7 +1280,7 @@ func _deposit_one_carried_part(tech: Technician) -> bool:
 ## still drains its rack immediately, same as before. Returns whether it
 ## actually loaded something.
 func _fill_active_slot_if_possible() -> bool:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		return _fill_parallel_slot_if_possible()
 	if current_part != null:
 		return false
@@ -1211,6 +1298,9 @@ func _fill_active_slot_if_possible() -> bool:
 ## same ordering (rack first, then held parts, then auto-queue), just against
 ## an open ShellingRun slot instead of the single current_part.
 func _fill_parallel_slot_if_possible() -> bool:
+	if is_furnace():
+		_claim_held_parts_bound_here()
+		return _try_fire_furnace_load()
 	if not _has_open_slot_to_fill():
 		return false
 	if not queue_rack.is_empty() and (assigned_technicians.is_empty() or is_technician_present()):
@@ -1508,7 +1598,7 @@ func _resolve_push_through(part: Part) -> void:
 	_gain_worker_experience(part)
 	var outcome := _roll_defect_outcome(part)
 
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		if outcome == GameData.DefectCategory.NONE:
 			part.status = Part.Status.READY_TO_ROUTE
 			shelling_ready_parts.append(part)
@@ -1572,7 +1662,7 @@ func _update_display() -> void:
 		_clear_timer_bar()
 		return
 
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		status_label.text = _parallel_shelling_status_text() + _rack_suffix() + _defect_suffix()
 		_refresh_state_visual()
 		return
@@ -1597,6 +1687,8 @@ func _update_display() -> void:
 ## which a single IDLE/RUNNING/READY line can't represent precisely - shared
 ## by the floor status label and get_overview_status() below.
 func _parallel_shelling_status_text() -> String:
+	if is_furnace():
+		return _furnace_status_text()
 	if shelling_active_parts.is_empty() and shelling_ready_parts.is_empty():
 		return "Idle"
 	var parts: Array[String] = []
@@ -1631,6 +1723,21 @@ func _parallel_shelling_status_text() -> String:
 ## at 16px, wider than two-thirds of the screen, and a label that wide wins
 ## the floor's overlap suppression and hides every station label near it.
 ## The Overview tab and Station Detail Menu have the room for the full text.
+## One shared clock per load, so a single countdown says it all.
+func _furnace_status_text() -> String:
+	var parts: Array[String] = []
+	if not shelling_active_parts.is_empty():
+		parts.append("Firing %d/%d - %.0fs" % [shelling_active_parts.size(), batch_cap, shelling_active_parts[0].time_left])
+	elif not queue_rack.is_empty():
+		var wait_left := GameData.game_minutes_to_seconds(GameData.FURNACE_FILL_WAIT_GAME_MINUTES) - _furnace_wait
+		parts.append("Loading %d/%d - fires in %.0fs" % [queue_rack.size(), batch_cap, maxf(wait_left, 0.0)])
+	else:
+		parts.append("Empty - holds %d" % batch_cap)
+	if not shelling_ready_parts.is_empty():
+		parts.append("%d ready" % shelling_ready_parts.size())
+	return ", ".join(PackedStringArray(parts))
+
+
 func _idle_status_text(compact: bool = false) -> String:
 	if not is_pipeline_entry:
 		return "Waiting for part"
@@ -1650,6 +1757,9 @@ func _idle_status_text(compact: bool = false) -> String:
 func _rack_suffix() -> String:
 	if queue_rack.is_empty():
 		return ""
+	# A gathering furnace load already reports its rack as "Loading N/M".
+	if is_furnace() and shelling_active_parts.is_empty():
+		return ""
 	return " (+%d waiting)" % queue_rack.size()
 
 
@@ -1661,7 +1771,7 @@ func _rack_suffix() -> String:
 ## clears defect_category until the fix paths exist (next pass), so it rides
 ## along with the Part for the rest of its trip.
 func _defect_suffix() -> String:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		return _defect_suffix_parallel()
 	if current_part == null or not current_part.is_defective:
 		return ""
@@ -1695,7 +1805,7 @@ func _defect_suffix_parallel() -> String:
 func get_overview_status() -> String:
 	if station_type == StationType.AUTOMATIC:
 		return "Automatic - ships parts on arrival"
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		return _parallel_shelling_status_text() + _current_part_suffix() + _rack_suffix() + _defect_suffix()
 
 	var status: String
@@ -1718,7 +1828,7 @@ func get_overview_status() -> String:
 ## already tight on space at a small pixel-font size; this info is one tap
 ## away in either of those two more detailed views instead.
 func _current_part_suffix() -> String:
-	if is_parallel_shelling():
+	if uses_parallel_runs():
 		# Only the READY parts get named here. The running ones are already
 		# listed, with their countdowns, by _parallel_shelling_status_text() -
 		# naming them again produced a status line that read
@@ -1829,6 +1939,11 @@ func load_save_dict(data: Dictionary, parts_by_id: Dictionary, techs: Array) -> 
 		var part: Part = parts_by_id.get(int(raw_id))
 		if part != null:
 			shelling_ready_parts.append(part)
+
+	# Saves from before Burnout used loads hold its part in current_part.
+	_apply_tier_batch_effects()
+	if is_furnace() and current_part != null:
+		_migrate_to_parallel_shelling()
 
 	assigned_technicians.clear()
 	for raw_index in data.get("assigned_technician_indices", []):

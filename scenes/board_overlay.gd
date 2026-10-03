@@ -245,7 +245,7 @@ func _on_name_pressed(row: StationRow) -> void:
 ## Fraction complete (0.0-1.0). Derived from the station's own timer_bar
 ## (station.gd keeps it in sync); parallel Shelling reads its soonest run.
 func _station_progress_fraction(station: Station) -> float:
-	if station.is_parallel_shelling():
+	if station.uses_parallel_runs():
 		if not station.shelling_ready_parts.is_empty():
 			return 1.0
 		if station.shelling_active_parts.is_empty():
@@ -267,7 +267,7 @@ func _fraction_from_bar(station: Station) -> float:
 
 
 func _bar_color_for(station: Station) -> Color:
-	if station.is_parallel_shelling():
+	if station.uses_parallel_runs():
 		if not station.shelling_ready_parts.is_empty():
 			return BAR_COLOR_READY
 		if not station.shelling_active_parts.is_empty():

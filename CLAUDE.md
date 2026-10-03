@@ -589,9 +589,23 @@ general form of this lesson.
   simultaneous multi-part batching, still not built except for Shelling's
   parallel-tier model below).
 - **`batch_cap` has no generic upgrade purchase** - it only changes via
-  tier for printer instances, Abrasive Blast, and Shelling's parallel-run
-  cap (`Station._apply_tier_batch_effects()`); every other `BATCHED`
-  station's `batch_cap` stays flat at Tier 1.
+  tier for printer instances, Abrasive Blast, Shelling's parallel-run cap and
+  Burnout's load size (`Station._apply_tier_batch_effects()`, also run in
+  `_ready()` and on load); every other `BATCHED` station's `batch_cap` stays
+  flat at Tier 1.
+- **Burnout fires loads** (user request 2026-10-03): `Station.is_furnace()`.
+  It uses the parallel-run model (`uses_parallel_runs()`, renamed from
+  `is_parallel_shelling()`, is true for Tier 2+ Shelling and Burnout at every
+  tier), but every part in a load starts together with one shared duration
+  (`_try_fire_furnace_load()`). Load size by tier:
+  `GameData.BURNOUT_TIER_LOAD_CAP` {4,6,8,10,12}. Parts gather in the rack
+  (which holds `rack_capacity + batch_cap` for a furnace); a load fires when
+  full, when nothing more is upstream (`_parts_still_coming()`), or after
+  `FURNACE_FILL_WAIT_GAME_MINUTES` (15 = 30s). `_has_open_slot_to_fill()` is
+  "idle and ready to fire" for a furnace so the technician route predictor
+  agrees with the actor. Status reads "Loading 2/4 - fires in Ns" / "Firing
+  4/4 - 90s". Old saves' single-part Burnout migrates on load (a READY part
+  goes straight to the ready list, not re-run).
 - **A staffed station's racked part doesn't start until the technician is
   physically present** (not just assigned) - `_fill_active_slot_if_possible()`'s
   rack-pull step requires `assigned_technician == null or
@@ -1426,9 +1440,10 @@ From the design doc, still pending:
   familiarity carryover finer than the flat family-wide ~50% (24.5),
   Specialist/Engineer skill tiers (24.7), per-geometry (not per-family)
   difficulty rating (24.8), real per-geometry art (24.3's other half).
-- **Real simultaneous multi-part batching** (Section 4/17) - queue racks
-  buffer several Parts, but they still process one at a time through the
-  single active slot. Shelling's Tier 2+ parallel independent timers is a
+- **Real simultaneous multi-part batching** (Section 4/17) - built for
+  Burnout only (furnace loads, above); every other batched station's queue
+  rack still buffers Parts that process one at a time through the single
+  active slot. Shelling's Tier 2+ parallel independent timers is a
   different, already-built answer to "more than one part progressing at
   once," not the same as a shared-batch-timer running several parts
   together on one clock. The batch size `SpinBox` sets `Station.batch_size`

@@ -603,10 +603,18 @@ const ABRASIVE_BLAST_TIER_BATCH_CAP := {1: 1, 2: 3, 3: 4, 4: 5, 5: 6}
 ## independent timers at Tier 2+." Station.batch_cap is repurposed for
 ## Shelling specifically as "how many parts can run their own independent
 ## timer at once" rather than a shared-batch-timer size - see
-## Station.is_parallel_shelling()/shelling_active_parts. No concrete tier
+## Station.uses_parallel_runs()/shelling_active_parts. No concrete tier
 ## thresholds given - first-pass placeholder, one extra parallel slot per tier
 ## starting at Tier 2.
 const SHELLING_TIER_PARALLEL_CAP := {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
+## Burnout is a furnace: every part in a load fires together (user request,
+## 2026-10-03: "burnout should be able to hold more than 1 part at a time.
+## the level should depend on how many it can hold during a cycle").
+## Placeholder numbers, by tier.
+const BURNOUT_TIER_LOAD_CAP := {1: 4, 2: 6, 3: 8, 4: 10, 5: 12}
+## A part-full furnace waits this long for more parts before firing anyway
+## (it also fires straight away when nothing more is on its way upstream).
+const FURNACE_FILL_WAIT_GAME_MINUTES: float = 15.0
 
 
 ## Design doc Section 8: Contracts (reputation, randomized generation, repeat

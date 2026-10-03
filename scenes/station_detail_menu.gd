@@ -466,7 +466,7 @@ func _refresh_defect_row() -> void:
 	# Parallel shelling (design doc Section 21.4) can have several Parts
 	## simultaneously active/ready, unlike every other station's single
 	## current_part - list fix buttons for every flagged one, not just one.
-	if _station.is_parallel_shelling():
+	if _station.uses_parallel_runs():
 		var any := false
 		for run in _station.shelling_active_parts:
 			if run.part.is_defective:
