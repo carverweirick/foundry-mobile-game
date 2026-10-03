@@ -392,7 +392,7 @@ func _refresh_technician_assign_list() -> void:
 	if GameData.technicians.is_empty():
 		var empty_label := Label.new()
 		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		empty_label.text = "No technicians hired yet - hire from the Staff overlay."
+		empty_label.text = "No technicians hired yet - hire them from Team."
 		technician_assign_list.add_child(empty_label)
 		return
 
@@ -413,7 +413,14 @@ func _refresh_technician_assign_list() -> void:
 		# Engineers own contracts, not stations (design doc 28.2).
 		if tech.is_engineer:
 			continue
-		var row := HBoxContainer.new()
+		var assigned_here := _station.assigned_technicians.has(tech)
+		var group_covered := is_printer and tech.assigned_station_ids.has("printing")
+
+		# A group-covered technician gets a sentence instead of a button, and
+		# that sentence goes UNDER the name in a VBox - an autowrapping note
+		# beside an expand-fill name in an HBox gets a sliver of width and
+		# wraps one character per line (CLAUDE.md UI rule 1).
+		var row: BoxContainer = VBoxContainer.new() if assigned_here and group_covered else HBoxContainer.new()
 
 		var label := Label.new()
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -421,13 +428,10 @@ func _refresh_technician_assign_list() -> void:
 		label.text = "%s (%s, %s Tier)" % [tech.technician_name, tech.role_label, tech.tier_label]
 		row.add_child(label)
 
-		var assigned_here := _station.assigned_technicians.has(tech)
-		var group_covered := is_printer and tech.assigned_station_ids.has("printing")
-
 		if assigned_here and group_covered:
 			var note := Label.new()
 			note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			note.text = "via 'Printing (all)' - manage from Staff"
+			note.text = "Assigned via 'Printing (all)' - manage it from Team"
 			row.add_child(note)
 		else:
 			var button := Button.new()
