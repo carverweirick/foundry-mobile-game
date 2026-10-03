@@ -592,9 +592,10 @@ func _clear_list(list: Container) -> void:
 ## same persistent-widget way as the Overview overlay's rows.
 class ContractRow:
 	var box: PanelContainer
-	var container: HBoxContainer
+	var container: VBoxContainer
 	var customer_label: Label
 	var relationship_label: Label
+	var progress_bar: ProgressBar
 	var progress_label: Label
 	var time_label: Label
 
@@ -649,6 +650,8 @@ func _refresh_contracts_tab() -> void:
 		row.customer_label.text = "%s (%s)" % [c.customer_name, c.tier_label]
 		row.relationship_label.text = "%d/5 rel." % int(round(relationship))
 		row.progress_label.text = "%d/%d shipped (%d in pipe)" % [c.quantity_shipped, c.quantity_required, in_pipeline]
+		row.progress_bar.max_value = maxi(c.quantity_required, 1)
+		row.progress_bar.value = c.quantity_shipped
 		row.time_label.text = "%s left" % _format_time(c.time_remaining)
 
 
@@ -675,30 +678,54 @@ func _create_contract_row() -> ContractRow:
 	row.box = PanelContainer.new()
 	row.box.add_theme_stylebox_override("panel", _row_box_style())
 
-	row.container = HBoxContainer.new()
+	# Stacked lines, not four fixed-width columns: the columns needed ~434px
+	# and overflowed once menus moved into the ~384px-wide panel slot beside
+	# the Hud rail (design doc Section 27.2). Each line is one expand-fill
+	# label plus one short no-wrap readout (CLAUDE.md UI rule 1), so the row
+	# fits any panel width. The bar is the first piece of 27.2's richer
+	# progression display.
+	row.container = VBoxContainer.new()
+	row.container.add_theme_constant_override("separation", 2)
 	row.box.add_child(row.container)
 
+	var top_line := HBoxContainer.new()
+	row.container.add_child(top_line)
 	row.customer_label = Label.new()
 	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.customer_label.custom_minimum_size = Vector2(120.0, 40.0)
-	row.container.add_child(row.customer_label)
+	row.customer_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_line.add_child(row.customer_label)
+	row.time_label = Label.new()
+	top_line.add_child(row.time_label)
 
-	row.relationship_label = Label.new()
-	row.relationship_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.relationship_label.custom_minimum_size = Vector2(70.0, 40.0)
-	row.container.add_child(row.relationship_label)
+	row.progress_bar = ProgressBar.new()
+	row.progress_bar.show_percentage = false
+	row.progress_bar.custom_minimum_size = Vector2(0.0, 8.0)
+	# The Theme has no ProgressBar style, and Godot's pale default fill is
+	# near-invisible at 8px. Gold-on-dark under both themes, like the other
+	# hardcoded gold accents.
+	row.progress_bar.add_theme_stylebox_override("background", _bar_style(Color(0.12, 0.11, 0.10)))
+	row.progress_bar.add_theme_stylebox_override("fill", _bar_style(Color(0.92, 0.70, 0.20)))
+	row.container.add_child(row.progress_bar)
 
+	var bottom_line := HBoxContainer.new()
+	row.container.add_child(bottom_line)
 	row.progress_label = Label.new()
 	row.progress_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.progress_label.custom_minimum_size = Vector2(130.0, 0.0)
-	row.container.add_child(row.progress_label)
-
-	row.time_label = Label.new()
-	row.time_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.time_label.custom_minimum_size = Vector2(90.0, 0.0)
-	row.container.add_child(row.time_label)
+	row.progress_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom_line.add_child(row.progress_label)
+	row.relationship_label = Label.new()
+	bottom_line.add_child(row.relationship_label)
 
 	return row
+
+
+func _bar_style(color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.border_color = Color(0.05, 0.04, 0.03)
+	style.set_border_width_all(1)
+	style.anti_aliasing = false
+	return style
 
 
 func _format_time(seconds: float) -> String:

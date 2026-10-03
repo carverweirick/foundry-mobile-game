@@ -30,8 +30,10 @@ const EDGE_GAP: float = 4.0
 ## floor stays visible beside it. Current menu contents need most of it -
 ## narrowing further waits on the menu redesign (Section 27.3).
 const PANEL_MAX_WIDTH: float = 400.0
-## Desktop testing aid: launch with `-- --simulate-iphone-safe-area` to get
-## an iPhone 16 Pro's landscape insets (in logical px at a 270px-tall view).
+## An iPhone 16 Pro's landscape insets in logical px at a 270px-tall view.
+## Also the fallback for any wide handheld screen that reports none (see
+## _safe_insets()). Desktop testing: launch with
+## `-- --simulate-iphone-safe-area` to force them on.
 const SIMULATE_SAFE_AREA_ARG := "--simulate-iphone-safe-area"
 const SIMULATED_INSETS := {"left": 40.0, "top": 0.0, "right": 40.0, "bottom": 14.0}
 const DEBT_COLOR := Color(0.85, 0.2, 0.2)
@@ -85,6 +87,7 @@ func bind(rail_entries: Array, settings_overlay: OverlayBase, station_detail_men
 	_station_detail_menu = station_detail_menu
 	_apply_theme()
 	_layout()
+	_log_safe_area_diagnostics()
 
 
 func _process(_delta: float) -> void:
@@ -241,23 +244,56 @@ func _layout() -> void:
 		rack.size.y = bottom - top
 
 
-## Device safe-area insets converted into logical viewport px. Only trusted
-## on mobile - on desktop get_display_safe_area() describes the monitor, not
-## this window.
+## Device safe-area insets converted into logical viewport px.
+##
+## Two layers, because the first one returned nothing on the user's iPhone
+## 16 Pro under Xogot (the HUD ran edge to edge and the Dynamic Island
+## covered the rail): the OS-reported safe area, floored at SIMULATED_INSETS
+## on any handheld screen 2:1 or wider - every phone that shape has rounded
+## corners and a camera cutout.
+## The island can sit on either side depending on which way the phone is
+## turned, so insets stay symmetric left/right.
 func _safe_insets(view: Vector2) -> Dictionary:
 	if SIMULATE_SAFE_AREA_ARG in OS.get_cmdline_user_args():
 		return SIMULATED_INSETS
 	var none := {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
-	if not OS.has_feature("mobile"):
+	var is_phone_os := OS.has_feature("mobile") or OS.get_name() in ["iOS", "Android"]
+	if not is_phone_os and not DisplayServer.is_touchscreen_available():
 		return none
+	var reported := none
 	var window := Vector2(DisplayServer.window_get_size())
-	if window.x <= 0.0 or window.y <= 0.0:
-		return none
-	var safe := Rect2(DisplayServer.get_display_safe_area())
-	var k: Vector2 = view / window
+	# Desktop get_display_safe_area() describes the monitor, not this window,
+	# so the reported area is only read on a phone OS.
+	if is_phone_os and window.x > 0.0 and window.y > 0.0:
+		var safe := Rect2(DisplayServer.get_display_safe_area())
+		var k: Vector2 = view / window
+		var side: float = maxf(safe.position.x, window.x - safe.end.x) * k.x
+		reported = {
+			"left": maxf(0.0, side),
+			"top": maxf(0.0, safe.position.y * k.y),
+			"right": maxf(0.0, side),
+			"bottom": maxf(0.0, (window.y - safe.end.y) * k.y),
+		}
+	if view.y <= 0.0 or view.x / view.y < 2.0:
+		return reported
+	# Wide handheld: never less than the fallback on the sides/bottom, in case
+	# the platform under-reports (or reports a portrait-shaped area). Top stays
+	# 0 - the game is landscape-locked and a landscape phone has no top inset.
 	return {
-		"left": maxf(0.0, safe.position.x * k.x),
-		"top": maxf(0.0, safe.position.y * k.y),
-		"right": maxf(0.0, (window.x - safe.end.x) * k.x),
-		"bottom": maxf(0.0, (window.y - safe.end.y) * k.y),
+		"left": maxf(reported.left, SIMULATED_INSETS.left),
+		"top": 0.0,
+		"right": maxf(reported.right, SIMULATED_INSETS.right),
+		"bottom": maxf(reported.bottom, SIMULATED_INSETS.bottom),
 	}
+
+
+## One startup line so a device run shows what the platform actually
+## reported - the safe-area path above has already been wrong once on real
+## hardware.
+func _log_safe_area_diagnostics() -> void:
+	print("[Hud] os=%s mobile=%s touch=%s window=%s screen=%s safe_area=%s view=%s -> insets=%s" % [
+		OS.get_name(), OS.has_feature("mobile"), DisplayServer.is_touchscreen_available(),
+		DisplayServer.window_get_size(), DisplayServer.screen_get_size(),
+		DisplayServer.get_display_safe_area(), get_viewport().get_visible_rect().size,
+		_safe_insets(get_viewport().get_visible_rect().size),
+	])

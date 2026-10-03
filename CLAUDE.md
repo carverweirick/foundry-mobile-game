@@ -969,9 +969,19 @@ general form of this lesson.
   bottom Contracts/Dashboard/Overview/Staff/Transfer/Printers (order set in
   `main.gd`'s `hud.bind()` call). Every menu opens into one panel slot left
   of the rail (max `PANEL_MAX_WIDTH` 400px). All positions come from
-  `_layout()` (live viewport size + `DisplayServer.get_display_safe_area()`
-  on mobile, re-run on `size_changed`) - nothing is a fixed offset in a
-  `.tscn`. Layer 2 sits above every overlay's Backdrop, so rail taps switch
+  `_layout()` (live viewport size + safe-area insets, re-run on
+  `size_changed`) - nothing is a fixed offset in a `.tscn`. **Safe area:**
+  under Xogot on the user's 16 Pro the OS-reported safe area came back
+  empty (HUD edge to edge, Dynamic Island over the rail), so
+  `_safe_insets()` treats any phone OS or touchscreen as handheld and, on a
+  handheld view 2:1 or wider, floors the sides/bottom at `SIMULATED_INSETS`
+  (40/0/40/14) with top 0 (landscape-locked). Symmetric left/right since
+  the island flips sides with rotation. A `[Hud] os=... safe_area=...`
+  line prints once at startup - read it from a device run before changing
+  this logic again. Menu content must fit ~384px inner panel width: the
+  Contracts Active rows were rebuilt as stacked lines (customer + time
+  left / gold progress bar / shipped count + relationship) after four
+  fixed columns (~434px) overflowed the slot. Layer 2 sits above every overlay's Backdrop, so rail taps switch
   menus directly instead of first closing the open one. Bar/rail reuse the
   current Theme's StyleBoxes with thinner borders/margins, overriding
   **every** Button state incl. `hover_pressed` and the `*_mirrored` ones
