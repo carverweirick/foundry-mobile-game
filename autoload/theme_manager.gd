@@ -54,6 +54,14 @@ const THEME_DISPLAY_NAMES := {
 ## saved to the same settings file.
 enum CutoutSide { AUTO, LEFT, RIGHT, BOTH }
 
+## Which station art set the floor and menus use (see StationArt).
+enum StationArtStyle { PIXEL, AI }
+
+const STATION_ART_DISPLAY_NAMES := {
+	StationArtStyle.PIXEL: "8-bit",
+	StationArtStyle.AI: "Painted (AI)",
+}
+
 const CUTOUT_SIDE_DISPLAY_NAMES := {
 	CutoutSide.AUTO: "Auto",
 	CutoutSide.LEFT: "Left",
@@ -65,9 +73,11 @@ const SETTINGS_PATH := "user://settings.cfg"
 
 signal theme_changed(theme_choice: ThemeChoice)
 signal cutout_side_changed(side: CutoutSide)
+signal station_art_changed(style: StationArtStyle)
 
 var current_theme: ThemeChoice = ThemeChoice.DARK
 var cutout_side: CutoutSide = CutoutSide.AUTO
+var station_art: StationArtStyle = StationArtStyle.PIXEL
 
 
 func _ready() -> void:
@@ -84,6 +94,14 @@ func set_theme(choice: ThemeChoice) -> void:
 	theme_changed.emit(current_theme)
 	# Menu widgets built by UiKit take explicit per-theme colors.
 	UiKit.restyle(get_tree())
+
+
+func set_station_art(style: StationArtStyle) -> void:
+	if style == station_art:
+		return
+	station_art = style
+	_save_settings()
+	station_art_changed.emit(station_art)
 
 
 func set_cutout_side(side: CutoutSide) -> void:
@@ -125,6 +143,9 @@ func _load_settings() -> void:
 	var saved_side: int = config.get_value("ui", "cutout_side", CutoutSide.AUTO)
 	if CUTOUT_SIDE_DISPLAY_NAMES.has(saved_side):
 		cutout_side = saved_side
+	var saved_art: int = config.get_value("ui", "station_art", StationArtStyle.PIXEL)
+	if STATION_ART_DISPLAY_NAMES.has(saved_art):
+		station_art = saved_art
 
 
 func _save_settings() -> void:
@@ -134,4 +155,5 @@ func _save_settings() -> void:
 	config.load(SETTINGS_PATH)
 	config.set_value("ui", "theme", current_theme)
 	config.set_value("ui", "cutout_side", cutout_side)
+	config.set_value("ui", "station_art", station_art)
 	config.save(SETTINGS_PATH)

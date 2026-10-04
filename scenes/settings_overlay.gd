@@ -14,6 +14,7 @@ class_name SettingsOverlay
 ## Set by Hud.bind(), for showing the auto-detected camera side.
 var hud: Hud = null
 var _cutout_button: Button
+var _art_button: Button
 
 
 func _on_ready() -> void:
@@ -32,6 +33,16 @@ func _on_ready() -> void:
 	_cutout_button.pressed.connect(_on_cutout_pressed)
 	content.add_child(_cutout_button)
 	ThemeManager.cutout_side_changed.connect(func(_side): _refresh())
+	# Two complete station art sets (see StationArt): hand-built 8-bit
+	# sprites, or the AI-painted set.
+	content.add_child(HSeparator.new())
+	var art_header := Label.new()
+	art_header.text = "Station art"
+	content.add_child(art_header)
+	_art_button = Button.new()
+	_art_button.pressed.connect(_on_art_pressed)
+	content.add_child(_art_button)
+	ThemeManager.station_art_changed.connect(func(_style): _refresh())
 
 
 func _on_open() -> void:
@@ -47,6 +58,13 @@ func _refresh() -> void:
 	if side == ThemeManager.CutoutSide.AUTO and hud != null:
 		side_text += " (detected: %s)" % hud.detected_camera_side_name()
 	_cutout_button.text = "Cutout: %s - tap to change" % side_text
+	_art_button.text = "Station art: %s - tap to change" % ThemeManager.STATION_ART_DISPLAY_NAMES[ThemeManager.station_art]
+
+
+func _on_art_pressed() -> void:
+	var next: int = (ThemeManager.station_art + 1) % ThemeManager.STATION_ART_DISPLAY_NAMES.size()
+	ThemeManager.set_station_art(next as ThemeManager.StationArtStyle)
+	_refresh.call_deferred()
 
 
 func _on_cutout_pressed() -> void:

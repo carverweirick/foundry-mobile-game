@@ -6,9 +6,12 @@ class_name NcShelf
 ## a view of GameData.nc_shelf: the rack frame plus one box per part, red
 ## while it waits on a diagnosis and gold once it's diagnosed and waiting on
 ## the player's disposition. Tapping it (main.gd) opens the NC overlay.
-## Placeholder art drawn in code, like the station placeholders.
+## Drawn from the current StationArt set ("nc_shelf"), with one marker per
+## part along the bottom; falls back to a rack drawn in code.
 
-const SIZE := Vector2(72.0, 56.0)
+const SIZE := Vector2(72.0, 64.0)
+const MARKER_SIZE := Vector2(8.0, 6.0)
+const MAX_MARKERS := 8
 const SLOTS_PER_ROW := 3
 const ROWS := 2
 const FRAME_COLOR := Color(0.32, 0.33, 0.36)
@@ -19,6 +22,13 @@ const DIAGNOSED_COLOR := Color(0.95, 0.72, 0.2)
 const CLICK_PADDING: float = 16.0
 
 var _drawn_signature: String = ""
+
+
+func _ready() -> void:
+	texture_filter = StationArt.texture_filter()
+	ThemeManager.station_art_changed.connect(func(_style):
+		texture_filter = StationArt.texture_filter()
+		queue_redraw())
 
 
 func _process(_delta: float) -> void:
@@ -44,6 +54,19 @@ func label_text() -> String:
 
 func _draw() -> void:
 	var rect := Rect2(-SIZE * 0.5, SIZE)
+	var art := StationArt.texture_for("nc_shelf")
+	if art != null:
+		var k := minf(SIZE.x / art.get_width(), SIZE.y / art.get_height())
+		var size := art.get_size() * k
+		draw_texture_rect(art, Rect2(rect.get_center() - size * 0.5, size), false)
+		var shown := mini(GameData.nc_shelf.size(), MAX_MARKERS)
+		var row_width := shown * (MARKER_SIZE.x + 2.0) - 2.0
+		for i in shown:
+			var part: Part = GameData.nc_shelf[i]
+			var marker := Rect2(Vector2(-row_width * 0.5 + i * (MARKER_SIZE.x + 2.0), rect.end.y + 2.0), MARKER_SIZE)
+			draw_rect(marker, DIAGNOSED_COLOR if part.nc_diagnosed else UNDIAGNOSED_COLOR)
+			draw_rect(marker, OUTLINE_COLOR, false, 1.0)
+		return
 	draw_rect(rect, FRAME_COLOR)
 	draw_rect(rect, OUTLINE_COLOR, false, 3.0)
 	var row_height := SIZE.y / ROWS

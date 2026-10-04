@@ -170,6 +170,17 @@ var active_worker: Technician = null
 var incoming_technician: Technician = null
 var _has_tiered_art: bool = false
 var _has_state_art: bool = false
+## Station art from the current StationArt set (8-bit or AI) - when present
+## it replaces the tier/state/placeholder art above, and is sized to fit
+## ART_BOX whatever its texture size.
+var _has_set_art: bool = false
+var _art_running: bool = false
+var _zoom_scale: float = 1.0
+## World px the set art fits inside, and where its bottom edge sits (just
+## above the floor label, which starts 66px below the station origin).
+const ART_BOX: float = 80.0
+const ART_BASE_Y: float = 62.0
+const SPRITE_ORIGIN := Vector2(32.0, 32.0)
 
 ## How long the interaction-flourish animation holds each state_sprites frame
 ## before advancing to the next one (design request: "an animation that
@@ -276,7 +287,7 @@ func _ready() -> void:
 
 	name_label.text = station_name
 
-	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * sprite_scale_override
+	ThemeManager.station_art_changed.connect(func(_style): _update_sprite())
 
 	timer_bar.min_value = 0.0
 	timer_bar.max_value = max(timer_duration, 0.01)
@@ -291,7 +302,24 @@ func _ready() -> void:
 ## the way in. get_click_rect() reads station_sprite.scale live, so the
 ## clickable area shrinks right along with the visible sprite.
 func set_sprite_scale_multiplier(multiplier: float) -> void:
-	station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * multiplier * sprite_scale_override
+	_zoom_scale = multiplier
+	_apply_sprite_scale()
+
+
+func _apply_sprite_scale() -> void:
+	if _has_set_art and station_sprite.texture != null:
+		var size := station_sprite.texture.get_size()
+		var k := ART_BOX / maxf(size.x, size.y) * _zoom_scale
+		station_sprite.scale = Vector2(k, k)
+		station_sprite.position = Vector2(SPRITE_ORIGIN.x, ART_BASE_Y - size.y * k * 0.5)
+	else:
+		station_sprite.scale = Vector2.ONE * BASE_SPRITE_SCALE * _zoom_scale * sprite_scale_override
+		station_sprite.position = SPRITE_ORIGIN
+
+
+## The set art has a separate "running" picture for some machines.
+func _is_running_visual() -> bool:
+	return current_state == State.RUNNING or not shelling_active_parts.is_empty()
 
 
 func _process(delta: float) -> void:
@@ -304,6 +332,8 @@ func _process(delta: float) -> void:
 
 	_update_timer_bar_readout()
 
+	if _has_set_art and _is_running_visual() != _art_running:
+		_update_sprite()
 	if _has_state_art:
 		if _is_interact_animating():
 			_interact_anim_elapsed += delta
@@ -1413,6 +1443,24 @@ func _auto_queue_if_possible() -> bool:
 
 
 func _update_sprite() -> void:
+	_art_running = _is_running_visual()
+	var art := StationArt.texture_for(station_id, _art_running)
+	_has_set_art = art != null
+	if _has_set_art:
+		_has_state_art = false
+		station_sprite.texture = art
+		station_sprite.modulate = Color.WHITE
+		station_sprite.texture_filter = StationArt.texture_filter()
+		_apply_sprite_scale()
+		return
+	station_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+	_update_legacy_sprite()
+	_apply_sprite_scale()
+
+
+## The art from before the StationArt sets: tier sprites, Clean's state
+## frames, or the tinted placeholder - only used when a set has no picture.
+func _update_legacy_sprite() -> void:
 	_has_state_art = state_sprites.size() >= 3
 	if _has_state_art:
 		_apply_state_sprite()
@@ -1454,6 +1502,10 @@ func _is_interact_animating() -> bool:
 ## three art systems this station actually has (real per-state art, tiered
 ## art, or the generic tinted placeholder) gets refreshed on a state change.
 func _refresh_state_visual() -> void:
+	if _has_set_art:
+		if _is_running_visual() != _art_running:
+			_update_sprite()
+		return
 	if _has_state_art:
 		_apply_state_sprite()
 	elif not _has_tiered_art:
