@@ -111,8 +111,8 @@ tapped. A defective part showed its category and no reachable way to fix it.
 
 So: any row whose button count or width varies (defect fixes, per-part actions)
 uses an **`HFlowContainer`**, which wraps onto extra lines, never a plain
-`HBoxContainer`. `DefectRow`, `SelectedFixRow`, and the Insert-from-Inventory
-rows all do. A list row that needs both information and actions splits into a
+`HBoxContainer`. The Station Detail Menu's defect strip, selected-part
+fixes and inventory fix rows all do. A list row that needs both information and actions splits into a
 `VBoxContainer`: an info `HBoxContainer` on top (fixed-width columns, measured
 to fit) and an `HFlowContainer` of buttons below.
 
@@ -157,8 +157,12 @@ built on `OverlayBase` gets it for free):
   autowrapping `Label` and every `FlowContainer` inside a `ScrollContainer`
   **grow but never shrink** (it ratchets `custom_minimum_size.y` up on
   `minimum_size_changed`), so nothing can oscillate. Rows created later are
-  covered via `SceneTree.node_added`. Rule 3's hand-set height floors are
-  still good practice for the first frame.
+  covered via `SceneTree.node_added`. It only ratchets at an unchanged
+  width - a width change (the first layout pass, when a FlowContainer is
+  briefly ~40px wide and every button sits on its own line) drops back to
+  the built-in floor - and `MenuLayout.reset(panel)` (on every open) clears
+  all floors, so heights are only locked while the player looks. Rule 3's
+  hand-set height floors are still good practice for the first frame.
 - **Rebuilt rows.** `queue_free()` leaves a node in its parent until the end
   of the frame, so "free the old rows, add new rows" briefly holds both and
   the list's height spikes. **Never `queue_free()` a row out of a live list
@@ -304,6 +308,33 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   run, since headless never exercises rendering - that the timer bars still paint
   after the `_process()` split.
 
+**Menu design system** (`scenes/ui_kit.gd` class `UiKit`, `scenes/seg_meter.gd`
+class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
+`assets/inspo/UI/*_UI*.png`)
+- Every menu builds rows from `UiKit` widgets, not hand-styled Controls:
+  `label(text, size, color_key)` (12px body / 10px small / 16px title,
+  line_spacing 0), `card(border_key)`, `section(title, icon)` (gold strip;
+  `get_meta("right_label")` is its right caption), `pill`, `meter`
+  (segmented `SegMeter`), `bar`, `button(text, icon, kind)` with kinds
+  primary (gold) / go (green) / danger (red) / warn (orange) / neutral, and
+  `framed_icon`. Colors come from `UiKit.c(key)`: fixed good/warn/bad/info/
+  gold plus per-theme palette keys (`DARK`/`PARCHMENT` dicts). Widgets join
+  group `"uikit"`; `ThemeManager.set_theme()` calls `UiKit.restyle()`.
+  Change a widget's color with the `set_*` helpers, never by overriding.
+- Mappings: `part_icon(geometry)` (by family), `room_icon(room)`,
+  `room_display_name()` ("Pour Room" shows as "VIM Bay"),
+  `station_texture(station)` (the floor sprite, or the room icon for the
+  generated placeholder box).
+- Role colors everywhere: technicians orange (`warn`), engineers blue
+  (`info`).
+- `Portraits.make(name, style)` / `for_staff(tech)`: 16x16 pixel faces
+  generated from a hash of the name (same person, same face; nothing
+  saved) - technicians coveralls/hard hats, engineers white coats/goggles/
+  glasses, specialists grey veterans. `Portraits.view(tex, box)` scales
+  them up with nearest filtering.
+- `UiIcons` has ~75 16x16 ASCII-grid icons (rooms, actions `act_*`, status
+  `st_*`, roles, part families `part_*`), drawn at runtime.
+
 **UI theme** (`resources/theme/ui_theme.tres`, design doc Section 16)
 - One shared `Theme` resource, applied project-wide via `project.godot`'s
   `[gui] theme/custom`, reaching every overlay and the floor's own labels
@@ -316,8 +347,7 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   borders (4px outer panel, 3px buttons/tabs, 2px LineEdit/focus), same
   `m5x7.ttf` pixel font throughout. `TabContainer`'s own panel style is
   borderless (avoids doubled borders against the outer `Panel`).
-  Out of scope: the shop floor's own room-tint palette, and
-  `FAMILY_ICON_COLOR` in `contracts_overlay.gd`.
+  Out of scope: the shop floor's own room-tint palette.
 - `VBoxContainer`/`HBoxContainer`/`GridContainer` separation set theme-wide
   (8/8/10+6px); the three overlay `.tscn` files each have widened panel/inner
   insets by hand (`Panel` doesn't auto-apply stylebox `content_margin` to
@@ -574,9 +604,8 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   `GameData.assign_technician_to_printer_group()`/
   `unassign_technician_from_printer_group()` fan the real per-Station
   assignment out immediately; `main.gd._on_printer_purchased()` re-fans on
-  every new printer purchase. The Shop/Staff roster shows one "Printing
-  (all)" checkbox (`GameData.assignable_station_group_ids()`) instead of one
-  per printer.
+  every new printer purchase. (No UI assigns stations any more - every
+  technician covers every station via `GameData.cover_all_stations()`.)
 - **Backpressure: staffed entry stations (and manual Queue) don't
   overproduce.** `Station.can_start_new_work()` (used by both auto-queue and
   manual `queue_new_part()`) gates new-Part creation on
@@ -690,93 +719,34 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   correctly.
 
 **Station Detail Menu** (`scenes/station_detail_menu.gd` + `.tscn`)
-- Tapping a station on the floor (press/release under 8px of movement, vs. a
-  camera drag) hit-tests `Station.get_click_rect()` (sprite footprint union
-  label stack) and opens a popup scoped to that station.
-- Sections shown conditionally on live state: title + tier, status line, a
-  DefectRow (Mortar Patch/Redesign/Scrap buttons when `current_part` is
-  flagged), Queue (entry stations, unstaffed, idle), Collect (unstaffed,
-  ready, or staffed-but-technician-elsewhere with "Collect (technician is
-  elsewhere)" text - `Station.is_technician_present()` gates this, not just
-  "is anyone assigned"), a Push Through checkbox (the four eligible
-  stations), batch size `SpinBox` (batched, unstaffed), **Insert Part From
-  Inventory** (held_parts bound for this station, real Part#/Contract/
-  Familiarity/Defect columns, defective sorted first), a staffing line
-  (name/tier, productivity %, physical location, carried-parts summary), an
-  **Assign Technician list**, and an Upgrade button
-  (`GameData.upgrade_cost_for_tier()`, spent via `try_spend_with_gems()`).
-- **Assign Technician list** - REMOVED from use (hidden) since every
-  technician covers every station; notes kept for history (design request: "when i tap on a station i want there to be an option where i can
-  select technicians and assign them to the station") - one row per hired
-  technician (`GameData.technicians`, not per-applicant - hiring itself is
-  still Staff-overlay-only), each with an Assign/Unassign button calling the
-  same `GameData.assign_technician()`/`unassign_technician()` the Staff
-  overlay's roster checkboxes use, just scoped to the one station already
-  open instead of requiring a trip to a different overlay. Full rebuild every
-  `_refresh()` (not the persistent-widget pattern the rack grid uses - this
-  list is short and doesn't churn every frame), guarded by the same
-  `_click_in_progress()`/deferred-refresh pattern as every other button here.
-  A technician covered by the Staff overlay's "Printing (all)" group
-  checkbox shows a read-only "via 'Printing (all)' - manage from Staff" note
-  instead of an Unassign button at any individual printer instance - the
-  group is all-or-nothing membership (`Technician.assigned_station_ids`
-  holds the literal string `"printing"`, never a specific instance id, for a
-  group member), so unassigning from just one printer here isn't an
-  operation the data model actually supports; this avoids either silently
-  no-oping or inventing new partial-exclusion semantics.
-- **Staffed-but-idle now explains why** (player report, this session: "the
-  technicians aren't starting their machine they're assigned to" - a real
-  headless run confirmed the assign -> act -> run pipeline itself works
-  correctly end to end, so the far more likely real cause was a staffed
-  entry station legitimately idle for a reason the player had no way to
-  see). `Station._idle_status_text()` (shared by the floor's own status
-  label and `get_overview_status()`, so the floor, the Board, and this
-  popup's status line all agree) reads "Idle - no active contracts (accept
-  one from Contract Offers)" or "Idle - blocked, clear the backlog first"
-  for a staffed pipeline-entry station instead of a bare "Idle" - the two
-  real reasons `_auto_queue_if_possible()`/`can_start_new_work()` would
-  refuse to start anything. Also changed a non-entry idle station's
-  `get_overview_status()`/popup text from "Idle" to "Waiting for part",
-  matching what the floor label already said, for the same reason.
-- **Visual Queue Rack panel**: a second `Panel` (`%RackPanel`) beside the
-  main popup, opens/closes in lockstep with it. Shows `Station.queue_rack`
-  as a persistent 5x2 grid of slot `Button`s (built once, updated in place
-  each refresh - rebuilding-on-every-refresh is the pattern this file
-  deliberately avoids, see the click-race fixes below). Empty slots render
-  disabled/dimmed; occupied slots show the part number (`"7"`/`"7!"` if
-  defective). Hover shows a tooltip with full part detail; tapping pins that
-  detail into `%SelectedInfoLabel` plus defect-fix buttons if flagged. Known
-  rough edge: 10 slots at ~24x24px is a tight fit in the panel's usable
-  width - functional but small; real per-Part sprites on the rack are a
-  planned follow-up.
-- Refreshes on a 0.25s timer while open, live over the Station.
-- Every button handler calls `_refresh.call_deferred()` rather than
-  refreshing synchronously, so a click finishes processing before any
-  rebuild - avoids Godot's input-handling glitches from freeing a Control
-  mid-click.
-- While this popup, the Contracts/Board/Team/Factory/Settings
-  overlays are open, `main.gd` freezes background camera pan/zoom/click
-  (`_unhandled_input` early-returns) so a scroll gesture inside a popup list
-  doesn't fall through to the floor. All overlays close on outside-click
-  (invisible `Backdrop`) and on Escape (`ui_cancel`, checked before the
-  freeze-while-open guard, via each overlay's `close()` wrapper).
-- Only one of the 6 overlays (+ this popup) is ever open at once - each
-  emits an `opened()` signal, and `main.gd` cross-wires them all to close
-  each other. This file's `CanvasLayer` is `layer = 3`, above the Hud
-  (layer 2) - it's modal over everything, and the Hud hides its rail while
-  this panel is open (its two panels need ~464px, more than the slot left
-  of the rail). `Hud._layout()` positions `panel`/`rack_panel` below the top
-  bar, inset by the safe area; their widths (292/168) are unchanged.
-- Insert Part From Inventory uses real Part#/Contract/Familiarity/Defect
-  columns, defective sorted first.
-- **Layout stability**: the Technician status section sits last (after
-  Upgrade/Upgrade Rack), since its text length varies a lot and used to
-  shift buttons above it on every refresh; `StatusLabel` itself has a fixed
-  `custom_minimum_size.y` (40px) for the same reason.
-- Press-and-hold (~0.45s, tracked via `button_down`/`button_up` timing) on a
-  rack slot shows the per-station familiarity breakdown
-  (`_part_familiarity_breakdown_text()`); a short tap pins the normal detail
-  card.
+- Opened by tapping a station on the floor (press/release under 8px vs a
+  camera drag, hit-testing `Station.get_click_rect()`) or from the Board.
+  ONE ~292px panel on the left (station_UI1 mockup) so the floor stays
+  visible; `main._reveal_beside_station_menu()` pans the camera so the
+  station sits in the floor area right of the panel (from a floor tap only
+  if it would be hidden; may overshoot the floor bounds by up to the
+  panel's width). `layer = 3`, modal (backdrop closes it); the Hud hides its
+  rail meanwhile.
+- Sections, all built once in `_ready()` and updated in place: header card
+  (station sprite, name + tier, `get_overview_status()` with a 20px floor,
+  progress bar + time from `Station.progress_fraction()`/
+  `display_time_left()`); red defect strip (Mortar/Redesign/Scrap for
+  flagged parts at the station); Queue Rack as a 5x2 grid of 24px part-icon
+  slots (red = defective, lock icon past `rack_capacity`) beside an action
+  column (Start print / Collect / Start N/M for batch stations / Tier /
+  Rack); a pinned selected-part card (tap a slot; tap again to deselect;
+  hold 0.45s adds the per-station familiarity breakdown); Push Through and
+  batch-size options; Transfer Inventory (held parts bound here, Insert);
+  Technicians (portrait, where they are, Here/Coming/Away pill - no
+  assignment, everyone covers every station).
+- The defect strip, selected card and inventory rebuild only when a
+  signature of what they show changes; nothing refreshes mid-click and
+  every handler defers its refresh.
+- Mortar Patch is offered only at Mold Prep (21.4); expertise Scrap shows
+  the weakest-link familiarity % on its face (21.7).
+- While any menu or this popup is open `main.gd` freezes camera pan/zoom/
+  click; all close on outside-click and Escape; only one is open at once
+  (`opened()` signals cross-wired over `main._overlays`).
 
 **Contracts** (`resources/contract.gd`)
 - `Contract`: `contract_id`, customer, tier, `line_items` (see multi-line-item
@@ -865,38 +835,21 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   `PanelContainer` box stops the press just as well as the button would).
   A plain tap still presses the button; a drag doesn't. Any new menu built
   on `OverlayBase` gets this automatically.
-- **Contract Offers screen** (design doc Section 24.1/24.9). `GameData.contract_offers` is a
-  pool of rolled-but-unaccepted contracts, separate from `contracts` (the
-  active/working list); an offer's deadline doesn't start until
-  `accept_contract_offer()` moves it over. Lives as an "Offers" tab on the
-  Contracts overlay (`contracts_overlay.gd`), alongside a read-only "Active"
-  tab. **Accordion-style**: tapping a collapsed offer row expands a detail
-  card in place (not a separate View button/screen) - customer/payout/
-  deadline/average familiarity on the row, and on expand: a risk badge
-  computed from the *weakest* line item ("MASTERED - SAFE CONTRACT" /
-  "MODERATE RISK" / "UNFAMILIAR - HIGH RISK"), a tag line (complexity/
-  alloy/volume tier), a per-line-item list (placeholder geometry icon, name,
-  quantity, that geometry's familiarity stars), a footer risk-summary line
-  (just the two real tags - familiarity level, risk level; no unbacked
-  "BONUS QUALITY"/"FIRST ARTICLE" text), an info line with time/payout/
-  `+N Factory EXP`, and an Accept button. Only one detail card is ever open
-  at a time.
-- **Boxed rows** (design request, this session: "make each contract its own
-  box... just to differentiate them a little," off a screenshot showing
-  offer rows reading as one continuous block). Both `OfferRow` and the
-  Active tab's `ContractRow` wrap their existing `HBoxContainer` in a new
-  `PanelContainer` (`row.box` - the thing actually added to/removed from the
-  list now, `row.container` stays the inner label layout) styled by
-  `_row_box_style()`: a 2px border (lighter-weight than the outer overlay
-  `Panel`'s own 4px chrome, sized for a small row repeated many times, not
-  one big window) and a background one step lighter/darker than the
-  surrounding panel per theme, not identical to it, so each box actually
-  reads as a distinct card. Colors are a manual per-`ThemeChoice` literal
-  (matching this file's existing `FAMILY_ICON_COLOR`/risk-badge precedent for
-  small one-off widgets) rather than a Theme-resource lookup, so
-  `_restyle_all_rows()` re-applies the style to every existing row on
-  `ThemeManager.theme_changed` rather than relying on automatic propagation.
-  Verified with real (non-headless) screenshots in both themes.
+- **Contracts menu** (`contracts_overlay.gd`, contract_UI mockup).
+  `GameData.contract_offers` is the pool of rolled-but-unaccepted contracts;
+  an offer's deadline starts on `accept_contract_offer()`. **Offers tab**:
+  column header, a card per offer (part-family icon, customer, tier pill
+  T1-T4 = `ContractTier`, payout, time, familiarity meter, risk pill from
+  the *weakest* line item: >=80% Low, >=40% Med, else High); tapping one
+  expands a gold detail card under it (accordion, one open): meta line,
+  per-line-item table (icon, qty, familiarity meter, alloy, pay each), the
+  payment split, Accept. **Active tab**: reputation and revert stock,
+  segmented Queue x1/x5/x10/MAX and Trial metal Revert/Virgin toggles (one
+  fixed HBox row), then a card per contract: tier pill, On track / Behind /
+  Overdue pill (`_contract_status()`: shipped + half of in-production vs
+  share of deadline used), time, shipped bar, Engineer button (tap cycles),
+  and per line item a familiarity meter plus Trial / Production buttons
+  (Production shows a lock icon below 85%).
 - **Multi-line-item contracts** - `Contract.line_items: Array[Contract.LineItem]`
   (each own geometry/alloy/quantity_required/quantity_shipped);
   `quantity_required`/`quantity_shipped`/`is_complete` are computed
@@ -975,8 +928,11 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   placeholder rack, red box = undiagnosed, gold = diagnosed) at
   `main.NC_SHELF_POSITION` in VIM Bay's free left strip beside Pour; tapping
   it or the Attention item calls `main._focus_nc_shelf()` -> `NcOverlay`
-  (`scenes/nc_overlay.gd`, panel slot, rows rebuilt on `nc_shelf_changed`,
-  countdowns polled). While a part sits undiagnosed, its flagging station's
+  (`scenes/nc_overlay.gd`, nc_UI mockup: a card per part whose border is
+  the state - gold waiting for an Engineer, blue being diagnosed with a
+  progress bar, green diagnosed - and a stacked Scrap / "Rework at X" /
+  Scan to learn column; cards rebuilt on `nc_shelf_changed`, statuses
+  polled in place). While a part sits undiagnosed, its flagging station's
   risk is ×(1 + 0.5 per undiagnosed part), capped ×3 - this replaced the old
   grace-period escalation/contamination (removed; `Part.defect_elapsed`/
   grace fields remain only for save compatibility).
@@ -1193,21 +1149,17 @@ consolidated per design doc 27.7)
   exclusivity generically over a single `_overlays: Array` (every
   `OverlayBase` subclass + `StationDetailMenu`, duck-typed) rather than
   hand-written pairwise close calls.
-- **Board** (`scenes/board_overlay.gd`, class `BoardOverlay`, rail tile
-  "Board"): two tabs. **Stations** - every station grouped by room; each
-  row is the station name as a flat button (emits `station_requested` ->
-  `main._focus_station(station, true)`: close menus, pan/zoom, pulse, open
-  its Station Detail Menu), ONE action button with the most urgent verb
-  (`_primary_action()`: Fix > Collect > Queue > Upgrade; Fix opens the
-  station since fixes live in its popup; Upgrade only when affordable), a
-  two-line-floored status label, and an 8px state-colored bar.
-  **Transfer** - the old Awaiting Transfer list unchanged: grouped by
-  contract, "Defects only" filter, Part#/Familiarity/Defect/"Send to
-  `<next station>`" per Part, defective first, full rebuild each refresh
-  (guarded by `_click_in_progress()`); tab title shows the held count.
-  `open_transfer_tab()` is the Attention button's target for stranded parts.
-- **Contracts**: persistent per-contract rows (Customer / Progress+in-
-  pipeline / Time-left), added/removed as contracts start/complete.
+- **Board** (`scenes/board_overlay.gd`, board_UI mockup): **Stations** -
+  gold room strips, then a card per station: sprite (`UiKit.
+  station_texture`), name over `Station.board_status_text()` (~20 chars,
+  red on a defect), progress bar, and ONE fixed-width verb button
+  (`_primary_action()`: Fix > Collect > Start > Queue > Upgrade-if-
+  affordable; an empty slot is invisible but keeps the column aligned).
+  Tapping the card (not a drag) emits `station_requested` ->
+  `main._focus_station(station, true)`. **Transfer** - contract strips,
+  per held part: icon, #, familiarity, red defect pill or "No defects",
+  Send to `<next station>`; rebuilt only when its signature changes.
+  `open_transfer_tab()` is the Attention button's target.
 - "Type of part" isn't its own filter axis yet - contract grouping is the
   closest existing equivalent (no real part-type system beyond a contract's
   flavor-text geometry name).
@@ -1215,56 +1167,25 @@ consolidated per design doc 27.7)
   station's own Batch Picker" entry point - only Awaiting Transfer's route
   exists.
 
-**Staff overlay - entry-point split/regroup** (`scenes/staff_overlay.gd` +
-`.tscn`, extends `OverlayBase`, Section 6)
-- Split from the old `Shop` overlay: Technicians + Specialists stayed
-  together under one `Staff` HUD button (both hiring actions); Printers (an
-  equipment purchase) split into its own overlay. `ShopOverlay` is deleted.
-- **Technicians tab - rotating applicant pool.** `GameData.hire_technician()`
-  is gone; `applicant_pool: Array[Technician]` mirrors the `contract_offers`
-  pattern - `generate_applicant()` rolls name/role/tier/per-department
-  skill, `hire_applicant()` moves one into the roster (gold-first-then-gems
-  via `try_spend_with_gems()`), `refresh_applicant_pool()` is a **gems-only**
-  full reroll (`APPLICANT_REFRESH_COST`, deliberately not gold-eligible - a
-  full reroll specifically costs the harder currency). A passive
-  `_refill_applicant_pool()` tops up any hired-away slot on a long cooldown
-  (`APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS`); it never discards a still-
-  available candidate. `ApplicantRow` (persistent-widget pattern) shows
-  name, role+tier ("Engineer, Technician Tier" phrasing - avoids the
-  ambiguous "Technician Engineer" collision between `SkillTier.TECHNICIAN`
-  and `StaffRole.TECHNICIAN`), one star rating per department, hire cost/
-  wage, Hire button. Roster section (per-hired-technician row, assignment
-  summary, physical location, carried-cargo summary, `RoutingStrategy`
-  dropdown, one checkbox per assignable station) unchanged from the older
-  bundled overlay.
-- **Specialists tab**: one row per `SpecialistType`, showing covered
-  categories and hire cost, Hire button -> `hire_specialist()`; once hired,
-  shows "Hired" permanently (no assignment/un-hire, effect is passive and
-  shopwide).
-- Printers is no longer a tab here (see its own overlay below).
-- **Refresh discipline** (this file, `MenuOverlay`, and `StationDetailMenu`
-  all share the pattern): every list refresh path - the 0.25s poll and
-  every reactive signal handler - checks `_click_in_progress()`
-  (`Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)`) and skips itself if
-  true, so a rebuild never tears down a Control the player is mid-click on.
-  Dropdowns get an additional `_any_strategy_popup_open()` check (a
-  different race - a still-open `OptionButton` popup, not an active click -
-  since a rebuild landing while the popup is open orphans it). Sections that
-  never change on their own (Hire, Specialists) only rebuild reactively
-  (`currency_changed` / on open), not on the unconditional poll; only the
-  Roster section (which changes on its own as technicians move) rebuilds on
-  the poll/`technician_updated`, via a separate `_refresh_live_only()`.
-- **Persistent-widget pattern** used throughout for anything on the
-  unconditional poll - the roster (`_roster_rows: Dictionary`) and the
-  Board's and Factory's rows are built once and updated in place
-  (`CheckBox.set_pressed_no_signal()` for re-synced checkboxes, so it
-  doesn't refire `toggled`), never freed/recreated, avoiding a visible
-  "pop"/reflow every 250ms. New checkboxes/rows are still added lazily when
-  a printer is bought or a technician is hired.
-- Row layout in this overlay follows the project-wide **UI layout rules**
-  section near the top of this file (width floors on HBox children, height
-  floors on variable-length labels). `staff_overlay.gd`'s cost/strategy labels
-  are the reference examples; `tools/audit_ui_layout.py` checks the scene side.
+**Team** (`scenes/staff_overlay.gd` + `.tscn`, class `StaffOverlay`, rail
+tile "Team"; team_UI mockup) - three tabs, all persistent cards:
+- **Hire**: the rotating applicant pool (`GameData.applicant_pool`,
+  `generate_applicant()`/`hire_applicant()` gold-then-gems; gems-only full
+  reroll `refresh_applicant_pool()`; passive `_refill_applicant_pool()`
+  on a long cooldown). Card: portrait, name, role pill, "<tier> Tier" (role
+  and skill tier share the word "Technician", so they're never joined),
+  a 5-segment skill meter per department, hire cost / wage, orange Hire.
+- **Roster**: payroll line (red in wage debt), ONE crew-wide strategy
+  dropdown (`GameData.set_crew_routing_strategy()`), and a card per worker:
+  portrait, name, role pill, single-line clipped status (walking to /
+  at / engineers' contracts + diagnosis) and cargo, wage / tier / tenure.
+  No per-station assignment UI exists any more.
+- **Specialists**: card per `SpecialistType` (grey portrait, what it
+  reduces, cost + Hire, or a green "Hired" badge).
+- Refresh discipline: the 0.25s poll touches only the Roster and the
+  refill countdown; Hire/Specialists refresh on open and on currency/gems/
+  pool signals; nothing refreshes mid-click (`_click_in_progress()`) or
+  while the strategy dropdown's popup is open.
 - **Wage economy, paid at Factory Level-up, not on a timer** (design request,
   this session: "have wages be an addition to the factory level" - replaces
   a same-session first pass that used a flat 90s real-time payday clock,
@@ -1273,7 +1194,8 @@ consolidated per design doc 27.7)
   the existing comment on Specialist hiring ("no ongoing wage, unlike a
   station Technician") - but the payment moment is now
   `GameData.level_up_factory()` (see Factory Level above), not a standing
-  clock. Payroll is gold-only and force-deducted
+  clock. (Wage economy and seniority below are game rules; their UI is the
+  Team Roster and the Factory Level Up button.) Payroll is gold-only and force-deducted
   (`currency -= total_wage_payroll()`), deliberately NOT routed through
   `try_spend_with_gems()` - an automatic cost triggered by leveling up
   shouldn't silently drain the harder-earned Gems currency the way the
@@ -1283,12 +1205,8 @@ consolidated per design doc 27.7)
   Debt already organically blocks every other purchase for free
   (`can_afford`/`can_afford_with_gems` both compare against `currency`, so a
   bigger shortfall just demands more Gems). `GameData.is_in_wage_debt()`
-  (`currency < 0`) drives two visible cues: the Hud's gold label and the
-  Staff overlay's `PayrollLabel` both turn red.
-  `PayrollLabel` (`%PayrollLabel` in `staff_overlay.tscn`, between the
-  Roster header and list) previews total standing payroll ("paid out
-  whenever you level up the factory"); each roster row's header also shows
-  that technician's own wage and tenure. A `payday(total_wages,
+  (`currency < 0`) turns the Hud's gold label and the Team Roster's
+  payroll line red. A `payday(total_wages,
   went_into_debt)` signal fires on every level-up-triggered payment for
   StaffOverlay's live readout, separate from `currency_changed` (which also
   fires for every unrelated purchase/sale).
@@ -1314,17 +1232,20 @@ consolidated per design doc 27.7)
 **Factory overlay** (`scenes/factory_overlay.gd` + `.tscn`, class
 `FactoryOverlay`, rail tile "Factory"; design doc 27.3/27.7 - "see the
 bottleneck, then buy the fix in the same place")
-- **Stations tab**: per station, grouped by room (Ship excluded): average
-  cycle time, Yield (only at defect-rolling stations), Busy % and parts/hr
-  from `GameData.station_stat_summary()`, with the busiest station (above
-  `BOTTLENECK_MIN_UTILIZATION` 25%) marked BOTTLENECK in red, and Tier /
-  Rack upgrade buttons in an `HFlowContainer` on each row. Persistent rows.
-- **Growth tab**: the old Printers screen - factory EXP, the **Level Up
-  button** (the sole caller of `GameData.level_up_factory()`; text previews
-  price + payroll, disabled until `can_level_up_factory()` and
-  `can_afford_factory_level_up()` - payroll never gates it, it can push into
-  debt, see Wage economy), process speed bonus, printers owned/cap and Buy
-  Printer.
+- **Stations tab** (factory_UI mockup): column header (inset to match the
+  cards), room strips with station counts, and a card per station (Ship
+  excluded): name + tier, cycle, yield (defect-rolling stations only),
+  busy meter + %, parts/hr from `GameData.station_stat_summary()`, then
+  Tier / Rack buttons in an `HFlowContainer`. The busiest station (above
+  `BOTTLENECK_MIN_UTILIZATION` 25%) gets a red border, a BOTTLENECK pill
+  and a gold Tier button.
+- **Growth tab**: three cards. Factory Level - EXP bar, "Reach Level N to
+  unlock" listing only real effects (+8% speed, printer cap change, +5
+  gems, crew seniority), and the orange Level Up button (the sole caller of
+  `GameData.level_up_factory()`; shows price + payroll; disabled until
+  `can_level_up_factory()` and `can_afford_factory_level_up()` - payroll
+  never gates it). Process Speed. Printers - owned/cap, printer
+  silhouettes (unbought dimmed), Buy Printer.
 - **Stats collector** (`GameData.station_stats`/`stats_elapsed`):
   per station `completed`/`flagged`/`cycle_total`/`busy`, cumulative since
   the save began (no rolling window yet). `Station.simulate_step()` adds busy
@@ -1389,7 +1310,7 @@ autoload)
   and a manual `queue_redraw()` later). `ThemeManager.apply_theme_to(control)`
   sets `.theme` directly on one Control, which correctly re-themes its whole
   Control-descendant subtree regardless of the CanvasLayer above it; every
-  `OverlayBase` subclass, `StationDetailMenu` (its `panel` and `rack_panel`),
+  `OverlayBase` subclass, `StationDetailMenu`'s `panel`,
   and the Hud's bar and rail all call this once at `_ready()` and again
   on every `theme_changed`. `ThemeManager._apply_theme()` still also sets
   `get_tree().root.theme` as a harmless default for any future Control that
@@ -1494,16 +1415,14 @@ autoload)
 ## Not built yet
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
-- **UI visual/feel rework** - the user's main open complaint after playing on
-  device. Direction is decided and recorded in **design doc Section 27**: top
-  resource bar, right-edge icon rail, floating side panel, safe-area insets;
-  Overview becomes factory statistics (yield/throughput - not tracked anywhere
-  yet, needs a stats collector), Printers becomes an Upgrades screen,
-  Dashboard absorbs manual part moves. **Built:** the HUD shell, the
-  Attention button, and the four-tile rail (Contracts / Board / Team /
-  Factory, with a stats collector behind Factory), and floor status badges. Option A's other ideas are tabled for a future
-  update (27.7). Real icon art still to do. The menu panels' own contents are unchanged and
-  still the user's main visual complaint.
+- **UI visual/feel rework** - mostly done, pending the user's on-device
+  verdict. Built (design doc Section 27): HUD shell, Attention button,
+  four-tile rail, floor status badges, and all six menus redesigned from
+  the user's mockups with `UiKit` (Contracts, Board, Factory, Team, NC,
+  Station Detail). Not touched: Settings and Admin overlays (no mockups),
+  real icon art (icons and portraits are procedural placeholders), and the
+  user's generated station sprites in `assets/inspo/UI/` (not yet
+  integrated into the floor).
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,
   and the Traveler Card as the tutorial's spine (design doc Sections 1 and 6).
   No tutorial code of any kind exists.
