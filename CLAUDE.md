@@ -1410,6 +1410,10 @@ autoload)
 
 ## Not built yet
 
+**Pending user verification (ask at the start of a session):**
+- On-device feel of the redesigned menus (14px text, 32px rail icons) and
+  both station art sets (Settings > Station art) - only checked headless.
+
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - mostly done, pending the user's on-device
   verdict. Built (design doc Section 27): HUD shell, Attention button,
