@@ -194,7 +194,7 @@ func _refresh_offer_rows() -> void:
 	for cid in _offer_rows.keys().duplicate():
 		if not offer_ids.has(cid):
 			var stale: OfferRow = _offer_rows[cid]
-			stale.box.queue_free()
+			MenuLayout.remove_and_free(stale.box)
 			_offer_rows.erase(cid)
 			if _selected_offer_id == cid:
 				_selected_offer_id = -1
@@ -207,7 +207,7 @@ func _refresh_offer_rows() -> void:
 			offers_root.add_child(_offers_empty_label)
 			offers_root.move_child(_offers_empty_label, 0)
 	elif _offers_empty_label != null:
-		_offers_empty_label.queue_free()
+		MenuLayout.remove_and_free(_offers_empty_label)
 		_offers_empty_label = null
 
 	for o in GameData.contract_offers:
@@ -585,8 +585,7 @@ func _offer_volume_label(offer: Contract) -> String:
 
 
 func _clear_list(list: Container) -> void:
-	for child in list.get_children():
-		child.queue_free()
+	MenuLayout.clear(list)
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +664,7 @@ func _refresh_contracts_tab() -> void:
 	for contract_id in _contract_rows.keys().duplicate():
 		if not active_ids.has(contract_id):
 			var stale_row: ContractRow = _contract_rows[contract_id]
-			stale_row.box.queue_free()
+			MenuLayout.remove_and_free(stale_row.box)
 			_contract_rows.erase(contract_id)
 
 	if active.is_empty():
@@ -676,7 +675,7 @@ func _refresh_contracts_tab() -> void:
 			contracts_list.add_child(_contracts_empty_label)
 		return
 	if _contracts_empty_label != null:
-		_contracts_empty_label.queue_free()
+		MenuLayout.remove_and_free(_contracts_empty_label)
 		_contracts_empty_label = null
 
 	for c in active:

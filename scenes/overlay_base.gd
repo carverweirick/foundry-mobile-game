@@ -35,6 +35,8 @@ func _ready() -> void:
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
 	# Drags that start on a button inside a scroll list must still scroll it.
 	TouchScroll.watch(panel)
+	# Re-wrapping text and rebuilt rows must not make the list jump.
+	MenuLayout.watch(panel)
 	# See ThemeManager's own header comment for why this direct per-Control
 	# assignment (not just relying on Window.theme) is actually necessary -
 	# every overlay's panel is a direct CanvasLayer child.

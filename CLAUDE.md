@@ -141,6 +141,35 @@ edge - that catches "rendered but unreachable" directly, and font metrics
 measured before any code is written. See `[[headless-gameplay-testing]]` for the
 general form of this lesson.
 
+### 5. A scrolling menu must not change height on its own while open
+
+Reported as "when text is updating and it wraps to a new line the menu's
+scroll jumps up and down, causing the user to miss taps." Every polled
+refresh that changes a row's height moves every row below it - and the
+target under the player's finger. Two mechanisms, both now handled
+globally by **`scenes/menu_layout.gd` (`MenuLayout`)**, which
+`OverlayBase._ready()` and the Station Detail Menu wire up (so a new menu
+built on `OverlayBase` gets it for free):
+
+- **Re-wrapping text.** A countdown or status line gains or loses a line
+  ("9s" -> "10s", a longer status), or a button's longer text makes an
+  `HFlowContainer` wrap differently. `MenuLayout.watch(panel)` lets every
+  autowrapping `Label` and every `FlowContainer` inside a `ScrollContainer`
+  **grow but never shrink** (it ratchets `custom_minimum_size.y` up on
+  `minimum_size_changed`), so nothing can oscillate. Rows created later are
+  covered via `SceneTree.node_added`. Rule 3's hand-set height floors are
+  still good practice for the first frame.
+- **Rebuilt rows.** `queue_free()` leaves a node in its parent until the end
+  of the frame, so "free the old rows, add new rows" briefly holds both and
+  the list's height spikes. **Never `queue_free()` a row out of a live list
+  directly - use `MenuLayout.remove_and_free(node)` or
+  `MenuLayout.clear(list)`**, which detach first.
+
+**Check it:** open the menu over a running shop (Admin speed 25x) and
+sample the scroll content's height every frame - it must never decrease.
+A label forced to flip between one and three lines every few frames made
+the Board jump 11 times without `MenuLayout` and 0 times with it.
+
 ---
 
 ## Currently built
@@ -1107,6 +1136,11 @@ consolidated per design doc 27.7)
   side change - read them from a device run before changing this logic
   again. Desktop testing args: `--simulate-iphone-safe-area`,
   `--simulate-camera-left`/`--simulate-camera-right`.
+- **Money popups**: every gold gain shows a green "+Ng" under the Gold
+  readout that drifts down and fades (`Hud._on_currency_changed()` /
+  `_show_money_popup()`, ~1.4s; simultaneous gains stack). Skipped during
+  offline catch-up and for the first 2s after start-up, so loading a save
+  doesn't flash a huge gain.
 - **Attention button** (design doc 27.6/27.7): bottom-left "!" tile in the
   Hud with a count; `Attention.collect()` (`scenes/attention.gd`) builds
   the list from `Station.attention_need()` (defect anywhere > ready to

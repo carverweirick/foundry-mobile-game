@@ -57,6 +57,15 @@ const DEBT_COLOR := Color(0.85, 0.2, 0.2)
 const ATTENTION_SIZE := Vector2(38.0, 36.0)
 const ATTENTION_POLL_SECONDS: float = 0.25
 const TOAST_SECONDS: float = 2.5
+## Money popups (user request, 2026-10-03): every gain shows as a green
+## "+Ng" under Gold that drifts down and fades.
+const MONEY_POPUP_COLOR := Color(0.40, 0.90, 0.40)
+const MONEY_POPUP_SECONDS: float = 1.4
+const MONEY_POPUP_DRIFT: float = 14.0
+const MONEY_POPUP_STACK: float = 11.0
+## No popups for this long after start-up - loading a save and offline
+## catch-up both move gold, and neither is "money just made".
+const MONEY_POPUP_STARTUP_QUIET_SECONDS: float = 2.0
 const BUTTON_STATES: Array[String] = [
 	"normal", "normal_mirrored", "hover", "hover_mirrored", "pressed",
 	"pressed_mirrored", "hover_pressed", "hover_pressed_mirrored", "disabled",
@@ -88,6 +97,8 @@ var _attention_toast_tween: Tween
 var _attention_items: Array[Dictionary] = []
 var _attention_last_key: String = ""
 var _attention_poll_elapsed: float = ATTENTION_POLL_SECONDS
+var _last_currency: int = 0
+var _money_popups: Array[Label] = []
 
 
 func _ready() -> void:
@@ -101,6 +112,8 @@ func _ready() -> void:
 	_apply_theme()
 	get_viewport().size_changed.connect(_layout)
 	ThemeManager.cutout_side_changed.connect(func(_side): _layout())
+	_last_currency = GameData.currency
+	GameData.currency_changed.connect(_on_currency_changed)
 
 
 ## Called once by main.gd after every overlay exists. rail_entries is an
@@ -161,6 +174,40 @@ func _process(delta: float) -> void:
 	_attention_button.visible = not _any_menu_open()
 	if not _attention_button.visible:
 		_attention_toast.visible = false
+
+
+func _on_currency_changed(new_amount: int) -> void:
+	var gained := new_amount - _last_currency
+	_last_currency = new_amount
+	if gained <= 0 or GameData.is_catching_up:
+		return
+	if Time.get_ticks_msec() / 1000.0 < MONEY_POPUP_STARTUP_QUIET_SECONDS:
+		return
+	_show_money_popup(gained)
+
+
+## A green "+Ng" just under the Gold readout that drifts down and fades;
+## several quick gains stack downward instead of overlapping.
+func _show_money_popup(amount: int) -> void:
+	var popup := Label.new()
+	popup.text = "+%dg" % amount
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	popup.add_theme_color_override("font_color", MONEY_POPUP_COLOR)
+	popup.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.04))
+	popup.add_theme_constant_override("outline_size", 3)
+	ThemeManager.apply_theme_to(popup)
+	add_child(popup)
+	var gold_rect := _gold_label.get_global_rect()
+	popup.position = Vector2(gold_rect.position.x, _bar.position.y + _bar.size.y + 1.0 + MONEY_POPUP_STACK * _money_popups.size())
+	_money_popups.append(popup)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(popup, "position:y", popup.position.y + MONEY_POPUP_DRIFT, MONEY_POPUP_SECONDS) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(popup, "modulate:a", 0.0, MONEY_POPUP_SECONDS * 0.6).set_delay(MONEY_POPUP_SECONDS * 0.4)
+	tween.chain().tween_callback(func():
+		_money_popups.erase(popup)
+		popup.queue_free())
 
 
 func _any_menu_open() -> bool:

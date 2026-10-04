@@ -317,8 +317,7 @@ func _on_held_parts_changed() -> void:
 ## Grouped by contract, defective Parts first within each group. Held Parts
 ## churn often enough that this is a full rebuild rather than persistent rows.
 func _refresh_transfer_tab() -> void:
-	for child in transfer_list.get_children():
-		child.queue_free()
+	MenuLayout.clear(transfer_list)
 
 	var defects_only := transfer_defects_only_check.button_pressed
 	var by_contract: Dictionary = {} # contract_id -> Array[Part]

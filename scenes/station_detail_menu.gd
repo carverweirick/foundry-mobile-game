@@ -92,6 +92,8 @@ func _ready() -> void:
 	close_button.pressed.connect(_on_close_pressed)
 	# Drags that start on a button inside the popup's scroll must still scroll it.
 	TouchScroll.watch(panel)
+	# ...and wrapping text must not make it jump while the player taps.
+	MenuLayout.watch(panel)
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
 	queue_button.pressed.connect(_on_queue_pressed)
 	collect_button.pressed.connect(_on_collect_pressed)
@@ -782,8 +784,7 @@ func _refresh_inventory_list() -> void:
 
 
 func _clear_list(list: Container) -> void:
-	for child in list.get_children():
-		child.queue_free()
+	MenuLayout.clear(list)
 
 
 ## " - DEFECT: <category>" (plus "(ESCALATED)" if its grace period already

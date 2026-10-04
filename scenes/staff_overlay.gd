@@ -208,7 +208,7 @@ func _refresh_hire_list() -> void:
 	for applicant in _applicant_rows.keys().duplicate():
 		if not pool_ids.has(applicant):
 			var stale: ApplicantRow = _applicant_rows[applicant]
-			stale.container.queue_free()
+			MenuLayout.remove_and_free(stale.container)
 			_applicant_rows.erase(applicant)
 
 	if GameData.applicant_pool.is_empty():
@@ -218,7 +218,7 @@ func _refresh_hire_list() -> void:
 			_applicants_empty_label.text = "No applicants right now - check back shortly, or refresh below."
 			hire_list.add_child(_applicants_empty_label)
 	elif _applicants_empty_label != null:
-		_applicants_empty_label.queue_free()
+		MenuLayout.remove_and_free(_applicants_empty_label)
 		_applicants_empty_label = null
 
 	for applicant in GameData.applicant_pool:
@@ -321,7 +321,7 @@ func _refresh_roster_list() -> void:
 			roster_list.add_child(_roster_empty_label)
 		return
 	if _roster_empty_label != null:
-		_roster_empty_label.queue_free()
+		MenuLayout.remove_and_free(_roster_empty_label)
 		_roster_empty_label = null
 
 	for tech in GameData.technicians:
@@ -580,5 +580,4 @@ func _on_station_toggled(pressed: bool, tech: Technician, station: Station) -> v
 
 
 func _clear_list(list: VBoxContainer) -> void:
-	for child in list.get_children():
-		child.queue_free()
+	MenuLayout.clear(list)

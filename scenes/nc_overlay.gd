@@ -55,7 +55,7 @@ func _refresh() -> void:
 
 func _rebuild() -> void:
 	for row in _rows:
-		row.box.queue_free()
+		MenuLayout.remove_and_free(row.box)
 	_rows.clear()
 
 	var count := GameData.nc_shelf.size()
