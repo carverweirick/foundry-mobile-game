@@ -108,6 +108,9 @@ static func label(text: String, size: int = FONT_BODY, color_key: String = "text
 	l.text = text
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.add_theme_font_size_override("font_size", size)
+	# m5x7's line height already has air in it; the default 3px extra makes
+	# wrapped small text look double-spaced.
+	l.add_theme_constant_override("line_spacing", 0)
 	_register(l, {"type": "label", "key": color_key})
 	return l
 
