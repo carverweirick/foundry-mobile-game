@@ -558,8 +558,37 @@ func hire_applicant(applicant: Technician) -> bool:
 		return false
 	applicant_pool.erase(applicant)
 	technicians.append(applicant)
+	applicant.routing_strategy = crew_routing_strategy
+	cover_all_stations(applicant)
 	applicant_pool_changed.emit()
 	return true
+
+
+## Every technician is responsible for every station (user decision,
+## 2026-10-03 - "remove the responsibility mapping from the user"). There is
+## no assignment UI any more; this runs on hire and on load. Engineers own
+## contracts instead and are never on stations.
+func cover_all_stations(tech: Technician) -> void:
+	if tech.is_engineer:
+		return
+	for id in assignable_station_group_ids():
+		if id == "printing":
+			if not tech.assigned_station_ids.has("printing"):
+				assign_technician_to_printer_group(tech)
+			continue
+		var station: Station = station_by_id.get(id)
+		if station != null and not station.assigned_technicians.has(tech):
+			assign_technician(tech, station)
+
+
+## One routing strategy for the whole crew, chosen in Team (saved).
+var crew_routing_strategy: Technician.RoutingStrategy = Technician.RoutingStrategy.MAXIMIZE_MACHINES
+
+
+func set_crew_routing_strategy(strategy: Technician.RoutingStrategy) -> void:
+	crew_routing_strategy = strategy
+	for tech in technicians:
+		tech.routing_strategy = strategy
 
 ## station_id -> live Station node, set by main.gd right after spawning all
 ## 11 stations (same pattern as every overlay's own station_by_id).
@@ -2719,6 +2748,7 @@ func to_save_dict() -> Dictionary:
 		"station_stats": station_stats.duplicate(true),
 		"nc_shelf_ids": nc_shelf.map(func(p: Part): return p.part_id),
 		"revert_stock": revert_stock,
+		"crew_routing_strategy": int(crew_routing_strategy),
 		"company_payout_multiplier": company_payout_multiplier.duplicate(),
 		"print_orders": print_orders.duplicate(true),
 		"pending_trial_fixes": pending_trial_fixes.keys().map(func(id): return {"contract_id": id, "fix": pending_trial_fixes[id]}),
@@ -2802,6 +2832,7 @@ func load_from_dict(data: Dictionary) -> bool:
 			nc_shelf.append(part)
 	scrapped_part_count = int(data.get("scrapped_part_count", 0))
 	revert_stock = int(data.get("revert_stock", STARTING_REVERT_STOCK))
+	crew_routing_strategy = int(data.get("crew_routing_strategy", Technician.RoutingStrategy.MAXIMIZE_MACHINES)) as Technician.RoutingStrategy
 	company_payout_multiplier = {}
 	var saved_multipliers: Dictionary = data.get("company_payout_multiplier", {})
 	for customer in saved_multipliers:
@@ -2872,6 +2903,12 @@ func load_from_dict(data: Dictionary) -> bool:
 		engineer.carried_parts.clear()
 		engineer.current_station_id = ""
 		engineer.is_traveling = false
+
+	# Every technician covers every station now - saves from before that
+	# decision only had the stations the player ticked.
+	for tech in technicians:
+		tech.routing_strategy = crew_routing_strategy
+		cover_all_stations(tech)
 
 	_emit_all_loaded_signals()
 	return true

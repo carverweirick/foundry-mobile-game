@@ -435,17 +435,22 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   `collect_ready_part()`, `set_batch_size()`, `try_upgrade()`,
   `receive_part()`/`can_accept_part()`, `assign_technician()`/
   `unassign_technician()`.
-- **Technicians** are hired from the Staff overlay's Technicians tab
-  (independent of any assignment) and assigned to one or more stations
-  separately, also from that tab, via `GameData.assign_technician()`/
-  `unassign_technician()`. Multiple technicians can be assigned to the same
-  station. All four tiers (Apprentice/Technician/Senior Technician/Master)
-  have real hire costs and apply `Technician.defect_multiplier` (Section 9)
-  on every risky-station roll. `Technician.productivity_multiplier` is a
-  placeholder speed penalty from `assigned_station_ids.size()` (100% at 1
-  station, 85/70/55% stepped down beyond that) - applied by
-  `Station._start_running()` dividing `timer_duration`, once per run at
-  start.
+- **Every technician covers every station** (user decision 2026-10-03 -
+  "remove the responsibility mapping from the user"). `GameData.cover_all_stations()`
+  runs on hire and on load (old saves migrate), assigning the technician to
+  every `assignable_station_group_ids()` entry; there is no assignment UI.
+  `Technician.productivity_multiplier` is a flat 1.0 - the old per-station-
+  count walking penalty (100/85/70/55%) would have pinned everyone at 55%;
+  physical walking time is the cost now. Routing strategy is crew-wide
+  (`GameData.crew_routing_strategy`, saved, `set_crew_routing_strategy()`).
+  Engineers never cover stations (they own contracts). All four tiers apply
+  `Technician.defect_multiplier` on every risky roll.
+- **Cargo only beats local work when it's deliverable.** `_technician_act()`
+  skips local work to go deliver carried parts only if
+  `_has_deliverable_cargo_elsewhere()` (a carried part's destination can
+  accept it now). Without that, a technician holding a part for a full
+  station skipped the work at every stop - 25 bounce-fail-safe trips per 40
+  sim-minutes for one all-station technician; 0 after.
 - **A technician is a genuine single-location entity moving in real
   space** - `Technician.current_position`/`current_station_id` are real
   state, not a data flag. Assigned to only one station, they stay there.
@@ -700,8 +705,8 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
   (name/tier, productivity %, physical location, carried-parts summary), an
   **Assign Technician list**, and an Upgrade button
   (`GameData.upgrade_cost_for_tier()`, spent via `try_spend_with_gems()`).
-- **Assign Technician list** (`%TechnicianAssignList`, design request, this
-  session: "when i tap on a station i want there to be an option where i can
+- **Assign Technician list** - REMOVED from use (hidden) since every
+  technician covers every station; notes kept for history (design request: "when i tap on a station i want there to be an option where i can
   select technicians and assign them to the station") - one row per hired
   technician (`GameData.technicians`, not per-applicant - hiring itself is
   still Staff-overlay-only), each with an Assign/Unassign button calling the

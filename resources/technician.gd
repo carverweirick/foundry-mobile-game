@@ -74,17 +74,6 @@ const SENIORITY_SPEED_MULTIPLIER_CAP: float = 1.6
 ## constants block above for what this actually drives.
 var factory_levels_stuck_with_you: int = 0
 
-## First-pass placeholder walking penalty (Section 7) - deliberately reuses
-## the same 100/85/70/55 shape as TIER_DEFECT_MULTIPLIER above, keyed by
-## station count instead of skill tier. One station is full productivity;
-## every station beyond that costs more, flooring out at 4+.
-const STATION_COUNT_PRODUCTIVITY := {
-	1: 1.0,
-	2: 0.85,
-	3: 0.70,
-}
-const MIN_PRODUCTIVITY: float = 0.55
-
 ## Design request, this session: "printing, shelling, and pour will be
 ## engineer skills" - Engineer is a new role on this same class (not a new
 ## class, and not a repurposing of the separate one-time Specialist hire -
@@ -447,10 +436,13 @@ var is_assigned: bool:
 ## not the possibly-grouped assigned_station_ids - covering 2 printers via
 ## the "printing" group is exactly as much of a split-attention commitment
 ## as being assigned to 2 literally-different stations would be.
+## Always 100% now: every technician covers every station (user decision,
+## 2026-10-03), so the old per-station-count penalty (100/85/70/55%) would
+## have stuck everyone at 55%. The real cost of covering a big floor is the
+## walking itself, which is simulated physically.
 var productivity_multiplier: float:
 	get:
-		var count: int = max(real_assigned_station_ids().size(), 1)
-		return STATION_COUNT_PRODUCTIVITY.get(count, MIN_PRODUCTIVITY)
+		return 1.0
 
 
 ## Advances this technician's real position and interact cooldown by delta

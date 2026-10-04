@@ -377,7 +377,8 @@ func _refresh() -> void:
 	else:
 		technician_status_label.text = "Unstaffed - assign a technician below"
 
-	_refresh_technician_assign_list()
+	# Every technician covers every station now - no assignment list.
+	technician_assign_list.visible = false
 
 	upgrade_button.visible = not is_automatic and _station.current_tier < 5
 	if upgrade_button.visible:

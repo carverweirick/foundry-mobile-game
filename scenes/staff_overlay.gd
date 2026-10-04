@@ -441,10 +441,11 @@ func _update_roster_row(row: RosterRow, tech: Technician) -> void:
 	# cover all the printers not individual ones." GameData.assignable_station_group_ids()
 	# collapses every printer instance into one virtual "printing" checkbox
 	# instead of listing "Printing #1"/"Printing #2" separately.
-	if tech.is_engineer:
-		for check: CheckBox in row.station_checks.values():
-			check.visible = false
-		return
+	# No per-station assignment any more: every technician covers every
+	# station (GameData.cover_all_stations()), so the checks never show.
+	for check: CheckBox in row.station_checks.values():
+		check.visible = false
+	return
 	for id in GameData.assignable_station_group_ids():
 		if id == "printing":
 			if not row.station_checks.has(id):
@@ -567,7 +568,9 @@ func _carried_parts_summary(tech: Technician) -> String:
 ## OptionButton in that exact order with no custom ids, so the selected
 ## index maps directly onto the enum value - no lookup table needed.
 func _on_strategy_selected(index: int, tech: Technician) -> void:
-	tech.routing_strategy = index as Technician.RoutingStrategy
+	# One strategy for the whole crew now (every technician covers every
+	# station) - any row's dropdown sets it for everyone.
+	GameData.set_crew_routing_strategy(index as Technician.RoutingStrategy)
 	GameData.technician_updated.emit(tech)
 
 

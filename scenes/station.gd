@@ -626,8 +626,14 @@ func _technician_act(tech: Technician) -> void:
 	# shuttling between their other stations. Reported as being "caught between
 	# grinding and the printer but carrying something for burnout," with
 	# Grinding sitting idle next to a part they refused to load.
+	# Deliver cargo before local work - but only cargo that can actually be
+	# delivered right now. If every carried part's destination is full, the
+	# technician used to skip the work in front of them at every stop while
+	# wandering between stations (each visit wasted, tripping the bounce
+	# fail-safe) - exposed once every technician covered every station.
 	if (not tech.carried_parts.is_empty()
 			and tech.has_multiple_real_stations()
+			and _has_deliverable_cargo_elsewhere(tech)
 			and _travel_if_worthwhile(tech)):
 		return
 
@@ -661,6 +667,18 @@ func _technician_act(tech: Technician) -> void:
 ## candidate once someone else claimed it - see
 ## Technician._priority_tier_for()) or for the rare loser of a same-tick race
 ## to claim an unclaimed station.
+func _has_deliverable_cargo_elsewhere(tech: Technician) -> bool:
+	for part in tech.carried_parts:
+		var destination_id := GameData.next_station_id_for(part)
+		if destination_id == station_id:
+			continue
+		var destination: Station = GameData.station_by_id.get(destination_id)
+		if destination != null and destination.can_accept_part() \
+				and tech.real_assigned_station_ids().has(destination_id):
+			return true
+	return false
+
+
 func _technician_act_as_visitor(tech: Technician) -> void:
 	if _deposit_one_carried_part(tech):
 		tech.begin_interacting()
