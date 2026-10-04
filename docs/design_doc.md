@@ -1508,3 +1508,20 @@ separate stock (more realistic, much more to manage); whether materials
 replace the per-part gold cost entirely or sit alongside it; delivery
 times in real minutes; whether a station that runs dry should stall the
 line or let the player pay a premium "expedite" price.
+
+### 28.11 Currency scale (10x) - TABLED (user, 2026-10-03)
+
+Considered moving the economy from hundreds to thousands of gold. Tabled
+for now; revisit with the balance pass, ideally before the materials system
+(28.10) locks prices in. Notes from the discussion:
+- **For:** finer granularity (today's small prices round badly - a trial
+  part is 2g on one contract and 3g on another, per-part payments come out
+  8/8/8/8/18), room for cheap materials/consumables, a more tycoon-like
+  feel, late-game headroom.
+- **Against:** longer numbers on a 585px screen (would need a formatter
+  that abbreviates, e.g. 12.5k), every price/payout/wage/starting-gold
+  constant and the gem exchange rate must scale together, old saves need a
+  one-time gold migration, and bigger numbers alone can feel hollow.
+- **If done:** a single scale constant plus an abbreviating number
+  formatter, 10x (not 100x - true idle-game escalation runs against the
+  real-time-sim direction in Section 26.3), saves migrated on load.
