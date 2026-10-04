@@ -9,9 +9,9 @@ class_name UiKit
 ## Both themes are supported: colors come from palette(), never hardcoded in
 ## a menu.
 
-const FONT_BODY: int = 12
-const FONT_SMALL: int = 10
-const FONT_TITLE: int = 16
+const FONT_BODY: int = 14
+const FONT_SMALL: int = 12
+const FONT_TITLE: int = 18
 const GROUP := "uikit"
 
 ## Colors that mean the same thing in both themes.

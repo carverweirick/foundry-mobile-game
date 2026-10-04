@@ -33,6 +33,7 @@ const RAIL_WIDTH: float = 62.0
 ## Icon (16) + one m5x7 line (13) + a little air. Tiles stretch to share
 ## the rail's height; this is the floor they won't squeeze below.
 const RAIL_TILE_MIN_HEIGHT: float = 32.0
+const RAIL_ICON_SIZE: float = 32.0
 const EDGE_GAP: float = 4.0
 ## A menu panel never gets wider than this, so on a wide enough screen some
 ## floor stays visible beside it. Current menu contents need most of it -
@@ -324,9 +325,13 @@ func _make_rail_tile(text: String, icon_name: String) -> Button:
 	stack.add_theme_constant_override("separation", 0)
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(stack)
+	# Drawn at exactly 2x (nearest) so the 16px pixel icon stays crisp.
 	var icon := TextureRect.new()
 	icon.texture = UiIcons.get_icon(icon_name)
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+	icon.custom_minimum_size = Vector2(RAIL_ICON_SIZE, RAIL_ICON_SIZE)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stack.add_child(icon)
 	var label := Label.new()

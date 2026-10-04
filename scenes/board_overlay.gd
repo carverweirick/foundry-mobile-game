@@ -129,7 +129,6 @@ func _refresh_stations_tab() -> void:
 func _create_station_row() -> StationRow:
 	var row := StationRow.new()
 	row.box = UiKit.card()
-	row.box.tooltip_text = "Tap to show this station on the floor"
 	row.box.gui_input.connect(_on_row_gui_input.bind(row))
 	var line := HBoxContainer.new()
 	line.add_theme_constant_override("separation", 5)
