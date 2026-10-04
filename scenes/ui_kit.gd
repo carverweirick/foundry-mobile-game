@@ -129,6 +129,24 @@ static func icon(icon_name: String, box: int = 16) -> TextureRect:
 	return t
 
 
+## An icon scaled up by a whole number (pixel art, nearest filtering) in a
+## dark framed square - the part thumbnails on NC/rack cards.
+static func framed_icon(icon_name: String, box: int = 32) -> PanelContainer:
+	var frame := PanelContainer.new()
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_register(frame, {"type": "frame"})
+	var t := TextureRect.new()
+	t.texture = UiIcons.get_icon(icon_name)
+	t.custom_minimum_size = Vector2(box, box)
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	t.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(t)
+	return frame
+
+
 ## A card: a bordered panel holding one row/record. border_key is a palette
 ## or semantic color - "gold" for selected, "bad" for a bottleneck.
 static func card(border_key: String = "card_border") -> PanelContainer:
@@ -257,6 +275,8 @@ static func _style(node: Node) -> void:
 			node.add_theme_color_override("font_color", c(meta.key))
 		"card":
 			node.add_theme_stylebox_override("panel", _box(c("card_bg"), c(meta.key), 2, 4, 3))
+		"frame":
+			node.add_theme_stylebox_override("panel", _box(c("track"), c("card_border"), 1, 2, 2))
 		"section":
 			node.add_theme_stylebox_override("panel", _box(c("header_bg"), c("header_bg").darkened(0.35), 1, 4, 1))
 		"pill":
