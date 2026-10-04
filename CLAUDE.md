@@ -1119,6 +1119,16 @@ consolidated per design doc 27.7)
   from `scenes/ui_icons.gd` (`UiIcons.get_icon(name)`, 16x16 ASCII grids
   drawn at runtime) until real icon art exists. **The six-tile rail is a
   stopgap** - consolidate once menus are redefined (Section 27.5).
+- **Floor status badges** (design doc 27.7): a 16px icon at each station
+  sprite's top-right corner, screen-space on the FloorLabels layer
+  (`main._update_floor_badges()`, every frame, shown at every zoom incl.
+  zone-only mode). `Station.floor_badge()`: "attention" (red "!", pulsing -
+  exactly `attention_need()`, so badge and Attention button always agree),
+  "ready" (green check - finished parts a technician will move), "running"
+  (gold gear), or nothing. The NC shelf gets "!" when
+  `GameData.nc_parts_needing_player()` > 0, else the gear while parts are
+  being diagnosed. Icons `attention`/`badge_ready`/`badge_running` in
+  `UiIcons`.
 - `main.gd` cross-wires
   exclusivity generically over a single `_overlays: Array` (every
   `OverlayBase` subclass + `StationDetailMenu`, duck-typed) rather than
@@ -1431,8 +1441,7 @@ autoload)
   yet, needs a stats collector), Printers becomes an Upgrades screen,
   Dashboard absorbs manual part moves. **Built:** the HUD shell, the
   Attention button, and the four-tile rail (Contracts / Board / Team /
-  Factory, with a stats collector behind Factory). **Next (27.7):** floor
-  status badges (reuse `Station.attention_need()`). Option A's other ideas are tabled for a future
+  Factory, with a stats collector behind Factory), and floor status badges. Option A's other ideas are tabled for a future
   update (27.7). Real icon art still to do. The menu panels' own contents are unchanged and
   still the user's main visual complaint.
 - **Onboarding** - the founder handoff, the deliberately zero-risk first part,

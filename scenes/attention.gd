@@ -64,10 +64,7 @@ static func collect() -> Array[Dictionary]:
 	# The NC shelf (design doc 28.1): a part needs the player once it's been
 	# diagnosed (time to choose a disposition), or if nobody can diagnose it
 	# (its contract has no Engineer). A part mid-diagnosis needs nothing yet.
-	var shelf_waiting := 0
-	for part in GameData.nc_shelf:
-		if part.nc_diagnosed or GameData.engineer_for_contract(part.contract_id) == null:
-			shelf_waiting += 1
+	var shelf_waiting := GameData.nc_parts_needing_player()
 	if shelf_waiting > 0:
 		items.append({
 			"key": "nc",

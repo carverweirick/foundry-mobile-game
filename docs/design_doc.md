@@ -1261,8 +1261,10 @@ now, growing toward A's floor-first feel later.**
    **Team** (today's Staff), **Factory** (the user's 27.3 statistics idea -
    cycle time, yield, throughput - plus upgrades, printer purchase and the
    paid level-up). Settings stays the gear in the top bar.
-3. **Status badges on stations** on the floor, reusing
-   `Station.attention_need()`.
+3. **Status badges on stations** - BUILT 2026-10-03: red pulsing "!" (needs
+   you - same rule as the Attention button), green check (finished, being
+   moved on), gold gear (running), nothing when idle; the NC shelf has one
+   too.
 
 **Tabled for a future update** (from Option A, not rejected): Transfer as
 a floor tray with tap-to-route and glowing destinations (+ "route all to

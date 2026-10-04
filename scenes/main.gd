@@ -214,6 +214,14 @@ const TECHNICIAN_SPRITE_OFFSET: Vector2 = Vector2(100.0, 32.0)
 var _nc_shelf: NcShelf
 var _nc_shelf_label: Label
 
+## Floor status badges (design doc 27.7), screen-space like the labels so
+## they stay crisp and readable at any zoom - including zoomed out, where a
+## glance at the whole floor is exactly what they're for. station_id ->
+## TextureRect, plus one for the NC shelf. See _update_floor_badges().
+var _station_badges: Dictionary = {}
+var _nc_shelf_badge: TextureRect
+const BADGE_ICONS := {"attention": "attention", "ready": "badge_ready", "running": "badge_running"}
+
 ## Every top-level overlay panel that should ever be mutually exclusive with
 ## every other one - populated in _ready() once all the @onready vars above
 ## are valid. Deliberately untyped (not Array[OverlayBase]): station_detail_menu
@@ -429,6 +437,7 @@ func _update_floor_labels() -> void:
 	var canvas_transform: Transform2D = get_viewport().get_canvas_transform()
 	var accepted_rects: Array[Rect2] = []
 	var zones_only: bool = camera.zoom.x < ZONE_LABEL_ZOOM
+	_update_floor_badges(canvas_transform)
 
 	for entry: RoomFloorLabel in _room_floor_labels:
 		var screen_pos: Vector2 = canvas_transform * entry.world_position
@@ -455,6 +464,48 @@ func _update_floor_labels() -> void:
 		label.text = "%s\n%s" % [station.name_label.text, status_text] if status_text != "" else station.name_label.text
 		var world_pos: Vector2 = station.position + FLOOR_LABEL_OFFSET
 		_place_and_maybe_show_label(label, canvas_transform * world_pos, accepted_rects)
+
+
+## One badge per station at its sprite's top-right corner, plus the NC
+## shelf's. "!" (needs the player) pulses so it catches the eye; the others
+## sit still. Always shown when there's a state to show, at every zoom.
+func _update_floor_badges(canvas_transform: Transform2D) -> void:
+	var pulse := 0.6 + 0.4 * absf(sin(Time.get_ticks_msec() / 1000.0 * 3.0))
+	for id: String in _stations_by_id.keys():
+		var station: Station = _stations_by_id[id]
+		var badge: TextureRect = _station_badges.get(id)
+		if badge == null:
+			badge = _make_badge()
+			_station_badges[id] = badge
+		var sprite_rect := station.get_sprite_rect()
+		var corner := station.position + Vector2(sprite_rect.end.x, sprite_rect.position.y)
+		_show_badge(badge, station.floor_badge(), canvas_transform * corner, pulse)
+	var shelf_kind := ""
+	if GameData.nc_parts_needing_player() > 0:
+		shelf_kind = "attention"
+	elif not GameData.nc_shelf.is_empty():
+		shelf_kind = "running" # being diagnosed
+	var shelf_corner := _nc_shelf.position + Vector2(NcShelf.SIZE.x * 0.5, -NcShelf.SIZE.y * 0.5)
+	_show_badge(_nc_shelf_badge, shelf_kind, canvas_transform * shelf_corner, pulse)
+
+
+func _make_badge() -> TextureRect:
+	var badge := TextureRect.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.stretch_mode = TextureRect.STRETCH_KEEP
+	badge.visible = false
+	floor_labels_layer.add_child(badge)
+	return badge
+
+
+func _show_badge(badge: TextureRect, kind: String, screen_corner: Vector2, pulse: float) -> void:
+	badge.visible = kind != ""
+	if not badge.visible:
+		return
+	badge.texture = UiIcons.get_icon(BADGE_ICONS[kind])
+	# Centered just inside the corner, so it reads as attached to the sprite.
+	badge.position = screen_corner - Vector2(12.0, 4.0)
+	badge.modulate.a = pulse if kind == "attention" else 1.0
 
 
 ## Shared by the room/station passes above: positions label at screen_pos,
@@ -661,6 +712,7 @@ func _spawn_nc_shelf() -> void:
 	_nc_shelf.position = NC_SHELF_POSITION
 	add_child(_nc_shelf)
 	_nc_shelf_label = _make_floor_label("NC Shelf")
+	_nc_shelf_badge = _make_badge()
 
 
 func _spawn_stations() -> void:

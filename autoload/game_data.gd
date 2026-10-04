@@ -1798,6 +1798,18 @@ func rework_station_for(part: Part) -> String:
 	return ""
 
 
+## Shelf parts waiting on the player: diagnosed (time to choose a
+## disposition) or stuck because their contract has no Engineer. A part
+## mid-diagnosis needs nothing yet. Shared by the Attention button and the
+## shelf's floor badge.
+func nc_parts_needing_player() -> int:
+	var count := 0
+	for part in nc_shelf:
+		if part.nc_diagnosed or engineer_for_contract(part.contract_id) == null:
+			count += 1
+	return count
+
+
 func undiagnosed_risk_multiplier(station_id: String) -> float:
 	var count := 0
 	for part in nc_shelf:

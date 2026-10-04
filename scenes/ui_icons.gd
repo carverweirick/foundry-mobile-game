@@ -13,6 +13,7 @@ const PALETTE := {
 	"s": Color(0.62, 0.65, 0.70), # steel
 	"d": Color(0.22, 0.24, 0.28), # dark steel
 	"b": Color(0.45, 0.78, 0.96), # gem blue
+	"n": Color(0.35, 0.80, 0.35), # green
 }
 
 const GRIDS := {
@@ -231,6 +232,42 @@ const GRIDS := {
 		".kssk...........",
 		"..kk............",
 		"................",
+	],
+	"badge_ready": [
+		"................",
+		".....kkkkkk.....",
+		"...kkknnnnkkk...",
+		"..kknnnnnnnnkk..",
+		"..knnnnnnnnnnk..",
+		".kknnnnnnnnnnkk.",
+		".knnnnnnnnnnwnk.",
+		".knnnnnnnnnwnnk.",
+		".knnwnnnnnwwnnk.",
+		".knnwwnnnwwnnnk.",
+		".kknnwwnwwnnnkk.",
+		"..knnnwwwnnnnk..",
+		"..kknnnwnnnnkk..",
+		"...kkknnnnkkk...",
+		".....kkkkkk.....",
+		"................",
+	],
+	"badge_running": [
+		".......kk.......",
+		"...k..kggk..k...",
+		"..kgk.kggk.kgk..",
+		".kgggkggggkgggk.",
+		"..kggggggggggk..",
+		"...kggggggggk...",
+		".kkgggkkkkgggkk.",
+		"kgggggkkkkgggggk",
+		"kgggggkkkkgggggk",
+		".kkgggkkkkgggkk.",
+		"...kggggggggk...",
+		"..kggggggggggk..",
+		".kgggkggggkgggk.",
+		"..kgk.kggk.kgk..",
+		"...k..kggk..k...",
+		".......kk.......",
 	],
 	"factory": [
 		"................",

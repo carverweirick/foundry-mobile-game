@@ -766,6 +766,23 @@ func attention_need() -> Dictionary:
 	return {}
 
 
+## The status badge drawn on the floor over this station (design doc 27.7):
+## "attention" when it needs the player - exactly attention_need(), so the
+## badge and the Attention button never disagree - "ready" when finished
+## parts are waiting to move on (a technician will handle them), "running"
+## while working, "" when idle with nothing to do.
+func floor_badge() -> String:
+	if station_type == StationType.AUTOMATIC:
+		return ""
+	if not attention_need().is_empty():
+		return "attention"
+	if _has_ready_part_to_send():
+		return "ready"
+	if current_state == State.RUNNING or not shelling_active_parts.is_empty():
+		return "running"
+	return ""
+
+
 ## Every Part physically at this station, in whichever slot model it uses.
 func _parts_here() -> Array[Part]:
 	var parts: Array[Part] = []
