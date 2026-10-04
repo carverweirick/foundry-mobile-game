@@ -180,7 +180,9 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
 - `res://scenes/main.tscn` is the main scene.
 - `project.godot`: renderer is Vulkan (the D3D12 backend silently broke mouse
   input on at least one dev machine); base viewport 480x270,
-  `stretch/mode="viewport"`, `stretch/aspect="expand"` - a phone wider than
+  `stretch/mode="canvas_items"` (draws at the device's real resolution - the
+  480x270 logical layout is unchanged, but text and sprites render crisp and
+  sub-16px text is possible), `stretch/aspect="expand"` - a phone wider than
   16:9 gets a wider viewport (585x270 on a 19.5:9 iPhone) instead of black
   bars, so **never hardcode 480x270 in code**: `main.gd._view_size()` reads
   `get_viewport_rect().size` for camera clamping, zoom anchoring and label
@@ -323,8 +325,11 @@ the Board jump 11 times without `MenuLayout` and 0 times with it.
 - Section headers and popup titles get a manual per-node font-size/color
   bump (18-20px, gold) rather than a Theme type variation.
 - `assets/fonts/m5x7.ttf.import` is hand-tuned for pixel-font crispness:
-  `antialiasing=0`, `hinting=0`, `subpixel_positioning=0`, `oversampling=1.0`,
-  `generate_mipmaps=true`. Godot's default TTF import settings visibly
+  `antialiasing=0`, `hinting=0`, `subpixel_positioning=0`, **`oversampling=0.0`
+  (auto)**, `generate_mipmaps=true`. With `canvas_items` rendering, auto
+  oversampling rasterizes glyphs at the real screen size, so m5x7 stays crisp
+  at 12px and 10px (used for dense menu text and captions); the old fixed
+  1.0 rasterized at logical size and garbled anything below 16px. Godot's default TTF import settings visibly
   soften/garble a pixel font, especially once minified by camera zoom -
   mipmaps fix the zoomed-out garbling, but only glyphs on Controls with
   `texture_filter = TEXTURE_FILTER_NEAREST_WITH_MIPMAPS` actually sample them
