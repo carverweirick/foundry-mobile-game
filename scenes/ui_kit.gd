@@ -83,6 +83,16 @@ static func part_icon(geometry_name: String) -> String:
 	return PART_FAMILY_ICON.get(GameData.family_for_geometry(geometry_name), "part_bracket")
 
 
+## A station's own floor sprite for menus - except the generated placeholder
+## box (an ImageTexture), which reads as a blank square when small; those
+## use their room's icon until real art lands.
+static func station_texture(station: Station) -> Texture2D:
+	var texture: Texture2D = station.station_sprite.texture if station.station_sprite != null else null
+	if texture == null or texture is ImageTexture:
+		return UiIcons.get_icon(room_icon(GameData.get_station(station.station_id).room_name))
+	return texture
+
+
 ## Room icons and the names players see (Pour's island reads "VIM Bay" on
 ## the floor; StationDef.room_name still says "Pour Room").
 const ROOM_ICON := {

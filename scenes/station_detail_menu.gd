@@ -1,142 +1,321 @@
 extends CanvasLayer
 class_name StationDetailMenu
 
-## Emitted when this overlay opens - see OverlayBase.opened's comment for why
-## (main.gd wires every overlay's opened() signal generically so only one is
-## ever visible at once - see main.gd's _overlays array).
+## Emitted when this overlay opens - main.gd wires every overlay's opened()
+## so only one is ever visible at once.
 signal opened()
 
-## Per-station popup opened by tapping a station on the floor (main.gd hit-
-## tests Station.get_click_rect()). This is the whole surface for driving a
-## single Station now that the floor itself is display-only: Queue, Collect,
-## batch size, inserting a held Part (the design doc's "next station's own
-## Batch Picker" entry point, alongside the Menu Overlay's Awaiting Transfer
-## tab), spending currency to upgrade the tier, and - design request, this
-## session: "when i tap on a station i want there to be an option where i
-## can select technicians and assign them to the station" - assigning or
-## unassigning any hired technician directly (see
-## TechnicianAssignList/_refresh_technician_assign_list() below). Hiring
-## itself (bringing a new applicant onto the roster at all) still only
-## happens from the Staff overlay - this popup works with whoever's already
-## hired, same as the Staff overlay's own per-station checkboxes, just
-## scoped to the one station the player is already looking at instead of
-## requiring a trip to a different overlay.
+## Per-station popup, opened by tapping a station on the floor (main.gd hit-
+## tests Station.get_click_rect()) or from the Board. The whole surface for
+## driving one Station, as a single half-width panel so the floor stays
+## visible beside it (the user's mockup, assets/inspo/UI/station_UI1.png):
+##
+##   header      - the station's sprite, name + tier, status, progress + time
+##   defect      - fix buttons for a flagged part at the station (rare now
+##                 that defects go to the NC shelf, but parallel/batch
+##                 stations can still hold one mid-run)
+##   rack        - the Queue Rack as a 5x2 grid of part slots beside the
+##                 action buttons (Queue / Collect / Start cycle / upgrades);
+##                 tapping a slot pins that part's detail below, holding it
+##                 adds the per-station familiarity breakdown
+##   options     - Push Through and batch size, where they apply
+##   inventory   - Awaiting Transfer parts bound here, with Insert
+##   technicians - who's here, walking, or elsewhere (every technician
+##                 covers every station, so there's nothing to assign)
+##
+## Refresh discipline (CLAUDE.md UI rules): every widget is built once and
+## updated in place on the 0.25s poll; the two lists that can change size
+## (inventory, technicians) rebuild only when what they show changes.
+## Nothing refreshes mid-click, and every button handler defers its refresh.
 
 const REFRESH_INTERVAL: float = 0.25
+const RACK_SLOT_COUNT: int = 10
+const RACK_SLOT_SIZE: float = 24.0
+## Design doc Section 21.7: a short tap pins a rack part's detail; holding
+## past this also breaks familiarity out by station.
+const LONG_PRESS_SECONDS: float = 0.45
 
 @onready var backdrop: Control = %Backdrop
 @onready var panel: Panel = %Panel
-@onready var title_label: Label = %TitleLabel
-@onready var close_button: Button = %CloseButton
-@onready var status_label: Label = %StatusLabel
-@onready var defect_row: HFlowContainer = %DefectRow
-@onready var queue_button: Button = %QueueButton
-@onready var collect_button: Button = %CollectButton
-@onready var push_through_check_box: CheckBox = %PushThroughCheckBox
-@onready var batch_row: HBoxContainer = %BatchRow
-@onready var batch_spin_box: SpinBox = %BatchSpinBox
-@onready var inventory_list: VBoxContainer = %InventoryList
-@onready var technician_status_label: Label = %TechnicianStatusLabel
-@onready var technician_assign_list: VBoxContainer = %TechnicianAssignList
-@onready var upgrade_button: Button = %UpgradeButton
-@onready var upgrade_rack_button: Button = %UpgradeRackButton
-@onready var rack_panel: Panel = %RackPanel
-@onready var rack_grid: GridContainer = %RackGrid
-@onready var selected_info_label: Label = %SelectedInfoLabel
-@onready var selected_fix_row: HFlowContainer = %SelectedFixRow
+@onready var content: VBoxContainer = %Content
 
 var _station: Station = null
 var _refresh_elapsed: float = 0.0
 
-## Visual queue rack (design doc Section 7's "station queue rack", requested
-## as its own always-visible panel rather than the old plain-text Queue
-## list it replaces) - 10 fixed slot Buttons (5 top row, 5 bottom, via
-## RackGrid's columns=5), built ONCE in _ready() and reused every refresh
-## rather than torn down and rebuilt like every other dynamic list in this
-## file. That's deliberate, not an oversight: rebuilding from scratch every
-## 0.25s poll is exactly what caused the old Shop overlay's hire button to
-## intermittently eat its first click (a rebuild landing mid-click destroys
-## the very button being pressed) - see StaffOverlay._refresh_live_only()
-## (the technician-hiring half of that old Shop panel, now its own overlay).
-## A slot the player
-## might be actively clicking is exactly the wrong thing to keep recreating.
-const RACK_SLOT_COUNT: int = 10
-var _rack_slot_buttons: Array[Button] = []
-## Index into _station.queue_rack of whichever slot was last tapped, so its
-## full detail + fix buttons stay pinned in SelectedInfoLabel/SelectedFixRow
-## across refreshes instead of only showing on hover. -1 means nothing selected.
-var _selected_rack_index: int = -1
+# Header.
+var _sprite: TextureRect
+var _title: Label
+var _status: Label
+var _progress: ProgressBar
+var _time: Label
 
-## Design doc Section 21.7's two-tier familiarity display: a quick-glance
-## average star everywhere a Part shows up (always in _part_detail_text()),
-## and a press-and-hold to break it out per-station. These four fields drive
-## that press-and-hold gesture on the rack slot Buttons - see
-## _update_long_press()/_on_rack_slot_down()/_on_rack_slot_up().
-const LONG_PRESS_SECONDS: float = 0.45
+# Defect strip.
+var _defect_card: PanelContainer
+var _defect_label: Label
+var _defect_actions: HFlowContainer
+var _defect_signature: String = ""
+
+# Rack + actions.
+var _rack_title: Label
+var _rack_slots: Array[Button] = []
+var _queue_button: Button
+var _collect_button: Button
+var _start_cycle_button: Button
+var _upgrade_button: Button
+var _upgrade_rack_button: Button
+var _selected_rack_index: int = -1
+var _show_familiarity_detail: bool = false
 var _pressed_rack_index: int = -1
 var _press_elapsed: float = 0.0
 var _long_press_fired: bool = false
-## Whether the currently pinned SelectedInfoLabel should include the
-## per-station familiarity breakdown - only true right after a long-press,
-## reset on every new short tap.
-var _show_familiarity_detail: bool = false
+var _selected_card: PanelContainer
+var _selected_icon: PanelContainer
+var _selected_label: Label
+var _selected_actions: HFlowContainer
+var _selected_signature: String = ""
 
+# Options.
+var _push_through_check: CheckBox
+var _batch_row: HBoxContainer
+var _batch_spin: SpinBox
 
-var _start_cycle_button: Button
+# Lists.
+var _inventory_header: PanelContainer
+var _inventory_list: VBoxContainer
+var _inventory_signature: String = "-"
+var _tech_header: PanelContainer
+var _tech_list: VBoxContainer
+var _tech_rows: Dictionary = {} # Technician -> {box, where, state}
 
 
 func _ready() -> void:
 	panel.visible = false
 	backdrop.visible = false
-	rack_panel.visible = false
-	close_button.pressed.connect(_on_close_pressed)
-	# Drags that start on a button inside the popup's scroll must still scroll it.
-	TouchScroll.watch(panel)
-	# ...and wrapping text must not make it jump while the player taps.
-	MenuLayout.watch(panel)
 	backdrop.gui_input.connect(_on_backdrop_gui_input)
-	queue_button.pressed.connect(_on_queue_pressed)
-	collect_button.pressed.connect(_on_collect_pressed)
-	# Batch stations (Burnout/Clean/UV Cure): an unstaffed one only runs a
-	# cycle when the player starts it.
-	_start_cycle_button = Button.new()
-	_start_cycle_button.visible = false
-	_start_cycle_button.pressed.connect(_on_start_cycle_pressed)
-	collect_button.add_sibling(_start_cycle_button)
-	push_through_check_box.toggled.connect(_on_push_through_toggled)
-	batch_spin_box.value_changed.connect(_on_batch_size_changed)
-	upgrade_button.pressed.connect(_on_upgrade_pressed)
-	upgrade_rack_button.pressed.connect(_on_upgrade_rack_pressed)
-	_build_rack_slots()
-	# See ThemeManager's own header comment - panel/rack_panel are direct
-	# CanvasLayer children, so they need their own .theme set directly
-	# rather than relying on Window.theme (which doesn't reach them).
-	ThemeManager.theme_changed.connect(func(_choice): _apply_theme())
-	_apply_theme()
-
-
-func _apply_theme() -> void:
+	content.add_theme_constant_override("separation", 5)
+	_build_header()
+	_build_defect_strip()
+	_build_rack()
+	_build_options()
+	_build_lists()
+	# Drags that start on a button inside the popup's scroll must still scroll
+	# it, and wrapping text must not make it jump while the player taps.
+	TouchScroll.watch(panel)
+	MenuLayout.watch(panel)
+	# panel is a direct CanvasLayer child, so it needs .theme set directly
+	# (see ThemeManager's header comment).
+	ThemeManager.theme_changed.connect(func(_choice): ThemeManager.apply_theme_to(panel))
 	ThemeManager.apply_theme_to(panel)
-	ThemeManager.apply_theme_to(rack_panel)
 
 
-## Builds the 10 slot Buttons once - see _rack_slot_buttons' comment above
-## for why these are never freed/recreated afterward, only their text/
-## tooltip/style updated in place by _refresh_rack_grid().
-func _build_rack_slots() -> void:
+# ---------------------------------------------------------------------------
+# Building (once)
+# ---------------------------------------------------------------------------
+
+func _build_header() -> void:
+	var card := UiKit.card()
+	content.add_child(card)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 6)
+	card.add_child(line)
+	var frame := UiKit.framed_icon("factory", 36)
+	_sprite = frame.get_child(0)
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	line.add_child(frame)
+
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 2)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(info)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 4)
+	info.add_child(top)
+	_title = UiKit.label("", UiKit.FONT_TITLE, "header_text")
+	_title.clip_text = true
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(_title)
+	var close_button := UiKit.button("", "st_cross")
+	close_button.tooltip_text = "Close"
+	close_button.pressed.connect(close)
+	top.add_child(close_button)
+	# Status length varies a lot between refreshes - a two-line floor stops
+	# everything below it jumping (UI rule 3).
+	_status = UiKit.label("", UiKit.FONT_SMALL)
+	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_status.custom_minimum_size.y = 20.0
+	info.add_child(_status)
+	var bar_line := HBoxContainer.new()
+	bar_line.add_theme_constant_override("separation", 4)
+	info.add_child(bar_line)
+	_progress = UiKit.bar("gold", 6)
+	_progress.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_progress.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar_line.add_child(_progress)
+	_time = UiKit.label("", UiKit.FONT_SMALL)
+	_time.custom_minimum_size.x = 38.0
+	_time.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	bar_line.add_child(_time)
+
+
+func _build_defect_strip() -> void:
+	_defect_card = UiKit.card("bad")
+	content.add_child(_defect_card)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 3)
+	_defect_card.add_child(body)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 4)
+	body.add_child(head)
+	head.add_child(UiKit.icon("st_warning"))
+	_defect_label = UiKit.label("", UiKit.FONT_BODY, "bad")
+	_defect_label.clip_text = true
+	_defect_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(_defect_label)
+	# Button count/width varies per part - HFlowContainer (UI rule 2).
+	_defect_actions = HFlowContainer.new()
+	_defect_actions.add_theme_constant_override("h_separation", 3)
+	_defect_actions.add_theme_constant_override("v_separation", 3)
+	body.add_child(_defect_actions)
+
+
+func _build_rack() -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	content.add_child(row)
+
+	var rack := VBoxContainer.new()
+	rack.add_theme_constant_override("separation", 3)
+	row.add_child(rack)
+	_rack_title = UiKit.label("", UiKit.FONT_SMALL, "header_text")
+	rack.add_child(_rack_title)
+	var grid := GridContainer.new()
+	grid.columns = 5
+	grid.add_theme_constant_override("h_separation", 2)
+	grid.add_theme_constant_override("v_separation", 2)
+	rack.add_child(grid)
+	# Built once and updated in place - a slot the player may be pressing
+	# must never be freed under them.
 	for i in RACK_SLOT_COUNT:
-		var slot := Button.new()
-		slot.custom_minimum_size = Vector2(24.0, 24.0)
-		slot.add_theme_font_size_override("font_size", 11)
-		slot.toggle_mode = false
-		# button_down/button_up rather than pressed - a short tap vs. a
-		# press-and-hold need to do different things (design doc Section
-		# 21.7), so this has to distinguish them itself rather than reacting
-		# to Godot's single combined "pressed" event. See _update_long_press().
+		var slot := UiKit.button("")
+		slot.custom_minimum_size = Vector2(RACK_SLOT_SIZE, RACK_SLOT_SIZE)
+		slot.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		slot.expand_icon = false
+		# button_down/up, not pressed: a tap and a press-and-hold do
+		# different things (see _update_long_press()).
 		slot.button_down.connect(_on_rack_slot_down.bind(i))
 		slot.button_up.connect(_on_rack_slot_up.bind(i))
-		rack_grid.add_child(slot)
-		_rack_slot_buttons.append(slot)
+		grid.add_child(slot)
+		_rack_slots.append(slot)
+
+	var actions := VBoxContainer.new()
+	actions.add_theme_constant_override("separation", 3)
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(actions)
+	_queue_button = _action_button(actions, "act_queue", "primary", _on_queue_pressed)
+	_collect_button = _action_button(actions, "act_collect", "primary", _on_collect_pressed)
+	_start_cycle_button = _action_button(actions, "act_start", "go", _on_start_cycle_pressed)
+	_upgrade_button = _action_button(actions, "act_upgrade", "neutral", _on_upgrade_pressed)
+	_upgrade_rack_button = _action_button(actions, "act_rack", "neutral", _on_upgrade_rack_pressed)
+
+	# The tapped rack part's detail, pinned.
+	_selected_card = UiKit.card("gold")
+	content.add_child(_selected_card)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 6)
+	_selected_card.add_child(line)
+	_selected_icon = UiKit.framed_icon("part_bracket", 24)
+	_selected_icon.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	line.add_child(_selected_icon)
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 3)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(info)
+	_selected_label = UiKit.label("", UiKit.FONT_SMALL)
+	_selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_child(_selected_label)
+	_selected_actions = HFlowContainer.new()
+	_selected_actions.add_theme_constant_override("h_separation", 3)
+	_selected_actions.add_theme_constant_override("v_separation", 3)
+	info.add_child(_selected_actions)
+
+
+func _action_button(parent: Container, icon_name: String, kind: String, handler: Callable) -> Button:
+	var b := UiKit.button("", icon_name, kind)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.clip_text = true
+	b.pressed.connect(handler)
+	parent.add_child(b)
+	return b
+
+
+func _build_options() -> void:
+	_push_through_check = CheckBox.new()
+	_push_through_check.text = "Push Through next part (risky)"
+	_push_through_check.add_theme_font_size_override("font_size", UiKit.FONT_BODY)
+	_push_through_check.focus_mode = Control.FOCUS_NONE
+	_push_through_check.tooltip_text = UiText.tip("The next part to run here skips the normal checks: a big familiarity gain if it works, but a miss destroys the part.")
+	_push_through_check.toggled.connect(_on_push_through_toggled)
+	content.add_child(_push_through_check)
+
+	_batch_row = HBoxContainer.new()
+	_batch_row.add_theme_constant_override("separation", 6)
+	content.add_child(_batch_row)
+	var caption := UiKit.label("Batch size", UiKit.FONT_BODY, "text_dim")
+	caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_batch_row.add_child(caption)
+	_batch_spin = SpinBox.new()
+	_batch_spin.add_theme_font_size_override("font_size", UiKit.FONT_BODY)
+	_batch_spin.get_line_edit().add_theme_font_size_override("font_size", UiKit.FONT_BODY)
+	_batch_spin.value_changed.connect(_on_batch_size_changed)
+	_batch_row.add_child(_batch_spin)
+
+
+func _build_lists() -> void:
+	_inventory_header = UiKit.section("Transfer Inventory", "transfer")
+	content.add_child(_inventory_header)
+	_inventory_list = VBoxContainer.new()
+	_inventory_list.add_theme_constant_override("separation", 3)
+	content.add_child(_inventory_list)
+	_tech_header = UiKit.section("Technicians", "role_technician")
+	content.add_child(_tech_header)
+	_tech_list = VBoxContainer.new()
+	_tech_list.add_theme_constant_override("separation", 3)
+	content.add_child(_tech_list)
+
+
+# ---------------------------------------------------------------------------
+# Open / close / input
+# ---------------------------------------------------------------------------
+
+## Called by main.gd when a station on the floor (or the Board) is tapped.
+func open_for(station: Station) -> void:
+	_station = station
+	panel.visible = true
+	backdrop.visible = true
+	_selected_rack_index = -1
+	_show_familiarity_detail = false
+	_pressed_rack_index = -1
+	_long_press_fired = false
+	_defect_signature = ""
+	_selected_signature = ""
+	_inventory_signature = "-"
+	MenuLayout.reset(panel)
+	(panel.get_node("Scroll") as ScrollContainer).scroll_vertical = 0
+	_refresh_elapsed = 0.0
+	_refresh()
+	opened.emit()
+
+
+## Public - main.gd calls this on Escape and when another menu opens.
+func close() -> void:
+	panel.visible = false
+	backdrop.visible = false
+	_station = null
+
+
+func _on_backdrop_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		close()
 
 
 func _process(delta: float) -> void:
@@ -144,29 +323,14 @@ func _process(delta: float) -> void:
 		return
 	_update_long_press(delta)
 	_refresh_elapsed += delta
-	if _refresh_elapsed < REFRESH_INTERVAL:
-		return
-	if _click_in_progress():
+	if _refresh_elapsed < REFRESH_INTERVAL or _click_in_progress():
 		return
 	_refresh_elapsed = 0.0
 	_refresh()
 
 
-## Whether the mouse/touch button is currently held down anywhere - a real
-## signal the player might be mid-click on a Button this refresh would
-## otherwise destroy (queue_button/collect_button/upgrade buttons/Insert/fix
-## buttons in inventory_list, none of which are the persistent rack-slot
-## Buttons, so they all get torn down and rebuilt fresh every _refresh()).
-## Godot doesn't atomically finish a Button's own press-to-release handling
-## before other code can run, so a rebuild landing in between - a real,
-## human-timescale race, well within normal click duration - can silently eat
-## the click. This generalizes what was previously several individually
-## patched trouble spots (the old Shop overlay's Hire button, its
-## routing-strategy dropdown) into one check used everywhere a list gets
-## rebuilt on a timer or a reactive signal, in this file and every OverlayBase
-## subclass (see that class's own _click_in_progress()) - skipping a refresh
-## here just means it retries next frame/poll instead, once the click has
-## actually finished.
+## A rebuild landing between a button's press and release would eat the
+## click - every refresh path skips itself while the pointer is down.
 func _click_in_progress() -> bool:
 	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 
@@ -181,16 +345,10 @@ func _on_rack_slot_up(index: int) -> void:
 	if _pressed_rack_index != index:
 		return
 	if not _long_press_fired:
-		_on_rack_slot_pressed(index)
+		_select_rack_slot(index, false)
 	_pressed_rack_index = -1
 
 
-## Design doc Section 21.7: "press-and-hold on the part opens a detailed view
-## breaking familiarity out by station." A short tap (the normal case,
-## handled in _on_rack_slot_up() above once released without ever crossing
-## LONG_PRESS_SECONDS) just selects/pins the slot's normal detail, same as
-## before this session; holding past the threshold fires once, additionally
-## showing the per-station familiarity breakdown in that same pinned detail.
 func _update_long_press(delta: float) -> void:
 	if _pressed_rack_index < 0 or _long_press_fired:
 		return
@@ -198,41 +356,418 @@ func _update_long_press(delta: float) -> void:
 	if _press_elapsed < LONG_PRESS_SECONDS:
 		return
 	_long_press_fired = true
-	_on_rack_slot_pressed(_pressed_rack_index, true)
+	_select_rack_slot(_pressed_rack_index, true)
 
 
-## Called by main.gd when a station on the floor is tapped.
-func open_for(station: Station) -> void:
-	_station = station
-	panel.visible = true
-	backdrop.visible = true
-	rack_panel.visible = true
-	_selected_rack_index = -1
-	_show_familiarity_detail = false
-	_pressed_rack_index = -1
-	_long_press_fired = false
-	_refresh_elapsed = 0.0
-	_refresh()
-	opened.emit()
+func _select_rack_slot(index: int, with_familiarity: bool) -> void:
+	if _station == null or index >= _station.queue_rack.size():
+		return
+	# Tapping the selected slot again deselects it.
+	if index == _selected_rack_index and not with_familiarity and not _show_familiarity_detail:
+		_selected_rack_index = -1
+	else:
+		_selected_rack_index = index
+	_show_familiarity_detail = with_familiarity
+	_selected_signature = ""
+	_refresh.call_deferred()
 
 
-## Public - called by main.gd when Escape is pressed, so any open overlay
-## closes no matter which one it is (design request, this session).
-func close() -> void:
-	_on_close_pressed()
+# ---------------------------------------------------------------------------
+# Refresh (in place)
+# ---------------------------------------------------------------------------
+
+func _refresh() -> void:
+	if _station == null:
+		return
+	var is_automatic := _station.station_type == Station.StationType.AUTOMATIC
+	var staffed := not _station.assigned_technicians.is_empty()
+
+	# Header.
+	_sprite.texture = UiKit.station_texture(_station)
+	_title.text = "%s  T%d" % [_station.station_name, _station.current_tier]
+	_status.text = _station.get_overview_status()
+	_progress.value = _station.progress_fraction()
+	UiKit.set_bar_color(_progress, _station.progress_color_key())
+	var left := _station.display_time_left()
+	_time.text = Station.short_time(left) if left > 0.0 else ""
+
+	_refresh_defect_strip()
+	_refresh_rack(is_automatic)
+	_refresh_actions(is_automatic, staffed)
+	_refresh_selected()
+
+	_push_through_check.visible = GameData.PUSH_THROUGH_ELIGIBLE_STATIONS.has(_station.station_id)
+	if _push_through_check.visible:
+		_push_through_check.set_pressed_no_signal(_station.push_through_armed)
+	_batch_row.visible = not is_automatic and _station.station_type == Station.StationType.BATCHED and not staffed
+	if _batch_row.visible:
+		_batch_spin.min_value = 1
+		_batch_spin.max_value = maxi(_station.batch_cap, 1)
+		_batch_spin.set_value_no_signal(_station.batch_size)
+		_batch_spin.editable = _station.current_state == Station.State.IDLE
+
+	_refresh_inventory()
+	_refresh_technicians(is_automatic)
 
 
-func _on_close_pressed() -> void:
-	panel.visible = false
-	backdrop.visible = false
-	rack_panel.visible = false
-	_station = null
+## Every flagged part physically at this station (parallel/batch stations
+## can hold several).
+func _defective_parts_here() -> Array[Part]:
+	var parts: Array[Part] = []
+	if _station.uses_parallel_runs():
+		for run in _station.shelling_active_parts:
+			if run.part.is_defective:
+				parts.append(run.part)
+		for part in _station.shelling_ready_parts:
+			if part.is_defective:
+				parts.append(part)
+	elif _station.current_part != null and _station.current_part.is_defective:
+		parts.append(_station.current_part)
+	return parts
 
 
-func _on_backdrop_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_on_close_pressed()
+func _refresh_defect_strip() -> void:
+	var parts := _defective_parts_here()
+	_defect_card.visible = not parts.is_empty()
+	var signature := ""
+	for part in parts:
+		signature += "%d:%d:%s," % [part.part_id, part.defect_category, GameData.can_afford_with_gems(GameData.REDESIGN_COST)]
+	if signature == _defect_signature:
+		return
+	_defect_signature = signature
+	MenuLayout.clear(_defect_actions)
+	if parts.is_empty():
+		return
+	var first := parts[0]
+	_defect_label.text = "Defective part #%d - %s" % [first.part_id, GameData.DEFECT_CATEGORY_LABEL[first.defect_category]]
+	if parts.size() > 1:
+		_defect_label.text += " (+%d more)" % (parts.size() - 1)
+	for part in parts:
+		_add_defect_fix_buttons(_defect_actions, part)
 
+
+func _refresh_rack(is_automatic: bool) -> void:
+	var rack := _station.queue_rack
+	_rack_title.text = "Queue Rack (%d/%d)" % [rack.size(), _station.rack_capacity]
+	_rack_title.get_parent().visible = not is_automatic
+	for i in RACK_SLOT_COUNT:
+		var slot := _rack_slots[i]
+		if i < rack.size():
+			var part := rack[i]
+			slot.disabled = false
+			slot.icon = UiIcons.get_icon(UiKit.part_icon(GameData.geometry_name_for_part(part)))
+			slot.tooltip_text = UiText.tip(_part_detail_text(part))
+			UiKit.set_button_kind(slot, "danger" if part.is_defective else ("primary" if i == _selected_rack_index else "neutral"))
+			slot.modulate = Color.WHITE
+		elif i < _station.rack_capacity:
+			slot.disabled = true
+			slot.icon = null
+			slot.tooltip_text = ""
+			UiKit.set_button_kind(slot, "neutral")
+			slot.modulate = Color.WHITE
+		else:
+			# Past this station's capacity: locked until the rack is upgraded.
+			slot.disabled = true
+			slot.icon = UiIcons.get_icon("act_lock")
+			slot.tooltip_text = ""
+			UiKit.set_button_kind(slot, "neutral")
+			slot.modulate = Color(1, 1, 1, 0.45)
+	if _selected_rack_index >= rack.size():
+		_selected_rack_index = -1
+		_show_familiarity_detail = false
+
+
+func _refresh_actions(is_automatic: bool, staffed: bool) -> void:
+	_queue_button.visible = (not is_automatic and not staffed
+		and _station.is_pipeline_entry and _station.current_state == Station.State.IDLE)
+	if _queue_button.visible:
+		# can_start_new_work() blocks a print when the next station has no
+		# room or too many defects are unaddressed - say so, don't just hide.
+		_queue_button.disabled = not _station.can_start_new_work() or not GameData.has_print_order()
+		_queue_button.text = "Start print" if not _queue_button.disabled else "Blocked"
+		_queue_button.tooltip_text = UiText.tip("Start the next queued print order here." if not _queue_button.disabled
+			else ("No print orders - queue parts in Contracts." if not GameData.has_print_order() else "Blocked - clear the backlog downstream first."))
+
+	# Collect whenever no technician is HERE to route it - staffed or not.
+	_collect_button.visible = (not is_automatic and _station.current_state == Station.State.READY
+		and (not staffed or not _station.is_technician_present()))
+	if _collect_button.visible:
+		_collect_button.text = "Collect"
+		_collect_button.tooltip_text = UiText.tip("Move the finished part to Awaiting Transfer." if not staffed
+			else "The technician is elsewhere - move the finished part to Awaiting Transfer yourself.")
+
+	_start_cycle_button.visible = _station.can_start_batch_cycle_manually()
+	if _start_cycle_button.visible:
+		var loaded := mini(_station.batch_cap, _station.batch_load.size() + _station.queue_rack.size())
+		_start_cycle_button.text = "Start %d/%d" % [loaded, _station.batch_cap]
+		_start_cycle_button.tooltip_text = UiText.tip("Start this batch cycle with what's loaded.")
+
+	_upgrade_button.visible = not is_automatic
+	if _station.current_tier < 5:
+		var cost := GameData.upgrade_cost_for_tier(_station.current_tier + 1)
+		_upgrade_button.text = "Tier %d: %dg" % [_station.current_tier + 1, cost]
+		_upgrade_button.disabled = not GameData.can_afford_with_gems(cost)
+	else:
+		_upgrade_button.text = "Max tier"
+		_upgrade_button.disabled = true
+	_upgrade_rack_button.visible = not is_automatic
+	if _station.rack_capacity < Station.MAX_RACK_CAPACITY:
+		var rack_cost := GameData.rack_upgrade_cost_for(_station.rack_capacity + 1)
+		_upgrade_rack_button.text = "Rack %d: %dg" % [_station.rack_capacity + 1, rack_cost]
+		_upgrade_rack_button.disabled = not GameData.can_afford_with_gems(rack_cost)
+		_upgrade_rack_button.tooltip_text = UiText.tip("Room for %d parts waiting here." % (_station.rack_capacity + 1))
+	else:
+		_upgrade_rack_button.text = "Max rack"
+		_upgrade_rack_button.disabled = true
+
+
+func _refresh_selected() -> void:
+	var has := _selected_rack_index >= 0 and _selected_rack_index < _station.queue_rack.size()
+	_selected_card.visible = has
+	if not has:
+		return
+	var part := _station.queue_rack[_selected_rack_index]
+	var text := _part_detail_text(part)
+	if _show_familiarity_detail:
+		text += "\n" + _part_familiarity_breakdown_text(part)
+	_selected_label.text = text
+	(_selected_icon.get_child(0) as TextureRect).texture = UiIcons.get_icon(UiKit.part_icon(GameData.geometry_name_for_part(part)))
+	UiKit.set_card_border(_selected_card, "bad" if part.is_defective else "gold")
+	var signature := "%d:%s:%s" % [part.part_id, part.is_defective, GameData.can_afford_with_gems(GameData.REDESIGN_COST)]
+	if signature != _selected_signature:
+		_selected_signature = signature
+		MenuLayout.clear(_selected_actions)
+		_add_defect_fix_buttons(_selected_actions, part)
+
+
+## Parts in Awaiting Transfer bound here, defective first. Rebuilt only
+## when the set (or a part's state, or whether Insert is possible) changes.
+func _refresh_inventory() -> void:
+	var compatible: Array[Part] = []
+	for part in GameData.held_parts:
+		if GameData.next_station_id_for(part) == _station.station_id:
+			compatible.append(part)
+	compatible.sort_custom(func(a: Part, b: Part) -> bool:
+		if a.is_defective != b.is_defective:
+			return a.is_defective
+		return a.part_id < b.part_id)
+	_inventory_header.visible = not compatible.is_empty()
+	_inventory_list.visible = not compatible.is_empty()
+	(_inventory_header.get_meta("right_label") as Label).text = "%d waiting" % compatible.size()
+	var signature := "%s|" % _station.can_accept_part()
+	for part in compatible:
+		signature += "%d:%s," % [part.part_id, part.is_defective]
+	if signature == _inventory_signature:
+		return
+	_inventory_signature = signature
+	MenuLayout.clear(_inventory_list)
+	for part in compatible:
+		_inventory_list.add_child(_build_inventory_row(part))
+
+
+func _build_inventory_row(part: Part) -> Control:
+	var box := UiKit.card("bad" if part.is_defective else "card_border")
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 2)
+	box.add_child(body)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 4)
+	body.add_child(line)
+	var geometry := GameData.geometry_name_for_part(part)
+	line.add_child(UiKit.icon(UiKit.part_icon(geometry)))
+	var id_label := UiKit.label("#%d" % part.part_id)
+	id_label.custom_minimum_size.x = 28.0
+	id_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(id_label)
+	var contract := GameData.get_contract(part.contract_id)
+	var who := UiKit.label(contract.customer_name if contract != null else "no contract", UiKit.FONT_SMALL, "text_dim")
+	who.clip_text = true
+	who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	who.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(who)
+	var meter := UiKit.meter(GameData.average_familiarity_stars(geometry) / 5.0, "gold", 5)
+	meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	meter.tooltip_text = "Familiarity"
+	line.add_child(meter)
+	var insert := UiKit.button("Insert", "", "warn")
+	insert.disabled = not _station.can_accept_part()
+	insert.tooltip_text = UiText.tip("Put this part into %s." % _station.station_name if not insert.disabled else "%s has no room right now." % _station.station_name)
+	insert.pressed.connect(_on_insert_part.bind(part))
+	line.add_child(insert)
+	if part.is_defective:
+		var fixes := HFlowContainer.new()
+		fixes.add_theme_constant_override("h_separation", 3)
+		fixes.add_theme_constant_override("v_separation", 3)
+		var pill := UiKit.pill(_defect_text(part), "bad")
+		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		fixes.add_child(pill)
+		_add_defect_fix_buttons(fixes, part)
+		body.add_child(fixes)
+	return box
+
+
+## One row per technician (every technician covers every station): portrait,
+## name and tier, and where they are relative to this station.
+func _refresh_technicians(is_automatic: bool) -> void:
+	var crew: Array[Technician] = []
+	for tech in _station.assigned_technicians:
+		crew.append(tech)
+	_tech_header.visible = not is_automatic
+	_tech_list.visible = not is_automatic
+	var here := 0
+	for tech in crew:
+		if tech.current_station_id == _station.station_id and not tech.is_traveling:
+			here += 1
+	(_tech_header.get_meta("right_label") as Label).text = "%d here" % here if not crew.is_empty() else "none hired"
+	for tech in _tech_rows.keys().duplicate():
+		if not crew.has(tech):
+			MenuLayout.remove_and_free(_tech_rows[tech].box)
+			_tech_rows.erase(tech)
+	if crew.is_empty():
+		if not _tech_rows.has(null):
+			var empty := UiKit.label("No technicians yet - hire them in Team. Every technician works every station.", UiKit.FONT_SMALL, "text_dim")
+			empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_tech_list.add_child(empty)
+			_tech_rows[null] = {"box": empty}
+		return
+	if _tech_rows.has(null):
+		MenuLayout.remove_and_free(_tech_rows[null].box)
+		_tech_rows.erase(null)
+	for tech in crew:
+		var row: Dictionary = _tech_rows.get(tech, {})
+		if row.is_empty():
+			row = _build_tech_row(tech)
+			_tech_rows[tech] = row
+			_tech_list.add_child(row.box)
+		_update_tech_row(row, tech)
+
+
+func _build_tech_row(tech: Technician) -> Dictionary:
+	var box := UiKit.card()
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 5)
+	box.add_child(line)
+	line.add_child(Portraits.view(Portraits.for_staff(tech), 24))
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 0)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(info)
+	var name_label := UiKit.label("%s (%s)" % [tech.technician_name, tech.tier_label])
+	name_label.clip_text = true
+	info.add_child(name_label)
+	var where := UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	where.clip_text = true
+	info.add_child(where)
+	var state := UiKit.pill("", "good")
+	state.custom_minimum_size.x = 46.0
+	state.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(state)
+	return {"box": box, "where": where, "state": state}
+
+
+func _update_tech_row(row: Dictionary, tech: Technician) -> void:
+	var where: Label = row.where
+	var at_here := tech.current_station_id == _station.station_id and not tech.is_traveling
+	if at_here:
+		var role := "running it" if _station.active_worker == tech else "dropping off"
+		where.text = "Here, %s" % role
+		UiKit.set_pill(row.state, "Here", "good")
+	elif tech.is_traveling and tech.travel_target_station_id == _station.station_id:
+		where.text = "On the way here"
+		UiKit.set_pill(row.state, "Coming", "gold")
+	elif tech.is_traveling:
+		where.text = "Walking to %s" % _display_name_for(tech.travel_target_station_id)
+		UiKit.set_pill(row.state, "Away", "info")
+	else:
+		where.text = "At %s" % _display_name_for(tech.current_station_id)
+		UiKit.set_pill(row.state, "Away", "info")
+	if not tech.carried_parts.is_empty():
+		where.text += " - carrying %d" % tech.carried_parts.size()
+
+
+# ---------------------------------------------------------------------------
+# Defect fixes (design doc Section 9 / 21.6)
+# ---------------------------------------------------------------------------
+
+## Mortar Patch (Shell Crack, only at Mold Prep - 21.4), Redesign (any
+## category), and the expertise Scrap (21.6, only at high familiarity). Every
+## call site passes a wrapping container (UI rule 2).
+func _add_defect_fix_buttons(row: Container, part: Part) -> void:
+	if not part.is_defective:
+		return
+	if GameData.can_mortar_patch(part) and _station.station_id == "mold_prep":
+		var mortar := UiKit.button("Mortar %dg" % GameData.MORTAR_PATCH_COST, "", "warn")
+		mortar.tooltip_text = UiText.tip("Patch the shell crack. Quick and reliable, but you learn nothing.")
+		mortar.disabled = not GameData.can_afford_with_gems(GameData.MORTAR_PATCH_COST)
+		mortar.pressed.connect(_on_fix_defect.bind(part, false))
+		row.add_child(mortar)
+	var redesign := UiKit.button("Redesign %dg" % GameData.REDESIGN_COST, "act_rework", "primary")
+	redesign.tooltip_text = UiText.tip("Fix the root cause. Costs more, raises familiarity.")
+	redesign.disabled = not GameData.can_afford_with_gems(GameData.REDESIGN_COST)
+	redesign.pressed.connect(_on_fix_defect.bind(part, true))
+	row.add_child(redesign)
+	if GameData.can_scrap_for_expertise(part):
+		var weakest := GameData.weakest_familiarity_percent(GameData.geometry_name_for_part(part))
+		# The weakest-link percentage stays on the face (21.7 wants it in front
+		# of the player here); the sentence lives in the tooltip.
+		var scrap := UiKit.button("Scrap (%d%%)" % weakest, "act_scrap", "danger")
+		scrap.tooltip_text = UiText.tip("Scrap this part - it won't meet tolerance. Weakest-link familiarity for this geometry: %d%%." % weakest)
+		scrap.pressed.connect(_on_scrap_part.bind(part))
+		row.add_child(scrap)
+
+
+func _defect_text(part: Part) -> String:
+	var label: String = GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
+	return "%s (escalated)" % label if part.defect_escalated else label
+
+
+# ---------------------------------------------------------------------------
+# Text helpers
+# ---------------------------------------------------------------------------
+
+## Everything worth knowing about a racked Part: contract, quick-glance
+## familiarity, where it goes next, defect.
+func _part_detail_text(part: Part) -> String:
+	var contract := GameData.get_contract(part.contract_id)
+	var lines: Array[String] = []
+	if contract != null:
+		var geometry := GameData.geometry_name_for_part(part)
+		lines.append("Part #%d - %s" % [part.part_id, contract.customer_name])
+		lines.append("%s, %s" % [geometry, GameData.alloy_name_for_part(part)])
+		lines.append("Familiarity %d/5" % GameData.average_familiarity_stars(geometry))
+	else:
+		lines.append("Part #%d - no contract" % part.part_id)
+	var next_id := GameData.next_station_id_for(part)
+	lines.append("Next: %s" % (_display_name_for(next_id) if next_id != "" else "end of line"))
+	if part.is_defective:
+		lines.append("Defect: %s" % _defect_text(part))
+	return "\n".join(PackedStringArray(lines))
+
+
+## Section 21.7's detail view: familiarity per station, not just the average.
+func _part_familiarity_breakdown_text(part: Part) -> String:
+	var geometry := GameData.geometry_name_for_part(part)
+	if geometry == "":
+		return "Familiarity by station: no contract"
+	var lines: Array[String] = ["Familiarity by station:"]
+	for station_id in GameData.FAMILIARITY_TRACKED_STATIONS:
+		lines.append("  %s: %d/5" % [_display_name_for(station_id), GameData.familiarity_stars_for(geometry, station_id)])
+	return "\n".join(PackedStringArray(lines))
+
+
+## Prefers the live Station's own name ("Printing #2") over the shared
+## StationDef display name.
+func _display_name_for(station_id: String) -> String:
+	var station: Station = GameData.station_by_id.get(station_id)
+	if station != null:
+		return station.station_name
+	var def := GameData.get_station(station_id)
+	return def.display_name if def != null else station_id
+
+
+# ---------------------------------------------------------------------------
+# Actions - every one defers its refresh so the click finishes first
+# ---------------------------------------------------------------------------
 
 func _on_queue_pressed() -> void:
 	if _station != null:
@@ -246,14 +781,10 @@ func _on_collect_pressed() -> void:
 	_refresh.call_deferred()
 
 
-func _on_push_through_toggled(pressed: bool) -> void:
+func _on_start_cycle_pressed() -> void:
 	if _station != null:
-		_station.set_push_through_armed(pressed)
-
-
-func _on_batch_size_changed(value: float) -> void:
-	if _station != null:
-		_station.set_batch_size(int(value))
+		_station.start_batch_cycle_manually()
+	_refresh.call_deferred()
 
 
 func _on_upgrade_pressed() -> void:
@@ -268,294 +799,23 @@ func _on_upgrade_rack_pressed() -> void:
 	_refresh.call_deferred()
 
 
-## Deferred, not direct: this rebuilds inventory_list, which destroys the
-## very Insert button this handler is still running because of (queue_free()
-## on a Control mid-click confuses Godot's input handling for whatever
-## replaces it) - see the same fix in StaffOverlay for the checkbox grid.
+func _on_push_through_toggled(pressed: bool) -> void:
+	if _station != null:
+		_station.set_push_through_armed(pressed)
+
+
+func _on_batch_size_changed(value: float) -> void:
+	if _station != null:
+		_station.set_batch_size(int(value))
+
+
 func _on_insert_part(part: Part) -> void:
 	if _station == null or not _station.can_accept_part():
-		_refresh.call_deferred() # station filled up since the list was drawn; re-sync
+		_refresh.call_deferred()
 		return
 	GameData.release_held_part(part)
 	_station.receive_part(part)
 	_refresh.call_deferred()
-
-
-func _refresh() -> void:
-	if _station == null:
-		return
-
-	title_label.text = "%s (Tier %d)" % [_station.station_name, _station.current_tier]
-	status_label.text = _station.get_overview_status()
-
-	var staffed := not _station.assigned_technicians.is_empty()
-	var is_automatic := _station.station_type == Station.StationType.AUTOMATIC
-
-	queue_button.visible = (
-		not is_automatic and not staffed
-		and _station.is_pipeline_entry and _station.current_state == Station.State.IDLE
-	)
-	if queue_button.visible:
-		# Bug fix (this session): Station.can_start_new_work() now blocks
-		# queuing a new Part when the very next station has no room, or when
-		# too many defective Parts are already sitting unaddressed - see its
-		# own comment. Disabled-with-explanation here rather than just
-		# hidden, so it's clear why nothing happens on tap instead of looking
-		# broken.
-		queue_button.disabled = not _station.can_start_new_work()
-		queue_button.text = "Queue Print Job" if not queue_button.disabled else "Blocked - clear the backlog first"
-
-	# Bug fix (this session): available whenever this station's OWN assigned
-	# technician isn't the one currently physically here to route it
-	# themselves - not just when fully unstaffed. A technician assigned to
-	# several stations can be away working another one for a long stretch
-	# (see Technician.pick_next_station()); previously Collect was hidden the
-	# instant ANY technician was assigned here, leaving no way for the player
-	# to free up a Ready Part stuck at a staffed-but-currently-neglected
-	# station - reported as "there's no way for parts to make it to ship."
-	collect_button.visible = (
-		not is_automatic and _station.current_state == Station.State.READY
-		and (not staffed or not _station.is_technician_present())
-	)
-	if collect_button.visible:
-		collect_button.text = "Collect" if not staffed else "Collect (technician is elsewhere)"
-
-	_start_cycle_button.visible = _station.can_start_batch_cycle_manually()
-	if _start_cycle_button.visible:
-		var loaded := mini(_station.batch_cap, _station.batch_load.size() + _station.queue_rack.size())
-		_start_cycle_button.text = "Start cycle (%d/%d loaded)" % [loaded, _station.batch_cap]
-
-	# Design doc Section 21.6: Push Through is generalized beyond Pour to
-	# Shelling/Burnout/Mold Prep too - see GameData.PUSH_THROUGH_ELIGIBLE_STATIONS.
-	push_through_check_box.visible = GameData.PUSH_THROUGH_ELIGIBLE_STATIONS.has(_station.station_id)
-	if push_through_check_box.visible:
-		push_through_check_box.button_pressed = _station.push_through_armed
-
-	_refresh_defect_row()
-
-	batch_row.visible = (
-		not is_automatic and _station.station_type == Station.StationType.BATCHED and not staffed
-	)
-	if batch_row.visible:
-		batch_spin_box.min_value = 1
-		batch_spin_box.max_value = max(_station.batch_cap, 1)
-		batch_spin_box.value = _station.batch_size
-		batch_spin_box.editable = _station.current_state == Station.State.IDLE
-
-	_refresh_rack_grid()
-	_refresh_inventory_list()
-
-	if staffed:
-		# Design request, this session: several technicians can now be
-		# assigned to the same station at once, so this lists every one of
-		# them rather than assuming just one - and calls out which single one
-		# (if any) is actually the active_worker running the station right
-		# now versus just visiting to drop off cargo, since that distinction
-		# is new and worth surfacing.
-		var lines: Array[String] = []
-		for tech in _station.assigned_technicians:
-			var extra := ""
-			if tech.has_multiple_real_stations():
-				extra = ", %d%% productivity here (working %d stations)" % [
-					roundi(tech.productivity_multiplier * 100.0), tech.real_assigned_station_ids().size()
-				]
-			var where: String
-			if tech.current_station_id == _station.station_id:
-				var role := "working" if _station.active_worker == tech else "visiting"
-				where = "here (%s), interacting" % role if tech.is_interacting else "here (%s)" % role
-			elif tech.is_traveling:
-				where = "walking to %s" % _display_name_for(tech.travel_target_station_id)
-			else:
-				where = "currently at %s" % _display_name_for(tech.current_station_id)
-			var carrying := ""
-			if not tech.carried_parts.is_empty():
-				carrying = " - carrying %s" % _carried_parts_summary(tech)
-			lines.append("%s (%s)%s - %s%s" % [
-				tech.technician_name, tech.tier_label, extra, where, carrying
-			])
-		technician_status_label.text = "Staffed:\n" + "\n".join(PackedStringArray(lines))
-	else:
-		technician_status_label.text = "Unstaffed - assign a technician below"
-
-	# Every technician covers every station now - no assignment list.
-	technician_assign_list.visible = false
-
-	upgrade_button.visible = not is_automatic and _station.current_tier < 5
-	if upgrade_button.visible:
-		var target := _station.current_tier + 1
-		var cost := GameData.upgrade_cost_for_tier(target)
-		upgrade_button.text = "Upgrade to Tier %d (%dg)" % [target, cost]
-		upgrade_button.disabled = not GameData.can_afford_with_gems(cost)
-
-	upgrade_rack_button.visible = not is_automatic and _station.rack_capacity < Station.MAX_RACK_CAPACITY
-	if upgrade_rack_button.visible:
-		var rack_target := _station.rack_capacity + 1
-		var rack_cost := GameData.rack_upgrade_cost_for(rack_target)
-		upgrade_rack_button.text = "Upgrade Rack to %d slots (%dg)" % [rack_target, rack_cost]
-		upgrade_rack_button.disabled = not GameData.can_afford_with_gems(rack_cost)
-
-
-## Design request, this session: assign/unassign any hired technician right
-## from this popup instead of only from the Staff overlay's roster
-## checkboxes. Full rebuild every refresh (same pattern as inventory_list
-## below, guarded the same way by _process()'s _click_in_progress() check
-## and the deferred call in _on_toggle_technician_assignment()) rather than a
-## persistent-widget list - this one's short (one row per hired technician)
-## and doesn't churn every frame the way the rack grid does, so the extra
-## bookkeeping a persistent list needs isn't worth it here.
-func _refresh_technician_assign_list() -> void:
-	_clear_list(technician_assign_list)
-	if _station == null or _station.station_type == Station.StationType.AUTOMATIC:
-		return
-
-	if GameData.technicians.is_empty():
-		var empty_label := Label.new()
-		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		empty_label.text = "No technicians hired yet - hire them from Team."
-		technician_assign_list.add_child(empty_label)
-		return
-
-	# Printer instances can also be covered by the Staff overlay's "Printing
-	# (all)" group checkbox (GameData.assign_technician_to_printer_group()) -
-	# that's an all-or-nothing group membership, not a per-instance one, so
-	# unassigning from just THIS printer isn't a real operation the data
-	# model supports (GameData.unassign_technician() only ever erases a
-	# literal station id from assigned_station_ids, never the "printing"
-	# group entry a group member actually carries). Rather than silently do
-	# nothing or invent new partial-group-exclusion semantics, this shows a
-	# read-only note for a group-covered technician here and points at the
-	# Staff overlay, which is already the correct control surface for
-	# group membership.
-	var is_printer := _station.station_id.begins_with("printing_")
-
-	for tech: Technician in GameData.technicians:
-		# Engineers own contracts, not stations (design doc 28.2).
-		if tech.is_engineer:
-			continue
-		var assigned_here := _station.assigned_technicians.has(tech)
-		var group_covered := is_printer and tech.assigned_station_ids.has("printing")
-
-		# A group-covered technician gets a sentence instead of a button, and
-		# that sentence goes UNDER the name in a VBox - an autowrapping note
-		# beside an expand-fill name in an HBox gets a sliver of width and
-		# wraps one character per line (CLAUDE.md UI rule 1).
-		var row: BoxContainer = VBoxContainer.new() if assigned_here and group_covered else HBoxContainer.new()
-
-		var label := Label.new()
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		label.text = "%s (%s, %s Tier)" % [tech.technician_name, tech.role_label, tech.tier_label]
-		row.add_child(label)
-
-		if assigned_here and group_covered:
-			var note := Label.new()
-			note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			note.text = "Assigned via 'Printing (all)' - manage it from Team"
-			row.add_child(note)
-		else:
-			var button := Button.new()
-			button.text = "Unassign" if assigned_here else "Assign"
-			button.pressed.connect(_on_toggle_technician_assignment.bind(tech, assigned_here))
-			row.add_child(button)
-
-		technician_assign_list.add_child(row)
-
-
-## Deferred for the same reason _on_insert_part() is: this rebuilds
-## technician_assign_list, which destroys the very button this handler is
-## still running because of.
-func _on_toggle_technician_assignment(tech: Technician, was_assigned: bool) -> void:
-	if _station == null:
-		return
-	if was_assigned:
-		GameData.unassign_technician(tech, _station)
-	else:
-		GameData.assign_technician(tech, _station)
-	_refresh.call_deferred()
-
-
-## Design doc Section 9's two per-Part fix paths (Mortar Patch, Shell Crack
-## only, and Redesign, any category) - the third, a specialist, is a
-## standing hire rather than a per-Part action, see StaffOverlay's
-## Specialists tab. Shown right under the main status line for whichever
-## Part is actively running here.
-func _refresh_defect_row() -> void:
-	_clear_list(defect_row)
-
-	# Parallel shelling (design doc Section 21.4) can have several Parts
-	## simultaneously active/ready, unlike every other station's single
-	## current_part - list fix buttons for every flagged one, not just one.
-	if _station.uses_parallel_runs():
-		var any := false
-		for run in _station.shelling_active_parts:
-			if run.part.is_defective:
-				_add_defect_fix_buttons(defect_row, run.part)
-				any = true
-		for part in _station.shelling_ready_parts:
-			if part.is_defective:
-				_add_defect_fix_buttons(defect_row, part)
-				any = true
-		defect_row.visible = any
-		return
-
-	var part := _station.current_part
-	if part == null or not part.is_defective:
-		defect_row.visible = false
-		return
-	defect_row.visible = true
-	_add_defect_fix_buttons(defect_row, part)
-
-
-## Shared by the current-part DefectRow above and each defective row in the
-## Queue (rack) and Insert-from-Inventory lists below - anywhere a defective
-## Part is shown gets the same two fix buttons.
-## `row` is expected to be a wrapping container (HFlowContainer) at every call
-## site - these buttons vary in number and width, and the panel is only 276px
-## wide, so a non-wrapping row silently pushes them out of reach.
-func _add_defect_fix_buttons(row: Container, part: Part) -> void:
-	if not part.is_defective:
-		return
-	# Design doc Section 21.4: Mortar Patch "happens at this station" (Mold
-	# Prep) now, revised from a free-floating action available anywhere a
-	# defective part was shown. Scoped here rather than in
-	# GameData.can_mortar_patch() (which stays the pure category check, Shell
-	# Crack only) since this is specifically about where the UI offers it,
-	# not whether the part is eligible at all.
-	if GameData.can_mortar_patch(part) and _station.station_id == "mold_prep":
-		var mortar := Button.new()
-		mortar.text = "Mortar Patch (%dg)" % GameData.MORTAR_PATCH_COST
-		mortar.disabled = not GameData.can_afford_with_gems(GameData.MORTAR_PATCH_COST)
-		mortar.pressed.connect(_on_fix_defect.bind(part, false))
-		row.add_child(mortar)
-
-	var redesign := Button.new()
-	redesign.text = "Redesign (%dg)" % GameData.REDESIGN_COST
-	redesign.disabled = not GameData.can_afford_with_gems(GameData.REDESIGN_COST)
-	redesign.pressed.connect(_on_fix_defect.bind(part, true))
-	row.add_child(redesign)
-
-	# Design doc Section 21.6: "the one case where not proceeding makes
-	# sense" - only ever appears once the player has very high familiarity
-	# with this geometry (GameData.can_scrap_for_expertise()), never on a
-	# novel or lightly-familiar one. The button text itself surfaces the
-	# weakest-link familiarity as a percentage right in this exact
-	# proceed-with-defect moment, per Section 21.7: "the prompt also surfaces
-	# the single weakest-link station's familiarity as a percentage... since
-	# that is the number that actually matters for judging the specific risk."
-	if GameData.can_scrap_for_expertise(part):
-		var weakest_percent := GameData.weakest_familiarity_percent(GameData.geometry_name_for_part(part))
-		var scrap := Button.new()
-		# Measured at 312px when this said "Scrap - won't meet tolerance
-		# (weakest link N% familiar)" - wider than the 276px the panel actually
-		# has, so it rendered off the edge and was unreachable. The percentage
-		# is the number Section 21.7 wants in front of the player at this exact
-		# moment, so it stays on the face; the sentence moves to the tooltip.
-		scrap.text = "Scrap (%d%%)" % weakest_percent
-		scrap.tooltip_text = (
-			"Scrap this part - it won't meet tolerance.\n"
-			+ "Weakest-link familiarity for this geometry: %d%%." % weakest_percent)
-		scrap.pressed.connect(_on_scrap_part.bind(part))
-		row.add_child(scrap)
 
 
 func _on_fix_defect(part: Part, is_redesign: bool) -> void:
@@ -563,6 +823,9 @@ func _on_fix_defect(part: Part, is_redesign: bool) -> void:
 		GameData.redesign_defect(part)
 	else:
 		GameData.mortar_patch_defect(part)
+	_defect_signature = ""
+	_selected_signature = ""
+	_inventory_signature = "-"
 	_refresh.call_deferred()
 
 
@@ -571,239 +834,7 @@ func _on_scrap_part(part: Part) -> void:
 		if _station != null:
 			_station.remove_part(part)
 		GameData.release_held_part(part)
-	_refresh.call_deferred()
-
-
-## Prefers the live Station's own station_name (e.g. "Printing #2" for a
-## specific printer instance) over the shared StationDef.display_name, which
-## can't tell printer instances apart from each other (design doc Section 21.2).
-func _display_name_for(station_id: String) -> String:
-	var station: Station = GameData.station_by_id.get(station_id)
-	if station != null:
-		return station.station_name
-	var def := GameData.get_station(station_id)
-	return def.display_name if def != null else station_id
-
-
-## "Part #3 (Acme Co.) -> Deplate, Part #7 (Acme Co.) -> UV Cure" - what a
-## technician is physically holding right now and where each piece is bound,
-## not just a bare count, so it's clear this isn't unlimited inventory.
-func _carried_parts_summary(tech: Technician) -> String:
-	var pieces: Array[String] = []
-	for part in tech.carried_parts:
-		var contract := GameData.get_contract(part.contract_id)
-		var dest := _display_name_for(GameData.next_station_id_for(part))
-		pieces.append("#%d (%s) -> %s" % [
-			part.part_id, contract.customer_name if contract != null else "no contract", dest
-		])
-	return "%s [%d/%d]" % [", ".join(PackedStringArray(pieces)), tech.carried_parts.size(), Technician.CARRY_CAPACITY]
-
-
-## Visual view of this station's own queue_rack - the Parts already here
-## waiting their turn behind current_part, distinct from the Insert list
-## below (which is GameData.held_parts, Parts elsewhere waiting to be routed
-## in). Updates the 10 persistent slot Buttons in place (see
-## _rack_slot_buttons) rather than rebuilding them - slot i shows
-## queue_rack[i] if present, otherwise renders as an empty/dim slot.
-func _refresh_rack_grid() -> void:
-	if _station == null:
-		return
-
-	var rack := _station.queue_rack
-	for i in RACK_SLOT_COUNT:
-		var slot := _rack_slot_buttons[i]
-		if i < rack.size():
-			var part := rack[i]
-			slot.disabled = false
-			slot.text = "%d!" % part.part_id if part.is_defective else "%d" % part.part_id
-			slot.tooltip_text = UiText.tip(_part_detail_text(part))
-			slot.modulate = Color(1.0, 0.55, 0.4) if part.is_defective else Color.WHITE
-		else:
-			slot.disabled = true
-			slot.text = ""
-			slot.tooltip_text = ""
-			slot.modulate = Color(1.0, 1.0, 1.0, 0.35)
-
-	if _selected_rack_index >= rack.size():
-		_selected_rack_index = -1
-		_show_familiarity_detail = false
-	_refresh_selected_info()
-
-
-func _on_rack_slot_pressed(index: int, show_familiarity_detail: bool = false) -> void:
-	_selected_rack_index = index
-	_show_familiarity_detail = show_familiarity_detail
-	_refresh_selected_info()
-
-
-## The selected slot's full detail (same text as its hover tooltip, but
-## pinned so it doesn't disappear when the mouse moves away), the per-station
-## familiarity breakdown if this selection came from a press-and-hold (design
-## doc Section 21.7 - see _update_long_press()), plus, if that Part is
-## flagged, the same Mortar Patch/Redesign/Scrap buttons every other
-## defective-Part view in this popup uses.
-func _refresh_selected_info() -> void:
-	_clear_list(selected_fix_row)
-	if _station == null or _selected_rack_index < 0 or _selected_rack_index >= _station.queue_rack.size():
-		selected_info_label.text = "Tap a slot to see part details, or press and hold for familiarity detail."
-		return
-	var part := _station.queue_rack[_selected_rack_index]
-	var text := _part_detail_text(part)
-	if _show_familiarity_detail:
-		text += "\n" + _part_familiarity_breakdown_text(part)
-	selected_info_label.text = text
-	_add_defect_fix_buttons(selected_fix_row, part)
-
-
-## Design doc Section 21.7's "detail view": per-station familiarity, not just
-## the quick-glance average already in _part_detail_text() below.
-func _part_familiarity_breakdown_text(part: Part) -> String:
-	var geometry_name := GameData.geometry_name_for_part(part)
-	if geometry_name == "":
-		return "Familiarity by station: no contract"
-	var lines: Array[String] = ["Familiarity by station:"]
-	for station_id in GameData.FAMILIARITY_TRACKED_STATIONS:
-		var stars := GameData.familiarity_stars_for(geometry_name, station_id)
-		lines.append("  %s: %d/5" % [_display_name_for(station_id), stars])
-	return "\n".join(PackedStringArray(lines))
-
-
-## Shared by a rack slot's hover tooltip and the pinned SelectedInfoLabel -
-## everything worth knowing about a Part sitting in the rack: which contract
-## it's for, its quick-glance average familiarity (design doc Section 21.7 -
-## the four per-station values averaged into one star rating), where it
-## physically is right now, where it's headed next, and its defect status if any.
-func _part_detail_text(part: Part) -> String:
-	var contract := GameData.get_contract(part.contract_id)
-	var lines: Array[String] = []
-	lines.append("Part #%d" % part.part_id)
-	if contract != null:
-		var geometry_name := GameData.geometry_name_for_part(part)
-		lines.append("Contract: %s (%s, %s)" % [contract.customer_name, geometry_name, GameData.alloy_name_for_part(part)])
-		lines.append("Familiarity: %d/5 stars (avg)" % GameData.average_familiarity_stars(geometry_name))
-	else:
-		lines.append("Contract: none")
-	lines.append("Stage: waiting in queue at %s" % _station.station_name)
-	var next_id := GameData.next_station_id_for(part)
-	if next_id == "":
-		lines.append("Next: none (end of line)")
-	else:
-		lines.append("Next: %s" % _display_name_for(next_id))
-	if part.is_defective:
-		var label: String = GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
-		if part.defect_escalated:
-			lines.append("Defect: %s (ESCALATED)" % label)
-		else:
-			lines.append("Defect: %s (%.0fs to address)" % [label, part.defect_time_remaining])
-	else:
-		lines.append("Defect: none known")
-	return "\n".join(PackedStringArray(lines))
-
-
-## Redesigned this session (design request: "a few columns... instead of
-## just like a text file") - real Part#/Contract/Familiarity/Defect columns
-## instead of one run-on text string per row, and defective parts surfaced
-## first (then by part number) instead of plain arrival order, so anything
-## needing attention isn't buried if several parts are compatible here.
-func _refresh_inventory_list() -> void:
-	_clear_list(inventory_list)
-	if _station == null:
-		return
-
-	var compatible: Array[Part] = []
-	for part in GameData.held_parts:
-		if GameData.next_station_id_for(part) == _station.station_id:
-			compatible.append(part)
-
-	if compatible.is_empty():
-		var empty_label := Label.new()
-		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		empty_label.text = "No compatible parts held."
-		inventory_list.add_child(empty_label)
-		return
-
-	compatible.sort_custom(func(a: Part, b: Part) -> bool:
-		if a.is_defective != b.is_defective:
-			return a.is_defective
-		return a.part_id < b.part_id
-	)
-
-	for part in compatible:
-		# Two lines, not one. Measured: the info columns alone need 264px of the
-		# 276px the panel has, so any action button beyond that rendered off the
-		# right edge and couldn't be tapped - which is how a defective part could
-		# show "Shell Crack (ESCALATED)" with its Redesign/Scrap buttons
-		# invisible. Info stays on line one; actions wrap on their own below.
-		var entry := VBoxContainer.new()
-		var row := HBoxContainer.new()
-		entry.add_child(row)
-		var contract := GameData.get_contract(part.contract_id)
-
-		var id_label := Label.new()
-		id_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		id_label.custom_minimum_size = Vector2(35.0, 0.0)
-		id_label.text = "#%d" % part.part_id
-		row.add_child(id_label)
-
-		var contract_label := Label.new()
-		contract_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		contract_label.custom_minimum_size = Vector2(95.0, 0.0)
-		contract_label.text = contract.customer_name if contract != null else "no contract"
-		row.add_child(contract_label)
-
-		var familiarity_label := Label.new()
-		familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		familiarity_label.custom_minimum_size = Vector2(40.0, 0.0)
-		# Design doc Section 21.7's quick-glance display: an average star
-		# rating everywhere a Part shows up in a list, not just the rack panel.
-		familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(
-			GameData.geometry_name_for_part(part)
-		)
-		row.add_child(familiarity_label)
-
-		if part.is_defective:
-			var defect_label := Label.new()
-			defect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			defect_label.custom_minimum_size = Vector2(70.0, 0.0)
-			defect_label.add_theme_color_override("font_color", Color(0.88, 0.35, 0.22))
-			defect_label.text = _defect_marker(part).trim_prefix(" - DEFECT: ")
-			row.add_child(defect_label)
-
-		# HFlowContainer so the action buttons wrap onto extra lines rather than
-		# overflowing the panel - the number and width of them varies (Insert,
-		# plus Mortar Patch / Redesign / Scrap only when applicable).
-		var actions := HFlowContainer.new()
-		var insert_button := Button.new()
-		insert_button.text = "Insert"
-		insert_button.disabled = not _station.can_accept_part()
-		insert_button.pressed.connect(_on_insert_part.bind(part))
-		actions.add_child(insert_button)
-		_add_defect_fix_buttons(actions, part)
-		entry.add_child(actions)
-
-		inventory_list.add_child(entry)
-
-
-func _clear_list(list: Container) -> void:
-	MenuLayout.clear(list)
-
-
-## " - DEFECT: <category>" (plus "(ESCALATED)" if its grace period already
-## lapsed) for a flagged Part in a Queue/Insert list row, otherwise empty
-## (design doc Section 9). No countdown here unlike Station._defect_suffix()
-## - that level of detail belongs to the one active part the main status
-## line already covers; a list of several racked/held Parts just needs the
-## category (and whether it's now escalated) at a glance.
-func _defect_marker(part: Part) -> String:
-	if not part.is_defective:
-		return ""
-	var label: String = GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
-	if part.defect_escalated:
-		return " - DEFECT: %s (ESCALATED)" % label
-	return " - DEFECT: %s" % label
-
-
-func _on_start_cycle_pressed() -> void:
-	if _station != null:
-		_station.start_batch_cycle_manually()
+	_defect_signature = ""
+	_selected_signature = ""
+	_inventory_signature = "-"
 	_refresh.call_deferred()

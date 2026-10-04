@@ -175,7 +175,7 @@ func _create_station_row() -> StationRow:
 
 func _update_station_row(row: StationRow, station: Station) -> void:
 	row.station = station
-	row.icon.texture = _station_icon(station)
+	row.icon.texture = UiKit.station_texture(station)
 	row.name_label.text = station.station_name
 	var status := station.board_status_text()
 	row.status_label.text = status
@@ -186,8 +186,8 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 
 	var is_automatic := station.station_type == Station.StationType.AUTOMATIC
 	row.bar.modulate.a = 0.0 if is_automatic else 1.0
-	row.bar.value = _station_progress_fraction(station)
-	UiKit.set_bar_color(row.bar, _bar_color_key(station))
+	row.bar.value = station.progress_fraction()
+	UiKit.set_bar_color(row.bar, station.progress_color_key())
 
 	row.action = _primary_action(station)
 	# An empty slot keeps its width (the bar column stays aligned) but is
@@ -208,16 +208,6 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 			_set_action(row, "%dg" % cost, "act_upgrade", "neutral", "Upgrade to Tier %d for %dg" % [station.current_tier + 1, cost])
 		_:
 			_set_action(row, "", "", "neutral", "")
-
-
-## The station's own sprite, so the row matches the floor - except the
-## generated placeholder box (an ImageTexture), which reads as a blank
-## square at 20px; those use their room's icon until real art lands.
-func _station_icon(station: Station) -> Texture2D:
-	var texture: Texture2D = station.station_sprite.texture if station.station_sprite != null else null
-	if texture == null or texture is ImageTexture:
-		return UiIcons.get_icon(UiKit.room_icon(GameData.get_station(station.station_id).room_name))
-	return texture
 
 
 func _set_action(row: StationRow, text: String, icon_name: String, kind: String, tip: String) -> void:
@@ -277,48 +267,6 @@ func _on_row_gui_input(event: InputEvent, row: StationRow) -> void:
 		row.press_position = event.global_position
 	elif event.global_position.distance_to(row.press_position) < ROW_TAP_MOVE_THRESHOLD and row.station != null:
 		station_requested.emit(row.station)
-
-
-## Fraction complete (0.0-1.0). Derived from the station's own timer_bar
-## (station.gd keeps it in sync); parallel and batch stations read their
-## soonest run. A loaded-but-waiting batch station shows how full it is.
-func _station_progress_fraction(station: Station) -> float:
-	if station.uses_parallel_runs():
-		if not station.shelling_ready_parts.is_empty():
-			return 1.0
-		if station.shelling_active_parts.is_empty():
-			if station.is_batch_station() and not station.batch_load.is_empty():
-				return float(station.batch_load.size()) / maxf(station.batch_cap, 1.0)
-			return 0.0
-		return _fraction_from_bar(station)
-	match station.current_state:
-		Station.State.READY:
-			return 1.0
-		Station.State.RUNNING:
-			return _fraction_from_bar(station)
-	return 0.0
-
-
-func _fraction_from_bar(station: Station) -> float:
-	var bar := station.timer_bar
-	if bar == null:
-		return 0.0
-	return clampf(1.0 - bar.value / maxf(bar.max_value, 0.01), 0.0, 1.0)
-
-
-func _bar_color_key(station: Station) -> String:
-	if station.uses_parallel_runs():
-		if not station.shelling_ready_parts.is_empty():
-			return "good"
-		if not station.shelling_active_parts.is_empty() or not station.batch_load.is_empty():
-			return "gold"
-		return "text_dim"
-	match station.current_state:
-		Station.State.READY:
-			return "good"
-		Station.State.RUNNING:
-			return "gold"
-	return "text_dim"
 
 
 # ---------------------------------------------------------------------------

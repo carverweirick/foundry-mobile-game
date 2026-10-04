@@ -51,6 +51,9 @@ const MIN_ZOOM: float = 0.25   # zoomed out - the whole floor visible at once
 const MAX_ZOOM: float = 2.0   # zoomed in - close look at a single station
 const DEFAULT_ZOOM: float = 1.0
 const ATTENTION_PAN_SECONDS: float = 0.35
+## How far (screen px) a station must sit clear of the Station Detail Menu
+## and the screen edge before a tap leaves the camera where it is.
+const STATION_MENU_REVEAL_MARGIN: float = 40.0
 ## The nonconformance shelf (design doc 28.1): center VIM Bay, beside Pour.
 ## Pour's sprite covers nearly the whole island, so the shelf takes the free
 ## strip down its left edge (VIM Bay spans x 720-1000).
@@ -374,6 +377,30 @@ func _focus_station(station: Station, open_popup: bool) -> void:
 	AttentionPulse.spawn(station, station.get_sprite_rect().grow(4.0))
 	if open_popup:
 		station_detail_menu.open_for(station)
+		tween.kill()
+		_reveal_beside_station_menu(station, true)
+
+
+## The Station Detail Menu covers the left of the screen; keep the station
+## it's about visible in the floor area to its right. From a floor tap
+## (always=false) the camera only moves if the station would be hidden.
+func _reveal_beside_station_menu(station: Station, always: bool) -> void:
+	var view := _view_size()
+	var panel_right: float = station_detail_menu.panel.get_global_rect().end.x
+	var screen_x: float = station.get_global_transform_with_canvas().origin.x
+	if not always and screen_x > panel_right + STATION_MENU_REVEAL_MARGIN and screen_x < view.x - STATION_MENU_REVEAL_MARGIN:
+		return
+	var visible_center: float = (panel_right + view.x) * 0.5
+	var target := station.position - Vector2((visible_center - view.x * 0.5) / camera.zoom.x, 0.0)
+	# The normal clamp would stop a station near the floor's right edge short
+	# of the visible area; the panel hides the left anyway, so the camera may
+	# overshoot the floor by up to the panel's width here.
+	var clamped := _clamp_camera_position(target)
+	var slack: float = panel_right / camera.zoom.x
+	target = Vector2(clampf(target.x, clamped.x - slack, clamped.x + slack), clamped.y)
+	var tween := create_tween()
+	tween.tween_property(camera, "position", target, ATTENTION_PAN_SECONDS) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
 ## Pans to the NC shelf and opens its menu - a shelf tap, or the Attention
@@ -980,6 +1007,7 @@ func _try_click_station(world_pos: Vector2) -> void:
 		var local_pos := world_pos - station.position
 		if station.get_click_rect().has_point(local_pos):
 			station_detail_menu.open_for(station)
+			_reveal_beside_station_menu(station, false)
 			return
 
 

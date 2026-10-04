@@ -163,10 +163,9 @@ func _process(delta: float) -> void:
 	_speed_badge.visible = GameData.debug_sim_speed != 1.0
 	if _speed_badge.visible:
 		_speed_badge.text = "PAUSED" if GameData.debug_sim_speed == 0.0 else "%dx" % int(GameData.debug_sim_speed)
-	# The Station Detail Menu's two panels need ~464px, more than the slot
-	# left of the rail on any phone shape, and it's modal anyway (a tap
-	# outside closes it) - so the rail steps aside while it's open rather
-	# than drawing half-covered underneath it.
+	# The Station Detail Menu is modal (its backdrop, above this layer,
+	# closes it on any outside tap - including where the rail is), so the
+	# rail steps aside while it's open rather than looking tappable.
 	if _station_detail_menu != null:
 		_rail.visible = not _station_detail_menu.panel.visible
 	# A floor tool, not a menu one - and the bottom-left corner is under the
@@ -436,11 +435,8 @@ func _layout() -> void:
 
 	if _station_detail_menu != null:
 		var sdm_panel: Control = _station_detail_menu.panel
-		var rack: Control = _station_detail_menu.rack_panel
 		sdm_panel.position = Vector2(left + EDGE_GAP, top)
 		sdm_panel.size.y = bottom - top
-		rack.position = Vector2(sdm_panel.position.x + sdm_panel.size.x + EDGE_GAP, top)
-		rack.size.y = bottom - top
 
 
 ## Device safe-area insets converted into logical viewport px.

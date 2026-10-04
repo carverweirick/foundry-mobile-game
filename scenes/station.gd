@@ -1946,6 +1946,50 @@ func board_status_text() -> String:
 	return _idle_status_text(true)
 
 
+## How far along the current work is (0-1), for menu progress bars:
+## parallel and batch stations read their soonest run, a loaded-but-waiting
+## batch station shows how full it is, READY is full.
+func progress_fraction() -> float:
+	if uses_parallel_runs():
+		if not shelling_ready_parts.is_empty():
+			return 1.0
+		if shelling_active_parts.is_empty():
+			if is_batch_station() and not batch_load.is_empty():
+				return float(batch_load.size()) / maxf(batch_cap, 1.0)
+			return 0.0
+		var run := _soonest_shelling_run()
+		return clampf(run.elapsed / maxf(run.duration, 0.01), 0.0, 1.0)
+	match current_state:
+		State.READY:
+			return 1.0
+		State.RUNNING:
+			return clampf(1.0 - run_time_left / maxf(_run_duration, 0.01), 0.0, 1.0)
+	return 0.0
+
+
+## Seconds until the soonest running work finishes, or 0 when nothing runs.
+func display_time_left() -> float:
+	if uses_parallel_runs():
+		return _soonest_shelling_run().time_left if not shelling_active_parts.is_empty() else 0.0
+	return run_time_left if current_state == State.RUNNING else 0.0
+
+
+## Menu color for the progress bar: green ready, gold running/loading, dim idle.
+func progress_color_key() -> String:
+	if uses_parallel_runs():
+		if not shelling_ready_parts.is_empty():
+			return "good"
+		if not shelling_active_parts.is_empty() or not batch_load.is_empty():
+			return "gold"
+		return "text_dim"
+	match current_state:
+		State.READY:
+			return "good"
+		State.RUNNING:
+			return "gold"
+	return "text_dim"
+
+
 ## "52s" / "1m 24s".
 static func short_time(seconds: float) -> String:
 	var total := ceili(seconds)
