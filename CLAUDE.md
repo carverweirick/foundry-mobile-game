@@ -1024,6 +1024,22 @@ general form of this lesson.
   (Queue button) - pop them front to back in `Station._try_create_part()`.
   Orders for finished contracts are dropped. Attention nags "queue parts to
   make" for an active contract with nothing queued or in the line.
+- **Contract income** (design doc 28.9): `accept_contract_offer()` pays
+  `contract_upfront_amount()` (20%); `credit_contract_shipment()` pays
+  `contract_per_part_amount()` per good part and the remainder on
+  completion, plus `contract_early_bonus()` (20%) if not overdue.
+  `Contract.paid_so_far` (saved) keeps the total exact. An overdue contract
+  multiplies `GameData.company_payout_multiplier[customer]` by 0.85 (floor
+  0.5, saved), applied to that company's future generated offers. The offer
+  card shows the up-front / per-part / on-time split.
+- **Trial metal toggle** at the top of the Active tab (`_trial_in_virgin`,
+  not saved): a virgin trial costs the production price
+  (`GameData.part_cost_for()`), uses no revert, and still returns 1 revert
+  when remelted. `print_order_blocker()`/`queueable_count()`/
+  `queue_print_order(s)()` take a `virgin` flag.
+- **Tooltips wrap** (`scenes/ui_text.gd`, `UiText.tip()`, 44 chars/line) -
+  Godot's tooltip never wraps, so long ones ran off the screen on desktop.
+  Use it for any tooltip longer than a few words.
 - **Queue multiplier** (AdVenture Capitalist style): a "Queue amount" toggle
   at the top of the Active tab cycles x1 / x5 / x10 / MAX
   (`ContractsOverlay.QUEUE_AMOUNTS`, not saved); each Trial/Production
@@ -1460,7 +1476,9 @@ From the design doc, still pending:
 - **Real geometry/alloy system** - flavor strings only, no real complexity
   ratings or mastery/familiarity carryover beyond the flat per-family ~50%
   (Section 10).
-- **Alloy stock** as a purchasable, depletable resource (Section 11).
+- **Materials system** - designed in design doc 28.10 (ordered virgin metal,
+  resin, ceramic with delivery times; making them in-house as later
+  progression), not built. Covers the old "alloy stock" item (Section 11).
 - **Recurring flagship contracts** - no contract repeats after shipping once
   (Section 8's "often recurring" isn't modeled).
 - Reputation/relationship UI is limited to the Contracts/Offers tab's

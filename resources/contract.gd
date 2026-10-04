@@ -72,6 +72,12 @@ var is_started: bool = false
 ## incomplete. Set by GameData._process_contracts().
 var deadline_penalty_applied: bool = false
 
+## Gold paid out on this contract so far - the up-front payment plus every
+## per-part payment (GameData.CONTRACT_UPFRONT_SHARE etc.). Completion pays
+## whatever's left of payout, so the total always comes to exactly payout
+## (plus the early-completion bonus). Saved.
+var paid_so_far: int = 0
+
 ## Every line item complete - the contract as a whole isn't done until each
 ## individually rolled ask is fulfilled, not just the total unit count.
 var is_complete: bool:
@@ -171,6 +177,7 @@ func to_dict() -> Dictionary:
 		"elapsed_seconds": elapsed_seconds,
 		"is_started": is_started,
 		"deadline_penalty_applied": deadline_penalty_applied,
+		"paid_so_far": paid_so_far,
 	}
 
 
@@ -184,6 +191,7 @@ static func from_dict(data: Dictionary) -> Contract:
 	c.elapsed_seconds = float(data.get("elapsed_seconds", 0.0))
 	c.is_started = bool(data.get("is_started", false))
 	c.deadline_penalty_applied = bool(data.get("deadline_penalty_applied", false))
+	c.paid_so_far = int(data.get("paid_so_far", 0))
 	c.line_items.clear()
 	for raw in data.get("line_items", []):
 		var li := LineItem.new()

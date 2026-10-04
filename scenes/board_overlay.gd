@@ -186,16 +186,16 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 	match row.action:
 		"fix":
 			row.action_button.text = "Fix"
-			row.action_button.tooltip_text = "A part here has a defect - open the station to fix it"
+			row.action_button.tooltip_text = UiText.tip("A part here has a defect - open the station to fix it")
 		"start":
 			row.action_button.text = "Start"
-			row.action_button.tooltip_text = "Start this batch station's cycle with everything loaded"
+			row.action_button.tooltip_text = UiText.tip("Start this batch station's cycle with everything loaded")
 		"collect":
 			row.action_button.text = "Collect"
-			row.action_button.tooltip_text = "Move the finished part to Awaiting Transfer"
+			row.action_button.tooltip_text = UiText.tip("Move the finished part to Awaiting Transfer")
 		"queue":
 			row.action_button.text = "Queue"
-			row.action_button.tooltip_text = "Start printing the next queued part"
+			row.action_button.tooltip_text = UiText.tip("Start printing the next queued part")
 		"upgrade":
 			var cost := GameData.upgrade_cost_for_tier(station.current_tier + 1)
 			row.action_button.text = "Upgrade %dg" % cost

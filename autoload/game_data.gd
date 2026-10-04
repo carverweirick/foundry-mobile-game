@@ -1098,13 +1098,21 @@ func production_still_needed(contract: Contract, line_item_index: int) -> int:
 	return item.quantity_required - item.quantity_shipped - in_flight - queued_order_count(contract.contract_id, line_item_index, false)
 
 
+## Pouring a trial in virgin metal instead of revert (user decision,
+## 2026-10-03): costs the production price but uses no revert, and the trial
+## still becomes revert when it's remelted - the player's way to build up a
+## revert collection. Chosen with the Contracts "Trial metal" toggle.
+func part_cost_for(contract: Contract, is_trial: bool, virgin: bool) -> int:
+	return part_cost(contract, is_trial and not virgin)
+
+
 ## "" if this part can be queued now, otherwise the reason it can't.
-func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool) -> String:
-	if not can_afford_with_gems(part_cost(contract, is_trial)):
+func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> String:
+	if not can_afford_with_gems(part_cost_for(contract, is_trial, virgin)):
 		return "Not enough gold"
 	if is_trial:
-		if revert_stock <= 0:
-			return "No revert metal left"
+		if not virgin and revert_stock <= 0:
+			return "No revert metal left - switch Trial metal to Virgin"
 		return ""
 	if not can_run_production(contract.line_items[line_item_index].geometry_name):
 		return "Needs %d%% familiarity" % int(PRODUCTION_FAMILIARITY_PERCENT)
@@ -1113,10 +1121,10 @@ func print_order_blocker(contract: Contract, line_item_index: int, is_trial: boo
 	return ""
 
 
-func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool) -> bool:
-	if print_order_blocker(contract, line_item_index, is_trial) != "":
+func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> bool:
+	if print_order_blocker(contract, line_item_index, is_trial, virgin) != "":
 		return false
-	if not try_spend_with_gems(part_cost(contract, is_trial)):
+	if not try_spend_with_gems(part_cost_for(contract, is_trial, virgin)):
 		return false
 	var order := {
 		"contract_id": contract.contract_id,
@@ -1126,7 +1134,8 @@ func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool)
 		"fix_risk_mult": 1.0,
 	}
 	if is_trial:
-		revert_stock -= 1
+		if not virgin:
+			revert_stock -= 1
 		var fix: Dictionary = pending_trial_fixes.get(contract.contract_id, {})
 		if not fix.is_empty():
 			order["fix_station_id"] = fix["station_id"]
@@ -1143,25 +1152,26 @@ func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool)
 ## stock (trial), by what the contract still needs (production), and by
 ## what the player can afford (gold, then gems). Drives the Contracts menu's
 ## AdVenture-Capitalist-style "Queue: x1 / x5 / x10 / MAX" multiplier.
-func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, wanted: int) -> int:
-	if print_order_blocker(contract, line_item_index, is_trial) != "":
+func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false) -> int:
+	if print_order_blocker(contract, line_item_index, is_trial, virgin) != "":
 		return 0
 	var limit := wanted
 	if is_trial:
-		limit = mini(limit, revert_stock)
+		if not virgin:
+			limit = mini(limit, revert_stock)
 	else:
 		limit = mini(limit, production_still_needed(contract, line_item_index))
-	var cost := part_cost(contract, is_trial)
+	var cost := part_cost_for(contract, is_trial, virgin)
 	while limit > 0 and not can_afford_with_gems(cost * limit):
 		limit -= 1
 	return maxi(limit, 0)
 
 
 ## Queues up to `wanted` parts in one go; returns how many were queued.
-func queue_print_orders(contract: Contract, line_item_index: int, is_trial: bool, wanted: int) -> int:
+func queue_print_orders(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false) -> int:
 	var queued := 0
-	for i in queueable_count(contract, line_item_index, is_trial, wanted):
-		if not queue_print_order(contract, line_item_index, is_trial):
+	for i in queueable_count(contract, line_item_index, is_trial, wanted, virgin):
+		if not queue_print_order(contract, line_item_index, is_trial, virgin):
 			break
 		queued += 1
 	return queued
@@ -1242,9 +1252,16 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 	var line_item := contract.line_item_at(part.line_item_index)
 	if line_item != null:
 		line_item.quantity_shipped += 1
-	if contract.is_complete:
-		currency += contract.payout
-		currency_changed.emit(currency)
+	if not contract.is_complete:
+		var per_part := mini(contract_per_part_amount(contract), contract.payout - contract.paid_so_far)
+		contract.paid_so_far += per_part
+		_pay(per_part)
+	else:
+		# Whatever's left of the payout (rounding, or a contract started
+		# before up-front/per-part payments existed).
+		var remainder := contract.payout - contract.paid_so_far
+		contract.paid_so_far = contract.payout
+		_pay(remainder)
 		# Factory Level EXP (this session): awarded for completing the
 		# contract at all, regardless of on-time status - a broader
 		# condition than Reputation's own on-time-only gate just below.
@@ -1255,6 +1272,7 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 		# doesn't get a second reputation swing here for finishing anyway -
 		# the miss already landed once, at the moment the deadline passed.
 		if not contract.deadline_penalty_applied:
+			_pay(contract_early_bonus(contract))
 			_adjust_reputation(REPUTATION_GAIN_ON_TIME_COMPLETE)
 			_adjust_relationship(contract.customer_name, RELATIONSHIP_GAIN_ON_TIME_COMPLETE)
 
@@ -1457,13 +1475,49 @@ func generate_contract() -> Contract:
 		total_quantity += qty
 		line_items.append(li)
 
-	var payout := int(round(total_quantity * float(CONTRACT_PAYOUT_PER_UNIT[tier]) * randf_range(0.85, 1.15) * reputation_bonus))
+	var payout := int(round(total_quantity * float(CONTRACT_PAYOUT_PER_UNIT[tier]) * randf_range(0.85, 1.15) * reputation_bonus
+		* company_payout_multiplier.get(customer, 1.0)))
 	var deadline: float = game_minutes_to_seconds(CONTRACT_DEADLINE_GAME_MINUTES[tier])
 
 	var offer := _make_contract(customer, tier, line_items, deadline, payout, false)
 	contract_offers.append(offer)
 	contract_offers_changed.emit()
 	return offer
+
+
+## Contract income (user decision, 2026-10-03 - fixes a soft-lock where a
+## contract only paid on completion, so running out of gold mid-contract left
+## no way to finish it): a share up front on accepting, the rest spread over
+## each good part as it ships, and a bonus for finishing before the
+## deadline. Finishing late still pays in full - the only penalties are the
+## Reputation hit and that company offering less next time. Placeholders.
+const CONTRACT_UPFRONT_SHARE: float = 0.2
+const CONTRACT_EARLY_BONUS_SHARE: float = 0.2
+## Each late contract multiplies that company's future offers by this.
+const LATE_COMPANY_PAYOUT_FACTOR: float = 0.85
+const MIN_COMPANY_PAYOUT_MULTIPLIER: float = 0.5
+## customer_name -> payout multiplier for their future offers. Saved.
+var company_payout_multiplier: Dictionary = {}
+
+
+func contract_upfront_amount(contract: Contract) -> int:
+	return int(round(contract.payout * CONTRACT_UPFRONT_SHARE))
+
+
+## Each good part's share of everything after the up-front payment.
+func contract_per_part_amount(contract: Contract) -> int:
+	return int(floor(float(contract.payout - contract_upfront_amount(contract)) / maxi(contract.quantity_required, 1)))
+
+
+func contract_early_bonus(contract: Contract) -> int:
+	return int(round(contract.payout * CONTRACT_EARLY_BONUS_SHARE))
+
+
+func _pay(amount: int) -> void:
+	if amount <= 0:
+		return
+	currency += amount
+	currency_changed.emit(currency)
 
 
 ## Moves a rolled offer into real active work: starts its deadline clock
@@ -1477,6 +1531,9 @@ func accept_contract_offer(offer: Contract) -> void:
 	contract_offers.erase(offer)
 	offer.start()
 	contracts.append(offer)
+	var upfront := contract_upfront_amount(offer)
+	offer.paid_so_far += upfront
+	_pay(upfront)
 	contract_offers_changed.emit()
 	contract_updated.emit(offer)
 
@@ -1518,6 +1575,11 @@ func _process_contracts(delta: float) -> void:
 			c.deadline_penalty_applied = true
 			_adjust_reputation(-REPUTATION_LOSS_MISSED_DEADLINE)
 			_adjust_relationship(c.customer_name, -RELATIONSHIP_LOSS_MISSED_DEADLINE)
+			# "That company, if they decide to come back to you, will offer
+			# less money."
+			company_payout_multiplier[c.customer_name] = maxf(
+				company_payout_multiplier.get(c.customer_name, 1.0) * LATE_COMPANY_PAYOUT_FACTOR,
+				MIN_COMPANY_PAYOUT_MULTIPLIER)
 			contract_updated.emit(c)
 
 	_contract_generation_cooldown = max(_contract_generation_cooldown - delta, 0.0)
@@ -2657,6 +2719,7 @@ func to_save_dict() -> Dictionary:
 		"station_stats": station_stats.duplicate(true),
 		"nc_shelf_ids": nc_shelf.map(func(p: Part): return p.part_id),
 		"revert_stock": revert_stock,
+		"company_payout_multiplier": company_payout_multiplier.duplicate(),
 		"print_orders": print_orders.duplicate(true),
 		"pending_trial_fixes": pending_trial_fixes.keys().map(func(id): return {"contract_id": id, "fix": pending_trial_fixes[id]}),
 		"scrapped_part_count": scrapped_part_count,
@@ -2739,6 +2802,10 @@ func load_from_dict(data: Dictionary) -> bool:
 			nc_shelf.append(part)
 	scrapped_part_count = int(data.get("scrapped_part_count", 0))
 	revert_stock = int(data.get("revert_stock", STARTING_REVERT_STOCK))
+	company_payout_multiplier = {}
+	var saved_multipliers: Dictionary = data.get("company_payout_multiplier", {})
+	for customer in saved_multipliers:
+		company_payout_multiplier[str(customer)] = float(saved_multipliers[customer])
 	print_orders.clear()
 	for raw in data.get("print_orders", []):
 		print_orders.append({

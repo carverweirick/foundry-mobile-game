@@ -118,7 +118,7 @@ func _rebuild() -> void:
 func _add_action(row: HFlowContainer, text: String, tooltip: String, action: Callable) -> void:
 	var button := Button.new()
 	button.text = text
-	button.tooltip_text = tooltip
+	button.tooltip_text = UiText.tip(tooltip)
 	button.pressed.connect(func():
 		action.call()
 		_needs_rebuild = true

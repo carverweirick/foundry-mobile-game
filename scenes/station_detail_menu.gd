@@ -613,7 +613,7 @@ func _refresh_rack_grid() -> void:
 			var part := rack[i]
 			slot.disabled = false
 			slot.text = "%d!" % part.part_id if part.is_defective else "%d" % part.part_id
-			slot.tooltip_text = _part_detail_text(part)
+			slot.tooltip_text = UiText.tip(_part_detail_text(part))
 			slot.modulate = Color(1.0, 0.55, 0.4) if part.is_defective else Color.WHITE
 		else:
 			slot.disabled = true

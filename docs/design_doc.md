@@ -1453,3 +1453,58 @@ Sources: [TFG USA - Common Casting Defects](https://www.tfgusa.com/casting-defec
 [Besser - Preventing Defects in Investment Casting](https://www.bessercasting.com/preventing-defects-in-investment-casting-porosity-cracks-how-to-fix-them/),
 [Formlabs - Industrial Investment Casting With 3D Printed Patterns](https://formlabs.com/white-papers/industrial-investment-casting-with-3d-printed-patterns-using-formlabs-clear-cast-resin/),
 [ICI - Improvements in the Burnout Process for Printed Patterns](https://www.investmentcasting.org/uploads/8/1/9/8/81988734/18_mueller.docx.pdf).
+
+### 28.9 Contract income and the soft-lock fix (user, 2026-10-03) - BUILT
+
+A contract used to pay only when fully complete, so running short of gold
+mid-contract (parts now cost money to queue) left no way to finish it - a
+real soft-lock hit in play. Now:
+- **Up front on accepting:** 20% of the payout.
+- **Per good part shipped:** the remaining 80%, split evenly per part; the
+  last part also carries any rounding remainder.
+- **Finishing before the deadline:** an extra 20% of the payout, plus the
+  existing Reputation and relationship gain.
+- **Finishing late:** still pays in full. The only penalties are the
+  Reputation hit when the deadline passes, and **that company offering less
+  next time** - each late contract multiplies their future offers by 0.85
+  (floor 0.5).
+- **Trial metal toggle:** trials can be poured in virgin metal instead of
+  revert - production price, no revert used, and each still becomes revert
+  when remelted. The player's way to build up a revert collection.
+(All percentages are placeholders.)
+
+### 28.10 Materials system - DESIGN ONLY, not built (user, 2026-10-03)
+
+Direction from the user: "maybe a resource system where you need to order
+the materials or maybe eventually work on making it in house as part of
+the game." Proposed shape, to build later:
+
+**Stocks.** Replace the flat per-part gold price with real materials,
+each a counted stock shown on a Materials screen (likely a Factory tab):
+- **Virgin metal (by alloy)** - production parts pour from it; trials can
+  too (28.9's toggle). Ordered from a supplier.
+- **Revert** - already a stock; made in-house only, from remelted trials,
+  sub-90% castings and (later) learning parts.
+- **Printing resin** - consumed by Printing per pattern.
+- **Shell ceramic (slurry + stucco)** - consumed by Shelling per coat.
+- Smaller consumables worth considering later: blast media, cut-off
+  wheels, crucibles.
+
+**Ordering.** A purchasing screen: pick a material and quantity, pay gold,
+and it arrives after a delivery time (bigger orders cheaper per unit,
+rush delivery costs extra). A station that runs out of its material idles
+with a clear "out of resin - order more" status and an Attention item.
+Low-stock warnings before that.
+
+**Making it in-house (later progression).** Each bought material can be
+brought in-house as a Factory upgrade, trading up-front investment for
+lower running cost: a resin mixing station, a slurry/stucco room, an alloy
+melt shop that turns raw elements (or bulk revert) into certified virgin
+metal. Fits Factory Level as the gate (the "what does Factory Level
+unlock" gap in Section 21.2).
+
+**Open questions for the user before building:** whether each alloy is a
+separate stock (more realistic, much more to manage); whether materials
+replace the per-part gold cost entirely or sit alongside it; delivery
+times in real minutes; whether a station that runs dry should stall the
+line or let the player pay a premium "expedite" price.

@@ -67,7 +67,7 @@ func _on_ready() -> void:
 	var save_row := _add_button_row()
 	_add_button(save_row, "Save now", func(): _report("Saved." if SaveManager.save_game() else "Save failed."))
 	_reset_button = _add_button(save_row, "Delete save", _on_reset_pressed)
-	_reset_button.tooltip_text = "Deletes the save file and quits, so the next launch is a fresh game. Tap twice."
+	_reset_button.tooltip_text = UiText.tip("Deletes the save file and quits, so the next launch is a fresh game. Tap twice.")
 
 	_status_label = Label.new()
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

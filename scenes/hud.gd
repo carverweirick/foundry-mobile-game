@@ -174,7 +174,7 @@ func _any_menu_open() -> bool:
 
 func _build_attention() -> void:
 	_attention_button = _make_rail_tile("0", "attention")
-	_attention_button.tooltip_text = "Jump to the next thing that needs you"
+	_attention_button.tooltip_text = UiText.tip("Jump to the next thing that needs you")
 	_attention_button.focus_mode = Control.FOCUS_NONE
 	_attention_button.size = ATTENTION_SIZE
 	_attention_count_label = _attention_button.get_child(0).get_child(1)

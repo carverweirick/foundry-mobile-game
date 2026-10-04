@@ -203,7 +203,7 @@ func _update_stat_row(row: StatRow, station: Station, is_bottleneck: bool) -> vo
 		var rack_target := station.rack_capacity + 1
 		var rack_cost := GameData.rack_upgrade_cost_for(rack_target)
 		row.rack_button.text = "Rack %d: %dg" % [rack_target, rack_cost]
-		row.rack_button.tooltip_text = "Room for %d parts waiting at this station" % rack_target
+		row.rack_button.tooltip_text = UiText.tip("Room for %d parts waiting at this station" % rack_target)
 		row.rack_button.disabled = not GameData.can_afford_with_gems(rack_cost)
 	else:
 		row.rack_button.text = "Max rack"

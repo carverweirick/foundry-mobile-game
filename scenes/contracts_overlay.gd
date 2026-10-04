@@ -426,8 +426,9 @@ func _refresh_offer_detail() -> void:
 
 	var alloy := offer.line_items[0].alloy_name if not offer.line_items.is_empty() else ""
 	var exp: int = GameData.FACTORY_EXP_PER_CONTRACT_TIER.get(offer.tier, 0)
-	_detail_info_label.text = "%s to complete  |  Payout %dg  |  +%d Factory EXP\n%s complexity • %s • Investment Casting • %s" % [
+	_detail_info_label.text = "%s to complete  |  Payout %dg  |  +%d Factory EXP\n%dg up front, %dg per good part shipped, +%dg if finished on time\n%s complexity • %s • Investment Casting • %s" % [
 		_format_time(offer.deadline_seconds), offer.payout, exp,
+		GameData.contract_upfront_amount(offer), GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer),
 		_offer_complexity_label(offer), alloy, _offer_volume_label(offer),
 	]
 
@@ -621,6 +622,11 @@ var _reputation_header_label: Label = null
 
 var _queue_amount_index: int = 0
 var _queue_amount_button: Button = null
+## Trial metal toggle (user decision, 2026-10-03): pour trials in revert
+## (cheap, uses revert stock) or virgin metal (production price, uses none -
+## and each becomes revert when remelted, building the collection up).
+var _trial_in_virgin: bool = false
+var _trial_metal_button: Button = null
 
 
 func _queue_wanted() -> int:
@@ -637,12 +643,19 @@ func _refresh_contracts_tab() -> void:
 	contracts_list.move_child(_reputation_header_label, 0)
 	if _queue_amount_button == null:
 		_queue_amount_button = Button.new()
-		_queue_amount_button.tooltip_text = "How many parts each Trial/Production button queues per tap"
+		_queue_amount_button.tooltip_text = UiText.tip("How many parts each Trial/Production button queues per tap")
 		_queue_amount_button.pressed.connect(_on_queue_amount_pressed)
 		contracts_list.add_child(_queue_amount_button)
 	var amount := QUEUE_AMOUNTS[_queue_amount_index]
 	_queue_amount_button.text = "Queue amount: %s - tap to change" % ("MAX" if amount == 0 else "x%d" % amount)
 	contracts_list.move_child(_queue_amount_button, 1)
+	if _trial_metal_button == null:
+		_trial_metal_button = Button.new()
+		_trial_metal_button.tooltip_text = UiText.tip("Revert: cheap, uses revert stock. Virgin: production price, uses no revert, and each trial becomes revert when it's remelted - a way to build up revert.")
+		_trial_metal_button.pressed.connect(_on_trial_metal_pressed)
+		contracts_list.add_child(_trial_metal_button)
+	_trial_metal_button.text = "Trial metal: %s - tap to change" % ("Virgin (builds revert)" if _trial_in_virgin else "Revert")
+	contracts_list.move_child(_trial_metal_button, 2)
 
 	var active := GameData.get_active_contracts()
 	var active_ids: Dictionary = {}
@@ -759,7 +772,7 @@ func _create_contract_row() -> ContractRow:
 	# its defects. Tapping cycles through the hired Engineers (and "none").
 	row.engineer_button = Button.new()
 	row.engineer_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	row.engineer_button.tooltip_text = "The Engineer who diagnoses this contract's defects. Tap to change."
+	row.engineer_button.tooltip_text = UiText.tip("The Engineer who diagnoses this contract's defects. Tap to change.")
 	row.engineer_button.pressed.connect(_on_engineer_pressed.bind(row))
 	row.container.add_child(row.engineer_button)
 
@@ -809,21 +822,27 @@ func _update_item_widgets(row: ContractRow, contract: Contract) -> void:
 ## (fewer than asked when gold, revert or the contract's need runs out) and
 ## the total price.
 func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, kind: String, about: String) -> void:
-	var blocker := GameData.print_order_blocker(contract, index, is_trial)
-	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted())
-	var unit := GameData.part_cost(contract, is_trial)
+	var virgin := is_trial and _trial_in_virgin
+	var blocker := GameData.print_order_blocker(contract, index, is_trial, virgin)
+	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted(), virgin)
+	var unit := GameData.part_cost_for(contract, is_trial, virgin)
 	if count > 0:
 		button.text = "%s x%d (%dg)" % [kind, count, unit * count]
 	else:
 		button.text = "%s (%dg each)" % [kind, unit]
 	button.disabled = count == 0
-	button.tooltip_text = about if blocker == "" else "%s\n%s" % [blocker, about]
+	button.tooltip_text = UiText.tip(about if blocker == "" else "%s\n%s" % [blocker, about])
 
 
 func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:
 	var contract := GameData.get_contract(row.contract_id)
 	if contract != null:
-		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted())
+		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted(), is_trial and _trial_in_virgin)
+	_refresh_contracts_tab.call_deferred()
+
+
+func _on_trial_metal_pressed() -> void:
+	_trial_in_virgin = not _trial_in_virgin
 	_refresh_contracts_tab.call_deferred()
 
 
