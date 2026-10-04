@@ -83,6 +83,24 @@ static func part_icon(geometry_name: String) -> String:
 	return PART_FAMILY_ICON.get(GameData.family_for_geometry(geometry_name), "part_bracket")
 
 
+## Room icons and the names players see (Pour's island reads "VIM Bay" on
+## the floor; StationDef.room_name still says "Pour Room").
+const ROOM_ICON := {
+	"Print Room": "room_print", "Shell Building": "room_shell",
+	"Furnace Room": "room_furnace", "Pour Room": "room_vim",
+	"Post Processing": "room_post",
+}
+const ROOM_DISPLAY_NAME := {"Pour Room": "VIM Bay"}
+
+
+static func room_icon(room_name: String) -> String:
+	return ROOM_ICON.get(room_name, "factory")
+
+
+static func room_display_name(room_name: String) -> String:
+	return ROOM_DISPLAY_NAME.get(room_name, room_name)
+
+
 # --- widgets ---------------------------------------------------------------
 
 static func label(text: String, size: int = FONT_BODY, color_key: String = "text") -> Label:

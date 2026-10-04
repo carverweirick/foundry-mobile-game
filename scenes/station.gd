@@ -1911,6 +1911,49 @@ func get_overview_status() -> String:
 	return status + _current_part_suffix() + _rack_suffix() + _defect_suffix()
 
 
+## One short line for a menu row (the Board) - about 20 characters, so it
+## fits beside the station name at 10px. The full sentences stay in
+## get_overview_status() for the Station Detail Menu.
+func board_status_text() -> String:
+	if station_type == StationType.AUTOMATIC:
+		return "Ships on arrival"
+	for part in _parts_here():
+		if part.is_defective:
+			return "Defect - %s" % GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
+	if is_batch_station():
+		if not shelling_active_parts.is_empty():
+			return "Cycle %d/%d - %s" % [shelling_active_parts.size(), batch_cap, short_time(shelling_active_parts[0].time_left)]
+		if not shelling_ready_parts.is_empty():
+			return "%d ready to unload" % shelling_ready_parts.size()
+		if not batch_load.is_empty():
+			return "Loaded %d/%d" % [batch_load.size(), batch_cap]
+		return "Empty - holds %d" % batch_cap
+	if uses_parallel_runs():
+		if not shelling_active_parts.is_empty():
+			var soonest := _soonest_shelling_run()
+			var text := "%d/%d running - %s" % [shelling_active_parts.size(), batch_cap, short_time(soonest.time_left)]
+			if not shelling_ready_parts.is_empty():
+				text += ", %d ready" % shelling_ready_parts.size()
+			return text
+		if not shelling_ready_parts.is_empty():
+			return "%d ready" % shelling_ready_parts.size()
+		return _idle_status_text(true)
+	match current_state:
+		State.RUNNING:
+			return "Running - %s" % short_time(run_time_left)
+		State.READY:
+			return "Ready" if active_worker != null else "Ready - collect"
+	return _idle_status_text(true)
+
+
+## "52s" / "1m 24s".
+static func short_time(seconds: float) -> String:
+	var total := ceili(seconds)
+	if total < 60:
+		return "%ds" % total
+	return "%dm %02ds" % [total / 60, total % 60]
+
+
 ## Design request, this session: "see which part is currently being worked
 ## on at each station." Shared by the Menu Overlay's Overview tab and the
 ## Station Detail Menu's main status line (both read get_overview_status()) -

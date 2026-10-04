@@ -2,21 +2,19 @@ extends OverlayBase
 class_name BoardOverlay
 
 ## The Board (design doc 27.7): the live "what is every station doing" list
-## plus the Awaiting Transfer list, as two tabs. Replaces the old Dashboard
-## and Transfer overlays (Option B's consolidation; the Dashboard's Contracts
-## tab is gone - Contracts has its own progress bars now).
+## plus the Awaiting Transfer list, as two tabs, in the "Foundry Dispatch"
+## style of the user's mockup (assets/inspo/UI/board_UI.png).
 ##
-## Stations tab: one row per station, grouped by room, with ONE action
-## button showing the most urgent verb (Fix > Collect > Queue > Upgrade) -
-## "one verb per row" (27.6), which is also what fits a ~384px panel. The
-## station name is itself a button: it emits station_requested, and main.gd
-## pans to that station and opens its Station Detail Menu, where everything
-## the single verb doesn't cover (defect fixes, rack, batch size, staffing)
-## still lives.
+## Stations tab: a gold strip per room, then one card per station - its
+## sprite, name, a short status line (Station.board_status_text()), a
+## progress bar, and ONE action button with the most urgent verb (Fix >
+## Collect > Start > Queue > Upgrade - "one verb per row", 27.6). Tapping the
+## card itself emits station_requested; main.gd pans to that station and
+## opens its Station Detail Menu, where everything else lives.
 ##
-## Transfer tab: unchanged from the old Awaiting Transfer overlay - held
-## Parts grouped by contract, a Defects-only filter, Part#/Familiarity/
-## Defect columns and a "Send to <next station>" button per Part.
+## Transfer tab: held Parts grouped by contract, a Defects-only filter, and
+## per Part its number, familiarity, defect and a "Send to <next station>"
+## button.
 
 signal station_requested(station: Station)
 
@@ -24,12 +22,6 @@ const REFRESH_INTERVAL: float = 0.25
 const TAB_STATIONS := 0
 const TAB_TRANSFER := 1
 
-const BAR_COLOR_IDLE := Color(0.35, 0.35, 0.38)
-const BAR_COLOR_RUNNING := Color(0.92, 0.70, 0.20)
-const BAR_COLOR_READY := Color(0.35, 0.80, 0.35)
-const BAR_TRACK_COLOR := Color(0.12, 0.11, 0.10)
-const HEADER_COLOR := Color(0.85, 0.64, 0.16)
-const DEFECT_COLOR := Color(0.88, 0.35, 0.22)
 
 @onready var tabs: TabContainer = %TabContainer
 @onready var stations_list: VBoxContainer = %StationsList
@@ -40,10 +32,10 @@ const DEFECT_COLOR := Color(0.88, 0.35, 0.22)
 var station_by_id: Dictionary = {}
 
 var _refresh_elapsed: float = 0.0
-var _bar_fill_styles: Dictionary = {} # Color -> StyleBoxFlat
 
 
 func _on_ready() -> void:
+	transfer_defects_only_check.add_theme_font_size_override("font_size", UiKit.FONT_BODY)
 	transfer_defects_only_check.toggled.connect(func(_p): _refresh_transfer_tab.call_deferred())
 	GameData.held_parts_changed.connect(_on_held_parts_changed)
 
@@ -85,16 +77,23 @@ func _refresh() -> void:
 ## Persistent rows, updated in place every refresh - rebuilding on the 0.25s
 ## poll would visibly "pop" (same pattern as every other polled list here).
 class StationRow:
-	var container: VBoxContainer
-	var name_button: Button
-	var action_button: Button
+	var box: PanelContainer
+	var icon: TextureRect
+	var name_label: Label
 	var status_label: Label
 	var bar: ProgressBar
+	var action_button: Button
 	var station: Station = null
 	var action: String = ""
+	var press_position: Vector2 = Vector2.ZERO
 
 var _station_rows: Dictionary = {} # station_id -> StationRow
-var _room_headers: Dictionary = {} # room_name -> Label
+var _room_headers: Dictionary = {} # room_name -> PanelContainer
+
+const ACTION_BUTTON_WIDTH: float = 66.0
+const STATUS_BAR_WIDTH: float = 44.0
+## Press-to-release movement under this is a tap; more is a scroll drag.
+const ROW_TAP_MOVE_THRESHOLD: float = 24.0
 
 
 ## GameData.all_real_station_ids() visits stations room by room, so a header
@@ -109,11 +108,9 @@ func _refresh_stations_tab() -> void:
 		var room_name: String = GameData.get_station(id).room_name
 		if room_name != last_room:
 			last_room = room_name
-			var header: Label = _room_headers.get(room_name)
+			var header: PanelContainer = _room_headers.get(room_name)
 			if header == null:
-				header = Label.new()
-				header.add_theme_color_override("font_color", HEADER_COLOR)
-				header.text = room_name
+				header = UiKit.section(UiKit.room_display_name(room_name), UiKit.room_icon(room_name))
 				stations_list.add_child(header)
 				_room_headers[room_name] = header
 			stations_list.move_child(header, next_index)
@@ -123,83 +120,111 @@ func _refresh_stations_tab() -> void:
 		if row == null:
 			row = _create_station_row()
 			_station_rows[id] = row
-			stations_list.add_child(row.container)
-		stations_list.move_child(row.container, next_index)
+			stations_list.add_child(row.box)
+		stations_list.move_child(row.box, next_index)
 		next_index += 1
 		_update_station_row(row, station)
 
 
 func _create_station_row() -> StationRow:
 	var row := StationRow.new()
-	row.container = VBoxContainer.new()
-	row.container.add_theme_constant_override("separation", 2)
-
-	# Name button (expand-fill) + one no-wrap verb button: CLAUDE.md UI rule
-	# 1, and the verb's text is short enough to never need wrapping.
+	row.box = UiKit.card()
+	row.box.tooltip_text = "Tap to show this station on the floor"
+	row.box.gui_input.connect(_on_row_gui_input.bind(row))
 	var line := HBoxContainer.new()
-	row.container.add_child(line)
-	row.name_button = Button.new()
-	row.name_button.flat = true
-	row.name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	row.name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.name_button.tooltip_text = "Show this station on the floor"
-	row.name_button.pressed.connect(_on_name_pressed.bind(row))
-	line.add_child(row.name_button)
-	row.action_button = Button.new()
+	line.add_theme_constant_override("separation", 5)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.box.add_child(line)
+
+	row.icon = TextureRect.new()
+	row.icon.custom_minimum_size = Vector2(20, 20)
+	row.icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	row.icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	row.icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	row.icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(row.icon)
+
+	# Name over status, both single-line and clipped (no autowrap: UI rule 1).
+	var names := VBoxContainer.new()
+	names.add_theme_constant_override("separation", 0)
+	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	names.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_child(names)
+	row.name_label = UiKit.label("")
+	row.name_label.clip_text = true
+	names.add_child(row.name_label)
+	row.status_label = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	row.status_label.clip_text = true
+	names.add_child(row.status_label)
+
+	row.bar = UiKit.bar("gold", 6)
+	row.bar.custom_minimum_size.x = STATUS_BAR_WIDTH
+	row.bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(row.bar)
+
+	# Fixed width so the bar column lines up whether or not a row has a verb.
+	row.action_button = UiKit.button("")
+	row.action_button.custom_minimum_size = Vector2(ACTION_BUTTON_WIDTH, 0)
+	row.action_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.action_button.clip_text = true
 	row.action_button.pressed.connect(_on_action_pressed.bind(row))
 	line.add_child(row.action_button)
-
-	# Status text length varies a lot between refreshes - a two-line height
-	# floor stops it reflowing every row below (CLAUDE.md UI rule 3).
-	row.status_label = Label.new()
-	row.status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.status_label.custom_minimum_size = Vector2(0.0, 26.0)
-	row.container.add_child(row.status_label)
-
-	row.bar = ProgressBar.new()
-	row.bar.show_percentage = false
-	row.bar.min_value = 0.0
-	row.bar.max_value = 1.0
-	row.bar.custom_minimum_size = Vector2(0.0, 8.0)
-	row.bar.add_theme_stylebox_override("background", _bar_style(BAR_TRACK_COLOR))
-	row.container.add_child(row.bar)
-
-	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0.0, 4.0)
-	row.container.add_child(spacer)
 	return row
 
 
 func _update_station_row(row: StationRow, station: Station) -> void:
 	row.station = station
-	row.name_button.text = station.station_name
-	row.status_label.text = station.get_overview_status()
+	row.icon.texture = _station_icon(station)
+	row.name_label.text = station.station_name
+	var status := station.board_status_text()
+	row.status_label.text = status
+	var need := station.attention_need()
+	var urgent: bool = not need.is_empty() and need.priority == 0
+	UiKit.set_label_color(row.status_label, "bad" if urgent else "text_dim")
+	UiKit.set_card_border(row.box, "bad" if urgent else "card_border")
 
 	var is_automatic := station.station_type == Station.StationType.AUTOMATIC
-	row.bar.visible = not is_automatic
-	if row.bar.visible:
-		row.bar.value = _station_progress_fraction(station)
-		row.bar.add_theme_stylebox_override("fill", _bar_fill_style(_bar_color_for(station)))
+	row.bar.modulate.a = 0.0 if is_automatic else 1.0
+	row.bar.value = _station_progress_fraction(station)
+	UiKit.set_bar_color(row.bar, _bar_color_key(station))
 
 	row.action = _primary_action(station)
-	row.action_button.visible = row.action != ""
+	# An empty slot keeps its width (the bar column stays aligned) but is
+	# invisible and can't be pressed.
+	row.action_button.modulate.a = 0.0 if row.action == "" else 1.0
+	row.action_button.disabled = row.action == ""
 	match row.action:
 		"fix":
-			row.action_button.text = "Fix"
-			row.action_button.tooltip_text = UiText.tip("A part here has a defect - open the station to fix it")
+			_set_action(row, "Fix", "st_warning", "danger", "A part here has a defect - open the station to deal with it")
 		"start":
-			row.action_button.text = "Start"
-			row.action_button.tooltip_text = UiText.tip("Start this batch station's cycle with everything loaded")
+			_set_action(row, "Start", "act_start", "go", "Start this batch station's cycle with everything loaded")
 		"collect":
-			row.action_button.text = "Collect"
-			row.action_button.tooltip_text = UiText.tip("Move the finished part to Awaiting Transfer")
+			_set_action(row, "Collect", "act_collect", "primary", "Move the finished part to Awaiting Transfer")
 		"queue":
-			row.action_button.text = "Queue"
-			row.action_button.tooltip_text = UiText.tip("Start printing the next queued part")
+			_set_action(row, "Queue", "act_queue", "neutral", "Start printing the next queued part")
 		"upgrade":
 			var cost := GameData.upgrade_cost_for_tier(station.current_tier + 1)
-			row.action_button.text = "Upgrade %dg" % cost
-			row.action_button.tooltip_text = "Upgrade to Tier %d" % (station.current_tier + 1)
+			_set_action(row, "%dg" % cost, "act_upgrade", "neutral", "Upgrade to Tier %d for %dg" % [station.current_tier + 1, cost])
+		_:
+			_set_action(row, "", "", "neutral", "")
+
+
+## The station's own sprite, so the row matches the floor - except the
+## generated placeholder box (an ImageTexture), which reads as a blank
+## square at 20px; those use their room's icon until real art lands.
+func _station_icon(station: Station) -> Texture2D:
+	var texture: Texture2D = station.station_sprite.texture if station.station_sprite != null else null
+	if texture == null or texture is ImageTexture:
+		return UiIcons.get_icon(UiKit.room_icon(GameData.get_station(station.station_id).room_name))
+	return texture
+
+
+func _set_action(row: StationRow, text: String, icon_name: String, kind: String, tip: String) -> void:
+	row.action_button.text = text
+	row.action_button.icon = UiIcons.get_icon(icon_name) if icon_name != "" else null
+	row.action_button.tooltip_text = UiText.tip(tip) if tip != "" else ""
+	UiKit.set_button_kind(row.action_button, kind)
 
 
 ## The single most urgent verb for this row, or "" for none. Fix and Collect
@@ -244,18 +269,26 @@ func _on_action_pressed(row: StationRow) -> void:
 	_refresh_stations_tab.call_deferred()
 
 
-func _on_name_pressed(row: StationRow) -> void:
-	if row.station != null:
+## A tap on the card (not a drag - the list must still scroll from a row).
+func _on_row_gui_input(event: InputEvent, row: StationRow) -> void:
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if event.pressed:
+		row.press_position = event.global_position
+	elif event.global_position.distance_to(row.press_position) < ROW_TAP_MOVE_THRESHOLD and row.station != null:
 		station_requested.emit(row.station)
 
 
 ## Fraction complete (0.0-1.0). Derived from the station's own timer_bar
-## (station.gd keeps it in sync); parallel Shelling reads its soonest run.
+## (station.gd keeps it in sync); parallel and batch stations read their
+## soonest run. A loaded-but-waiting batch station shows how full it is.
 func _station_progress_fraction(station: Station) -> float:
 	if station.uses_parallel_runs():
 		if not station.shelling_ready_parts.is_empty():
 			return 1.0
 		if station.shelling_active_parts.is_empty():
+			if station.is_batch_station() and not station.batch_load.is_empty():
+				return float(station.batch_load.size()) / maxf(station.batch_cap, 1.0)
 			return 0.0
 		return _fraction_from_bar(station)
 	match station.current_state:
@@ -273,34 +306,19 @@ func _fraction_from_bar(station: Station) -> float:
 	return clampf(1.0 - bar.value / maxf(bar.max_value, 0.01), 0.0, 1.0)
 
 
-func _bar_color_for(station: Station) -> Color:
+func _bar_color_key(station: Station) -> String:
 	if station.uses_parallel_runs():
 		if not station.shelling_ready_parts.is_empty():
-			return BAR_COLOR_READY
-		if not station.shelling_active_parts.is_empty():
-			return BAR_COLOR_RUNNING
-		return BAR_COLOR_IDLE
+			return "good"
+		if not station.shelling_active_parts.is_empty() or not station.batch_load.is_empty():
+			return "gold"
+		return "text_dim"
 	match station.current_state:
 		Station.State.READY:
-			return BAR_COLOR_READY
+			return "good"
 		Station.State.RUNNING:
-			return BAR_COLOR_RUNNING
-	return BAR_COLOR_IDLE
-
-
-func _bar_fill_style(color: Color) -> StyleBoxFlat:
-	if not _bar_fill_styles.has(color):
-		_bar_fill_styles[color] = _bar_style(color)
-	return _bar_fill_styles[color]
-
-
-func _bar_style(color: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = color
-	style.border_color = Color(0.05, 0.04, 0.03)
-	style.set_border_width_all(1)
-	style.anti_aliasing = false
-	return style
+			return "gold"
+	return "text_dim"
 
 
 # ---------------------------------------------------------------------------
@@ -314,27 +332,35 @@ func _on_held_parts_changed() -> void:
 		_refresh_transfer_tab()
 
 
-## Grouped by contract, defective Parts first within each group. Held Parts
-## churn often enough that this is a full rebuild rather than persistent rows.
-func _refresh_transfer_tab() -> void:
-	MenuLayout.clear(transfer_list)
+var _transfer_signature: String = "-"
 
+
+## Grouped by contract, defective Parts first within each group. Rebuilt only
+## when something it shows actually changed (the held set, a defect, a Send
+## button's enabled state) - a rebuild on every poll would flicker.
+func _refresh_transfer_tab() -> void:
 	var defects_only := transfer_defects_only_check.button_pressed
 	var by_contract: Dictionary = {} # contract_id -> Array[Part]
+	var signature := "%s|" % defects_only
 	for part in GameData.held_parts:
 		if defects_only and not part.is_defective:
 			continue
 		if not by_contract.has(part.contract_id):
 			by_contract[part.contract_id] = []
 		(by_contract[part.contract_id] as Array).append(part)
+		var next_station: Station = station_by_id.get(GameData.next_station_id_for(part))
+		signature += "%d:%s:%s," % [part.part_id, part.is_defective, next_station != null and next_station.can_accept_part()]
 
 	var count := GameData.held_parts.size()
 	tabs.set_tab_title(TAB_TRANSFER, "Transfer (%d)" % count if count > 0 else "Transfer")
+	if signature == _transfer_signature:
+		return
+	_transfer_signature = signature
+	MenuLayout.clear(transfer_list)
 
 	if by_contract.is_empty():
-		var empty_label := Label.new()
+		var empty_label := UiKit.label("No defective parts awaiting transfer." if defects_only else "Nothing awaiting transfer.", UiKit.FONT_BODY, "text_dim")
 		empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		empty_label.text = "No defective parts awaiting transfer." if defects_only else "Nothing awaiting transfer."
 		transfer_list.add_child(empty_label)
 		return
 
@@ -346,44 +372,55 @@ func _refresh_transfer_tab() -> void:
 			return a.part_id < b.part_id
 		)
 		var contract := GameData.get_contract(contract_id)
-		var header := Label.new()
-		header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		header.add_theme_color_override("font_color", HEADER_COLOR)
-		header.text = "%s (%d)" % [contract.customer_name if contract != null else "No Contract", parts.size()]
-		transfer_list.add_child(header)
+		var icon_name := UiKit.part_icon(GameData.geometry_name_for_part(parts[0])) if contract != null else "contracts"
+		transfer_list.add_child(UiKit.section("%s (%d)" % [contract.customer_name if contract != null else "No Contract", parts.size()], icon_name))
 		for part in parts:
 			_add_transfer_row(part)
 
 
 func _add_transfer_row(part: Part) -> void:
+	var box := UiKit.card()
+	transfer_list.add_child(box)
 	var row := HBoxContainer.new()
-	transfer_list.add_child(row)
+	row.add_theme_constant_override("separation", 5)
+	box.add_child(row)
 
-	var id_label := Label.new()
-	id_label.custom_minimum_size = Vector2(45.0, 0.0)
-	id_label.text = "#%d" % part.part_id
+	row.add_child(UiKit.icon(UiKit.part_icon(GameData.geometry_name_for_part(part))))
+	var id_label := UiKit.label("#%d" % part.part_id)
+	id_label.custom_minimum_size = Vector2(34.0, 0.0)
+	id_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(id_label)
 
-	var familiarity_label := Label.new()
-	familiarity_label.custom_minimum_size = Vector2(32.0, 0.0)
-	familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(GameData.geometry_name_for_part(part))
+	row.add_child(UiKit.icon("reputation"))
+	var familiarity_label := UiKit.label("%d/5" % GameData.average_familiarity_stars(GameData.geometry_name_for_part(part)))
+	familiarity_label.custom_minimum_size = Vector2(24.0, 0.0)
+	familiarity_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(familiarity_label)
 
+	var defect_slot := HBoxContainer.new()
+	defect_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(defect_slot)
 	if part.is_defective:
-		var defect_label := Label.new()
-		defect_label.custom_minimum_size = Vector2(70.0, 0.0)
-		defect_label.add_theme_color_override("font_color", DEFECT_COLOR)
-		defect_label.text = GameData.DEFECT_CATEGORY_LABEL[part.defect_category]
-		row.add_child(defect_label)
+		var pill := UiKit.pill(GameData.DEFECT_CATEGORY_LABEL[part.defect_category], "bad")
+		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		defect_slot.add_child(pill)
+	else:
+		var ok := UiKit.label("No defects", UiKit.FONT_SMALL, "text_dim")
+		ok.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ok.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		defect_slot.add_child(ok)
 
 	var next_station: Station = station_by_id.get(GameData.next_station_id_for(part))
-	var send_button := Button.new()
+	var send_button := UiKit.button("", "act_send")
+	send_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if next_station == null:
 		send_button.text = "No next station"
 		send_button.disabled = true
 	else:
 		send_button.text = "Send to %s" % next_station.station_name
 		send_button.disabled = not next_station.can_accept_part()
+		if send_button.disabled:
+			send_button.tooltip_text = UiText.tip("%s has no room right now" % next_station.station_name)
 		send_button.pressed.connect(_on_send_held_part.bind(part, next_station))
 	row.add_child(send_button)
 
