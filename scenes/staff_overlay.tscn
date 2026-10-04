@@ -21,6 +21,7 @@ offset_right = 465.0
 offset_bottom = 258.0
 
 [node name="TabContainer" type="TabContainer" parent="Panel"]
+unique_name_in_owner = true
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -29,60 +30,34 @@ offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
 
-[node name="Technicians" type="Control" parent="Panel/TabContainer"]
+[node name="Hire" type="Control" parent="Panel/TabContainer"]
 layout_mode = 2
 
-[node name="TechScroll" type="ScrollContainer" parent="Panel/TabContainer/Technicians"]
+[node name="HireScroll" type="ScrollContainer" parent="Panel/TabContainer/Hire"]
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
 horizontal_scroll_mode = 0
 
-[node name="TechContent" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="HireHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
-autowrap_mode = 3
-layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
-theme_override_font_sizes/font_size = 18
-text = "Hire"
-
-[node name="HireList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
-unique_name_in_owner = true
-layout_mode = 2
-
-[node name="RefreshRow" type="HBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
-layout_mode = 2
-
-[node name="RefreshApplicantsButton" type="Button" parent="Panel/TabContainer/Technicians/TechScroll/TechContent/RefreshRow"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Refresh Applicants"
-
-[node name="RefreshCountdownLabel" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent/RefreshRow"]
+[node name="HireContent" type="VBoxContainer" parent="Panel/TabContainer/Hire/HireScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-text = "New applicants in: 0:00"
 
-[node name="RosterHeader" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
-autowrap_mode = 3
+[node name="Roster" type="Control" parent="Panel/TabContainer"]
+visible = false
 layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
-theme_override_font_sizes/font_size = 18
-text = "Roster"
 
-[node name="PayrollLabel" type="Label" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
-unique_name_in_owner = true
-autowrap_mode = 3
-layout_mode = 2
-text = "Payroll: 0g - paid out whenever you level up the factory"
+[node name="RosterScroll" type="ScrollContainer" parent="Panel/TabContainer/Roster"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_scroll_mode = 0
 
-[node name="RosterList" type="VBoxContainer" parent="Panel/TabContainer/Technicians/TechScroll/TechContent"]
+[node name="RosterContent" type="VBoxContainer" parent="Panel/TabContainer/Roster/RosterScroll"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="Specialists" type="Control" parent="Panel/TabContainer"]
 visible = false
@@ -95,16 +70,6 @@ anchor_bottom = 1.0
 horizontal_scroll_mode = 0
 
 [node name="SpecialistContent" type="VBoxContainer" parent="Panel/TabContainer/Specialists/SpecialistScroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="SpecialistHeader" type="Label" parent="Panel/TabContainer/Specialists/SpecialistScroll/SpecialistContent"]
-autowrap_mode = 3
-layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.64, 0.16, 1)
-theme_override_font_sizes/font_size = 18
-text = "Specialists"
-
-[node name="SpecialistList" type="VBoxContainer" parent="Panel/TabContainer/Specialists/SpecialistScroll/SpecialistContent"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
