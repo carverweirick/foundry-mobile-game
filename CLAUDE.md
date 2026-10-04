@@ -1024,6 +1024,13 @@ general form of this lesson.
   (Queue button) - pop them front to back in `Station._try_create_part()`.
   Orders for finished contracts are dropped. Attention nags "queue parts to
   make" for an active contract with nothing queued or in the line.
+- **Queue multiplier** (AdVenture Capitalist style): a "Queue amount" toggle
+  at the top of the Active tab cycles x1 / x5 / x10 / MAX
+  (`ContractsOverlay.QUEUE_AMOUNTS`, not saved); each Trial/Production
+  button shows how many one tap will really queue and the total price,
+  via `GameData.queueable_count()` (capped by revert for trials, by
+  `production_still_needed()` for production, and by gold+gems), and
+  `queue_print_orders()` queues them.
 - **Trial parts** (`Part.is_trial`) are poured in revert: queueing one uses 1
   `GameData.revert_stock` (starts at 10, saved). They roll defects normally,
   never count toward the contract (`Part.counts_toward_contract`), and at

@@ -32,6 +32,12 @@ class_name ContractsOverlay
 
 const REFRESH_INTERVAL: float = 0.25
 
+## The Active tab's queue multiplier, AdVenture Capitalist style: one toggle
+## cycles how many parts every Trial/Production button queues per tap. 0 is
+## MAX (everything currently possible). Not saved.
+const QUEUE_AMOUNTS: Array[int] = [1, 5, 10, 0]
+const QUEUE_MAX_WANTED: int = 9999
+
 ## A press/release on an offer row that moves less than this many screen
 ## pixels is a tap (expand/collapse); more is a scroll drag and is ignored.
 ## Same value as main.gd's CLICK_MOVE_THRESHOLD for floor taps.
@@ -613,6 +619,15 @@ var _contracts_empty_label: Label = null
 ## the next tier threshold, which the HUD doesn't have room for.
 var _reputation_header_label: Label = null
 
+var _queue_amount_index: int = 0
+var _queue_amount_button: Button = null
+
+
+func _queue_wanted() -> int:
+	var amount := QUEUE_AMOUNTS[_queue_amount_index]
+	return QUEUE_MAX_WANTED if amount == 0 else amount
+
+
 func _refresh_contracts_tab() -> void:
 	if _reputation_header_label == null:
 		_reputation_header_label = Label.new()
@@ -620,6 +635,14 @@ func _refresh_contracts_tab() -> void:
 		contracts_list.add_child(_reputation_header_label)
 	_reputation_header_label.text = "%s\nRevert metal: %d (each trial part uses 1)" % [_reputation_summary_text(), GameData.revert_stock]
 	contracts_list.move_child(_reputation_header_label, 0)
+	if _queue_amount_button == null:
+		_queue_amount_button = Button.new()
+		_queue_amount_button.tooltip_text = "How many parts each Trial/Production button queues per tap"
+		_queue_amount_button.pressed.connect(_on_queue_amount_pressed)
+		contracts_list.add_child(_queue_amount_button)
+	var amount := QUEUE_AMOUNTS[_queue_amount_index]
+	_queue_amount_button.text = "Queue amount: %s - tap to change" % ("MAX" if amount == 0 else "x%d" % amount)
+	contracts_list.move_child(_queue_amount_button, 1)
 
 	var active := GameData.get_active_contracts()
 	var active_ids: Dictionary = {}
@@ -776,25 +799,36 @@ func _update_item_widgets(row: ContractRow, contract: Contract) -> void:
 			item.geometry_name, item.quantity_shipped, item.quantity_required, roundi(familiarity),
 			" (queued: %d trial, %d production)" % [queued_trial, queued_production] if queued_trial + queued_production > 0 else "",
 		]
-		_update_queue_button(widgets.trial_button, contract, i, true,
-			"Trial %dg" % GameData.part_cost(contract, true),
+		_update_queue_button(widgets.trial_button, contract, i, true, "Trial",
 			"Poured in revert - never shipped. Teaches the shop this geometry and carries your Engineer's latest fix.")
-		_update_queue_button(widgets.production_button, contract, i, false,
-			"Production %dg" % GameData.part_cost(contract, false),
+		_update_queue_button(widgets.production_button, contract, i, false, "Production",
 			"Poured in virgin metal for the customer. Ships only at %d%%+ quality." % int(GameData.SHIP_QUALITY_THRESHOLD))
 
 
-func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, text: String, about: String) -> void:
+## Shows how many this tap will actually queue at the current multiplier
+## (fewer than asked when gold, revert or the contract's need runs out) and
+## the total price.
+func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, kind: String, about: String) -> void:
 	var blocker := GameData.print_order_blocker(contract, index, is_trial)
-	button.text = text
-	button.disabled = blocker != ""
+	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted())
+	var unit := GameData.part_cost(contract, is_trial)
+	if count > 0:
+		button.text = "%s x%d (%dg)" % [kind, count, unit * count]
+	else:
+		button.text = "%s (%dg each)" % [kind, unit]
+	button.disabled = count == 0
 	button.tooltip_text = about if blocker == "" else "%s\n%s" % [blocker, about]
 
 
 func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:
 	var contract := GameData.get_contract(row.contract_id)
 	if contract != null:
-		GameData.queue_print_order(contract, index, is_trial)
+		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted())
+	_refresh_contracts_tab.call_deferred()
+
+
+func _on_queue_amount_pressed() -> void:
+	_queue_amount_index = (_queue_amount_index + 1) % QUEUE_AMOUNTS.size()
 	_refresh_contracts_tab.call_deferred()
 
 

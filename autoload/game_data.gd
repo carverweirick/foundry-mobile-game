@@ -1139,6 +1139,34 @@ func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool)
 	return true
 
 
+## How many of `wanted` parts could be queued right now - capped by revert
+## stock (trial), by what the contract still needs (production), and by
+## what the player can afford (gold, then gems). Drives the Contracts menu's
+## AdVenture-Capitalist-style "Queue: x1 / x5 / x10 / MAX" multiplier.
+func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, wanted: int) -> int:
+	if print_order_blocker(contract, line_item_index, is_trial) != "":
+		return 0
+	var limit := wanted
+	if is_trial:
+		limit = mini(limit, revert_stock)
+	else:
+		limit = mini(limit, production_still_needed(contract, line_item_index))
+	var cost := part_cost(contract, is_trial)
+	while limit > 0 and not can_afford_with_gems(cost * limit):
+		limit -= 1
+	return maxi(limit, 0)
+
+
+## Queues up to `wanted` parts in one go; returns how many were queued.
+func queue_print_orders(contract: Contract, line_item_index: int, is_trial: bool, wanted: int) -> int:
+	var queued := 0
+	for i in queueable_count(contract, line_item_index, is_trial, wanted):
+		if not queue_print_order(contract, line_item_index, is_trial):
+			break
+		queued += 1
+	return queued
+
+
 ## Whether a printer has something to start - the ONE predicate shared by
 ## Station.has_actionable_work(), _auto_queue_if_possible() and the manual
 ## Queue path, so the technician route predictor and the actor can't
