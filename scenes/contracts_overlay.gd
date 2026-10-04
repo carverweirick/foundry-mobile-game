@@ -1,48 +1,35 @@
 extends OverlayBase
 class_name ContractsOverlay
 
-## Entry point covering both halves of a contract's lifecycle: browsing and
-## accepting new offers, and tracking work already accepted. Reworked this
-## session (design doc Section 24.9, following a UI mockup the user liked
-## and asked to have implemented) to add a real "Contract Offers" screen -
-## previously a rolled contract went straight into the active/working list
-## with no player choice at all (see GameData.contract_offers/
-## accept_contract_offer()). Two tabs now instead of one flat list:
+## Contracts (rail tile "Contracts"): both halves of a contract's life, in
+## the "Operator Console" style of the user's mockup (assets/inspo/UI/
+## contract_UI.png) built from UiKit widgets.
 ##
-## - Offers: every contract GameData has rolled but the player hasn't
-##   accepted yet. A compact row per offer (customer/payout/deadline/average
-##   familiarity); tapping the row itself expands a full detail card directly
-##   beneath it, accordion-style (design request, this session: "when i
-##   click on a contract it expands like a dropdown instead of having a view
-##   button and showing it beneath the contract menu" - there's no separate
-##   View button anymore, and the shared detail widget now follows whichever
-##   row is selected instead of always sitting at the bottom of the list) -
-##   line items with per-geometry familiarity, a difficulty/alloy/volume tag
-##   row, a familiarity-based risk badge, and an Accept button.
-## - Active: the original read-only list of already-accepted contracts in
-##   progress (customer/relationship/progress/time), unchanged from before
-##   this session except for the rename.
+## Offers tab - a compact card per rolled-but-unaccepted offer (part-family
+## icon, customer, tier pill, payout, time, familiarity meter, risk pill).
+## Tapping a card expands a detail card directly beneath it (accordion; one
+## open at a time): each line item's part type, quantity, familiarity, alloy
+## and per-part payment, the payment split, and Accept. A tap is a press and
+## release that moves less than ROW_TAP_MOVE_THRESHOLD - a drag scrolls.
 ##
-## Deliberately kept as ONE overlay with two tabs rather than splitting
-## "Offers" out to its own HUD button, unlike this session's earlier Menu/
-## Shop split - these two tabs are the same underlying lifecycle object
-## (an offer becomes an active contract), not "unrelated categories" bundled
-## together for no reason, which was the specific complaint that split
-## drove. The already-tight two-row, six-button HUD was also a real factor.
+## Active tab - reputation and revert metal, the Queue amount (x1/x5/x10/MAX,
+## AdVenture Capitalist style) and Trial metal (Revert/Virgin) toggles, then a
+## card per active contract: an On track / Behind / Overdue pill, progress
+## bar, its Engineer (tap to cycle), and per line item a familiarity meter
+## and Trial / Production queue buttons (Production locked below 85%).
+##
+## Both tabs keep persistent cards updated in place on the 0.25s poll -
+## rebuilding would make the list jump (CLAUDE.md UI rule 5).
 
 const REFRESH_INTERVAL: float = 0.25
-
-## The Active tab's queue multiplier, AdVenture Capitalist style: one toggle
-## cycles how many parts every Trial/Production button queues per tap. 0 is
-## MAX (everything currently possible). Not saved.
-const QUEUE_AMOUNTS: Array[int] = [1, 5, 10, 0]
+const QUEUE_AMOUNTS: Array[int] = [1, 5, 10, 0]   # 0 = MAX
 const QUEUE_MAX_WANTED: int = 9999
-
-## A press/release on an offer row that moves less than this many screen
-## pixels is a tap (expand/collapse); more is a scroll drag and is ignored.
-## Same value as main.gd's CLICK_MOVE_THRESHOLD for floor taps.
+## Press-to-release movement under this is a tap; more is a scroll drag.
 const ROW_TAP_MOVE_THRESHOLD: float = 24.0
+const TAB_OFFERS := 0
+const TAB_ACTIVE := 1
 
+@onready var tabs: TabContainer = $Panel/TabContainer
 @onready var contracts_list: VBoxContainer = %ContractsList
 @onready var offers_root: VBoxContainer = %OffersRoot
 
@@ -50,67 +37,18 @@ var _refresh_elapsed: float = 0.0
 
 
 func _on_ready() -> void:
-	GameData.contract_updated.connect(func(_c): _on_contract_updated())
-	GameData.contract_offers_changed.connect(func(): _on_offers_changed())
-	_build_offer_detail_section()
-	# Design request, this session: "make each contract its own box... just
-	# to differentiate them a little" - see _row_box_style()'s own comment.
-	# Its colors are a manual per-theme override (not automatic Theme-type
-	# lookup), so every existing row needs restyling on a live theme switch.
-	ThemeManager.theme_changed.connect(func(_choice): _restyle_all_rows())
-
-
-## Design request, this session: "make each contract its own box... just to
-## differentiate them a little" - both OfferRow and ContractRow used to be a
-## bare HBoxContainer sitting directly in the list with only the theme-wide
-## 8px VBoxContainer separation between them, easy to misread as one
-## continuous block at a glance (see the screenshot that prompted this).
-## Deliberately its own smaller stylebox rather than reusing
-## `Panel/styles/panel` (the outer overlay panel's own 4px-border/10px-margin
-## style) wholesale - that's tuned for one big window chrome, not a
-## repeated-many-times-in-a-scrollable-list row, and would read as
-## needlessly heavy stacked border-in-border. 2px border (matching this
-## theme's existing LineEdit/focus border weight, see CLAUDE.md's UI theme
-## notes) and a background one step lighter/darker than the surrounding
-## panel (rather than identical to it) so each box actually reads as a
-## distinct card. Picked manually per ThemeChoice rather than pulled from
-## the Theme resource, matching this file's existing FAMILY_ICON_COLOR/risk-
-## badge precedent of explicit one-off colors for small non-standard widgets.
-func _row_box_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	if ThemeManager.current_theme == ThemeManager.ThemeChoice.PARCHMENT:
-		style.bg_color = Color(0.885, 0.815, 0.63, 1)
-		style.border_color = Color(0.16, 0.11, 0.08, 1)
-	else:
-		style.bg_color = Color(0.155, 0.155, 0.18, 1)
-		style.border_color = Color(0.03, 0.03, 0.04, 1)
-	style.border_width_left = 2
-	style.border_width_top = 2
-	style.border_width_right = 2
-	style.border_width_bottom = 2
-	style.content_margin_left = 8.0
-	style.content_margin_top = 6.0
-	style.content_margin_right = 8.0
-	style.content_margin_bottom = 6.0
-	style.anti_aliasing = false
-	return style
-
-
-func _restyle_all_rows() -> void:
-	var style := _row_box_style()
-	for row: OfferRow in _offer_rows.values():
-		row.box.add_theme_stylebox_override("panel", style)
-	for row: ContractRow in _contract_rows.values():
-		row.box.add_theme_stylebox_override("panel", style)
+	GameData.contract_updated.connect(func(_c): _on_data_changed())
+	GameData.contract_offers_changed.connect(func(): _on_data_changed())
+	_build_offers_header()
+	_build_offer_detail()
+	_build_active_header()
 
 
 func _process(delta: float) -> void:
 	if not panel.visible:
 		return
 	_refresh_elapsed += delta
-	if _refresh_elapsed < REFRESH_INTERVAL:
-		return
-	if _click_in_progress():
+	if _refresh_elapsed < REFRESH_INTERVAL or _click_in_progress():
 		return
 	_refresh_elapsed = 0.0
 	_refresh()
@@ -121,37 +59,81 @@ func _on_open() -> void:
 	_refresh()
 
 
-func _on_contract_updated() -> void:
-	if not _click_in_progress():
-		_refresh_contracts_tab()
-
-
-func _on_offers_changed() -> void:
-	if not _click_in_progress():
-		_refresh_offers_tab()
+func _on_data_changed() -> void:
+	if panel.visible and not _click_in_progress():
+		_refresh()
 
 
 func _refresh() -> void:
 	_refresh_offers_tab()
 	_refresh_contracts_tab()
+	tabs.set_tab_title(TAB_OFFERS, "Offers (%d)" % GameData.contract_offers.size())
+	tabs.set_tab_title(TAB_ACTIVE, "Active (%d)" % GameData.get_active_contracts().size())
 
 
 # ---------------------------------------------------------------------------
-# Offers tab (new this session)
+# Shared helpers
 # ---------------------------------------------------------------------------
 
-## Persistent per-offer collapsed row - customer/payout/deadline/familiarity
-## at a glance, same persistent-widget pattern as the Active tab's
-## ContractRow below (built once, updated in place, never torn down except
-## when the underlying offer itself is gone - accepted or, in the future,
-## rerolled).
+func _format_time(seconds: float) -> String:
+	var total := int(seconds)
+	return "%d:%02d" % [total / 60, total % 60]
+
+
+func _tier_pill_text(contract: Contract) -> String:
+	return "T%d" % int(contract.tier) # ContractTier is 1-based
+
+
+## Familiarity colors: green once production unlocks, gold in between, red low.
+func _familiarity_color(percent: float) -> String:
+	if percent >= GameData.PRODUCTION_FAMILIARITY_PERCENT:
+		return "good"
+	if percent >= 40.0:
+		return "gold"
+	return "bad"
+
+
+func _offer_familiarity_percent(offer: Contract) -> float:
+	if offer.line_items.is_empty():
+		return 0.0
+	var total := 0.0
+	for li in offer.line_items:
+		total += GameData.geometry_familiarity_percent(li.geometry_name)
+	return total / offer.line_items.size()
+
+
+## Risk comes from the WEAKEST line item, so one hard part can't hide behind
+## easy ones on the same order.
+func _offer_risk(offer: Contract) -> Array:
+	var weakest := 100.0
+	for li in offer.line_items:
+		weakest = minf(weakest, GameData.geometry_familiarity_percent(li.geometry_name))
+	if weakest >= 80.0:
+		return ["Low", "good"]
+	if weakest >= 40.0:
+		return ["Med", "warn"]
+	return ["High", "bad"]
+
+
+func _offer_icon(offer: Contract) -> String:
+	return UiKit.part_icon(offer.line_items[0].geometry_name) if not offer.line_items.is_empty() else "contracts"
+
+
+# ---------------------------------------------------------------------------
+# Offers tab
+# ---------------------------------------------------------------------------
+
 class OfferRow:
 	var box: PanelContainer
-	var container: HBoxContainer
-	var customer_label: Label
-	var payout_label: Label
-	var deadline_label: Label
-	var familiarity_label: Label
+	var icon: TextureRect
+	var customer: Label
+	var tier_label: Label
+	var tier_pill: PanelContainer
+	var payout: Label
+	var time: Label
+	var familiarity: SegMeter
+	var risk: PanelContainer
+	var chevron: Label
 	var offer: Contract = null
 	var press_position: Vector2 = Vector2.ZERO
 
@@ -159,53 +141,46 @@ var _offer_rows: Dictionary = {} # contract_id -> OfferRow
 var _offers_empty_label: Label = null
 var _selected_offer_id: int = -1
 
-## The one detail section (not per-offer - there's only ever one selected
-## offer at a time), built once in _on_ready(). Design request, this
-## session: "when i click on a contract it expands like a dropdown instead
-## of having a view button and showing it beneath the contract menu" - this
-## used to always sit as the last child of offers_root, one fixed detail
-## area below the whole list, with a separate "View" button per row.
-## Neither is true anymore: there's no View button (the row itself is the
-## click target, see _create_offer_row()), and _refresh_offer_rows() now
-## moves this same shared widget to sit immediately after whichever row is
-## currently selected, so it visually "drops down" right under that
-## specific contract instead of always appearing at the bottom of the list.
-var _detail_section: VBoxContainer = null
-var _detail_empty_label: Label = null
-var _detail_header_label: Label = null
-var _detail_badge_label: Label = null
-var _detail_info_label: Label = null
-var _detail_line_items_header: Label = null
-var _detail_line_items_list: VBoxContainer = null
-var _detail_footer_label: Label = null
-var _detail_accept_button: Button = null
+var _detail: PanelContainer = null
+var _detail_title: Label
+var _detail_meta: Label
+var _detail_risk: PanelContainer
+var _detail_items: VBoxContainer
+var _detail_payment: Label
+
+
+func _build_offers_header() -> void:
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	for spec in [["Customer", 0, true], ["Tier", 18, false], ["Payout", 38, false], ["Time", 40, false], ["Familiar", 46, false], ["Risk", 30, false]]:
+		var l := UiKit.label(spec[0], UiKit.FONT_SMALL, "text_dim")
+		if spec[2]:
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		else:
+			l.custom_minimum_size = Vector2(spec[1], 0)
+		header.add_child(l)
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(8, 0)
+	header.add_child(spacer)
+	offers_root.add_child(header)
 
 
 func _refresh_offers_tab() -> void:
-	_refresh_offer_rows()
-	_refresh_offer_detail()
-
-
-func _refresh_offer_rows() -> void:
 	var offer_ids: Dictionary = {}
 	for o in GameData.contract_offers:
 		offer_ids[o.contract_id] = true
-
 	for cid in _offer_rows.keys().duplicate():
 		if not offer_ids.has(cid):
-			var stale: OfferRow = _offer_rows[cid]
-			MenuLayout.remove_and_free(stale.box)
+			MenuLayout.remove_and_free(_offer_rows[cid].box)
 			_offer_rows.erase(cid)
 			if _selected_offer_id == cid:
 				_selected_offer_id = -1
 
 	if GameData.contract_offers.is_empty():
 		if _offers_empty_label == null:
-			_offers_empty_label = Label.new()
+			_offers_empty_label = UiKit.label("No contract offers right now - new ones arrive shortly.", UiKit.FONT_BODY, "text_dim")
 			_offers_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			_offers_empty_label.text = "No contract offers right now - check back shortly."
 			offers_root.add_child(_offers_empty_label)
-			offers_root.move_child(_offers_empty_label, 0)
 	elif _offers_empty_label != null:
 		MenuLayout.remove_and_free(_offers_empty_label)
 		_offers_empty_label = null
@@ -218,94 +193,75 @@ func _refresh_offer_rows() -> void:
 			offers_root.add_child(row.box)
 		_update_offer_row(row, o)
 
-	_reposition_detail_section()
-
-
-## The detail section "drops down" directly beneath whichever row is
-## currently selected, rather than always sitting at the end of the list -
-## with nothing selected it just parks at the end (harmless, since it's
-## hidden in that state anyway - see _refresh_offer_detail()).
-##
-## Node.move_child()'s target index is interpreted in the array AFTER the
-## moved child has already been removed, not the array as it currently
-## stands - confirmed empirically with a headless test (moving detail from
-## before a target row to "target.get_index() + 1" landed it one slot too
-## far, since removing detail from earlier in the list had already shifted
-## the target row's own index down by one). Computing the target row's
-## index while explicitly skipping _detail_section itself sidesteps that
-## entirely, regardless of which side of the target row detail currently
-## sits on.
-func _reposition_detail_section() -> void:
-	var selected_row: OfferRow = _offer_rows.get(_selected_offer_id)
-	if selected_row == null:
-		offers_root.move_child(_detail_section, offers_root.get_child_count() - 1)
-		return
-	var index_excluding_detail := 0
-	for child in offers_root.get_children():
-		if child == _detail_section:
-			continue
-		if child == selected_row.box:
-			break
-		index_excluding_detail += 1
-	offers_root.move_child(_detail_section, index_excluding_detail + 1)
+	_refresh_offer_detail()
+	_place_detail()
 
 
 func _create_offer_row() -> OfferRow:
 	var row := OfferRow.new()
-
-	row.box = PanelContainer.new()
-	row.box.add_theme_stylebox_override("panel", _row_box_style())
-	# The box itself is the click target (no separate "View" button). PASS,
-	# not STOP: the box still gets gui_input, but the press also reaches the
-	# OffersScroll ScrollContainer, so a drag that starts on a row scrolls the
-	# list. STOP swallowed it - on a phone, scrolling only worked if the drag
-	# happened to start in the gaps between rows.
-	row.box.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.box = UiKit.card()
 	row.box.gui_input.connect(_on_offer_row_gui_input.bind(row))
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 4)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.box.add_child(line)
 
-	row.container = HBoxContainer.new()
-	# IGNORE so a click anywhere in the row still reaches row.box above
-	# instead of being consumed by the inner HBoxContainer.
-	row.container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.box.add_child(row.container)
+	row.icon = UiKit.icon("contracts")
+	line.add_child(row.icon)
+	var names := VBoxContainer.new()
+	names.add_theme_constant_override("separation", 0)
+	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	names.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_child(names)
+	row.customer = UiKit.label("")
+	row.customer.clip_text = true
+	names.add_child(row.customer)
+	row.tier_label = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	row.tier_label.clip_text = true
+	names.add_child(row.tier_label)
 
-	row.customer_label = Label.new()
-	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.customer_label.custom_minimum_size = Vector2(140.0, 24.0)
-	# IGNORE so a click landing on the label text itself still reaches
-	# row.box above instead of being consumed here - same fix this codebase
-	# already uses for decorative Controls sitting over a click target
-	# (e.g. the room-zone ColorRects on the shop floor).
-	row.customer_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.container.add_child(row.customer_label)
-
-	row.payout_label = Label.new()
-	row.payout_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.payout_label.custom_minimum_size = Vector2(60.0, 24.0)
-	row.payout_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.container.add_child(row.payout_label)
-
-	row.deadline_label = Label.new()
-	row.deadline_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.deadline_label.custom_minimum_size = Vector2(90.0, 24.0)
-	row.deadline_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.container.add_child(row.deadline_label)
-
-	row.familiarity_label = Label.new()
-	row.familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.familiarity_label.custom_minimum_size = Vector2(45.0, 24.0)
-	row.familiarity_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.container.add_child(row.familiarity_label)
-
+	row.tier_pill = UiKit.pill("T1", "info")
+	row.tier_pill.custom_minimum_size = Vector2(18, 0)
+	row.tier_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(row.tier_pill)
+	row.payout = UiKit.label("")
+	row.payout.custom_minimum_size = Vector2(38, 0)
+	row.payout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(row.payout)
+	row.time = UiKit.label("")
+	row.time.custom_minimum_size = Vector2(40, 0)
+	row.time.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(row.time)
+	row.familiarity = UiKit.meter(0.0, "gold", 8)
+	row.familiarity.custom_minimum_size.x = 46
+	line.add_child(row.familiarity)
+	row.risk = UiKit.pill("Low", "good")
+	row.risk.custom_minimum_size = Vector2(30, 0)
+	row.risk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.add_child(row.risk)
+	row.chevron = UiKit.label(">", UiKit.FONT_BODY, "header_text")
+	row.chevron.custom_minimum_size = Vector2(8, 0)
+	row.chevron.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(row.chevron)
 	return row
 
 
 func _update_offer_row(row: OfferRow, offer: Contract) -> void:
 	row.offer = offer
-	row.customer_label.text = "%s (%s)" % [offer.customer_name, offer.tier_label]
-	row.payout_label.text = "%dg" % offer.payout
-	row.deadline_label.text = "%s to complete" % _format_time(offer.deadline_seconds)
-	row.familiarity_label.text = "%d/5" % _offer_average_familiarity_stars(offer)
+	row.icon.texture = UiIcons.get_icon(_offer_icon(offer))
+	row.customer.text = offer.customer_name
+	row.tier_label.text = offer.tier_label
+	UiKit.set_pill(row.tier_pill, _tier_pill_text(offer), "info")
+	row.payout.text = "%dg" % offer.payout
+	row.time.text = _format_time(offer.deadline_seconds)
+	var familiarity := _offer_familiarity_percent(offer)
+	row.familiarity.value = familiarity / 100.0
+	row.familiarity.color_key = _familiarity_color(familiarity)
+	var risk := _offer_risk(offer)
+	UiKit.set_pill(row.risk, risk[0], risk[1])
+	var selected := offer.contract_id == _selected_offer_id
+	row.chevron.text = "v" if selected else ">"
+	UiKit.set_card_border(row.box, "gold" if selected else "card_border")
 
 
 func _on_offer_row_gui_input(event: InputEvent, row: OfferRow) -> void:
@@ -314,127 +270,120 @@ func _on_offer_row_gui_input(event: InputEvent, row: OfferRow) -> void:
 	if event.pressed:
 		row.press_position = event.global_position
 	elif event.global_position.distance_to(row.press_position) < ROW_TAP_MOVE_THRESHOLD:
-		_on_offer_row_selected(row)
+		_selected_offer_id = -1 if _selected_offer_id == row.offer.contract_id else row.offer.contract_id
+		_refresh_offers_tab.call_deferred()
 
 
-## Tapping the currently-expanded row again collapses it - standard
-## accordion behavior - tapping a different row switches which one is open.
-func _on_offer_row_selected(row: OfferRow) -> void:
-	if _selected_offer_id == row.offer.contract_id:
-		_selected_offer_id = -1
-	else:
-		_selected_offer_id = row.offer.contract_id
-	_refresh_offer_detail.call_deferred()
-	_refresh_offer_rows.call_deferred()
+func _build_offer_detail() -> void:
+	_detail = UiKit.card("gold")
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 3)
+	_detail.add_child(body)
 
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 6)
+	body.add_child(top)
+	_detail_title = UiKit.label("", UiKit.FONT_TITLE, "header_text")
+	_detail_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_detail_title.clip_text = true
+	top.add_child(_detail_title)
+	_detail_risk = UiKit.pill("Low", "good")
+	_detail_risk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top.add_child(_detail_risk)
+	_detail_meta = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	_detail_meta.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_child(_detail_meta)
 
-func _build_offer_detail_section() -> void:
-	_detail_section = VBoxContainer.new()
-	offers_root.add_child(_detail_section)
-	_detail_section.add_child(HSeparator.new())
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	body.add_child(header)
+	for spec in [["Part type", 0, true], ["Qty", 22, false], ["Familiarity", 64, false], ["Alloy", 64, false], ["Each", 26, false]]:
+		var l := UiKit.label(spec[0], UiKit.FONT_SMALL, "text_dim")
+		if spec[2]:
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		else:
+			l.custom_minimum_size = Vector2(spec[1], 0)
+		header.add_child(l)
+	_detail_items = VBoxContainer.new()
+	_detail_items.add_theme_constant_override("separation", 2)
+	body.add_child(_detail_items)
 
-	_detail_empty_label = Label.new()
-	_detail_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_empty_label.text = "Tap a contract above to see its full detail before accepting."
-	_detail_section.add_child(_detail_empty_label)
-
-	_detail_header_label = Label.new()
-	_detail_header_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_header_label.add_theme_font_size_override("font_size", 18)
-	_detail_header_label.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
-	_detail_section.add_child(_detail_header_label)
-
-	_detail_badge_label = Label.new()
-	_detail_badge_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_section.add_child(_detail_badge_label)
-
-	_detail_info_label = Label.new()
-	_detail_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_section.add_child(_detail_info_label)
-
-	_detail_line_items_header = Label.new()
-	_detail_line_items_header.text = "Line Items:"
-	_detail_line_items_header.add_theme_color_override("font_color", Color(0.85, 0.64, 0.16))
-	_detail_section.add_child(_detail_line_items_header)
-
-	_detail_line_items_list = VBoxContainer.new()
-	_detail_section.add_child(_detail_line_items_list)
-
-	_detail_footer_label = Label.new()
-	_detail_footer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_section.add_child(_detail_footer_label)
-
-	_detail_accept_button = Button.new()
-	_detail_accept_button.text = "Accept Contract"
-	_detail_accept_button.pressed.connect(_on_accept_offer_pressed)
-	_detail_section.add_child(_detail_accept_button)
+	var bottom := HBoxContainer.new()
+	bottom.add_theme_constant_override("separation", 6)
+	body.add_child(bottom)
+	_detail_payment = UiKit.label("", UiKit.FONT_SMALL, "text")
+	_detail_payment.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail_payment.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom.add_child(_detail_payment)
+	var accept := UiKit.button("Accept", "st_check", "primary")
+	accept.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	accept.pressed.connect(_on_accept_offer_pressed)
+	bottom.add_child(accept)
+	offers_root.add_child(_detail)
 
 
 func _refresh_offer_detail() -> void:
 	var offer := _find_offer(_selected_offer_id)
+	_detail.visible = offer != null
 	if offer == null:
 		_selected_offer_id = -1
-		_detail_empty_label.visible = true
-		_detail_header_label.visible = false
-		_detail_badge_label.visible = false
-		_detail_info_label.visible = false
-		_detail_line_items_header.visible = false
-		_detail_line_items_list.visible = false
-		_detail_footer_label.visible = false
-		_detail_accept_button.visible = false
 		return
-
-	_detail_empty_label.visible = false
-	_detail_header_label.visible = true
-	_detail_badge_label.visible = true
-	_detail_info_label.visible = true
-	_detail_line_items_header.visible = true
-	_detail_line_items_list.visible = true
-	_detail_footer_label.visible = true
-	_detail_accept_button.visible = true
-
-	_detail_header_label.text = "%s - %s" % [offer.customer_name, offer.tier_label]
-
-	var weakest_percent := _offer_weakest_familiarity_percent(offer)
-	var badge_text: String
-	var badge_color: Color
-	var footer_text: String
-	# Only ever two tags, both backed by real game state (familiarity/risk).
-	# An earlier version also appended "BONUS QUALITY"/"FIRST ARTICLE" to the
-	# safe/risky ends of this line - real manufacturing-sounding terms, but
-	# neither tied to an actual mechanic (there's no quality-bonus system,
-	# Section 24.2, or first-article-inspection step built), which is exactly
-	# what surfaced as player confusion ("what does first article mean on the
-	# contract?") - dropped rather than explained, since there was nothing
-	# real behind them to explain.
-	if weakest_percent >= 80:
-		badge_text = "MASTERED - SAFE CONTRACT"
-		badge_color = Color(0.35, 0.78, 0.42)
-		footer_text = "HIGH FAMILIARITY • LOW RISK"
-	elif weakest_percent >= 40:
-		badge_text = "MODERATE RISK"
-		badge_color = Color(0.82, 0.62, 0.2)
-		footer_text = "MODERATE FAMILIARITY • MODERATE RISK"
-	else:
-		badge_text = "UNFAMILIAR - HIGH RISK"
-		badge_color = Color(0.88, 0.35, 0.22)
-		footer_text = "LOW FAMILIARITY • HIGH RISK"
-	_detail_badge_label.text = badge_text
-	_detail_badge_label.add_theme_color_override("font_color", badge_color)
-	_detail_footer_label.text = footer_text
-	_detail_footer_label.add_theme_color_override("font_color", badge_color)
-
-	var alloy := offer.line_items[0].alloy_name if not offer.line_items.is_empty() else ""
+	_detail_title.text = "%s" % offer.customer_name
+	var risk := _offer_risk(offer)
+	UiKit.set_pill(_detail_risk, "%s risk" % risk[0], risk[1])
 	var exp: int = GameData.FACTORY_EXP_PER_CONTRACT_TIER.get(offer.tier, 0)
-	_detail_info_label.text = "%s to complete  |  Payout %dg  |  +%d Factory EXP\n%dg up front, %dg per good part shipped, +%dg if finished on time\n%s complexity • %s • Investment Casting • %s" % [
-		_format_time(offer.deadline_seconds), offer.payout, exp,
-		GameData.contract_upfront_amount(offer), GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer),
-		_offer_complexity_label(offer), alloy, _offer_volume_label(offer),
-	]
+	_detail_meta.text = "%s  |  Payout %dg  |  %s to complete  |  +%d Factory EXP" % [
+		offer.tier_label, offer.payout, _format_time(offer.deadline_seconds), exp]
+	_detail_payment.text = "Pays %dg up front, %dg per good part shipped, +%dg if finished on time" % [
+		GameData.contract_upfront_amount(offer), GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer)]
+	# The selected offer's items only change when the selection does.
+	if _detail.get_meta("shown_offer", -1) != offer.contract_id:
+		_detail.set_meta("shown_offer", offer.contract_id)
+		MenuLayout.clear(_detail_items)
+		for li in offer.line_items:
+			_detail_items.add_child(_build_detail_item(li, offer))
 
-	_clear_list(_detail_line_items_list)
-	for li in offer.line_items:
-		_detail_line_items_list.add_child(_build_line_item_row(li))
+
+func _build_detail_item(li: Contract.LineItem, offer: Contract) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.add_child(UiKit.icon(UiKit.part_icon(li.geometry_name)))
+	var name := UiKit.label(li.geometry_name)
+	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name.clip_text = true
+	row.add_child(name)
+	var qty := UiKit.label("%d" % li.quantity_required)
+	qty.custom_minimum_size = Vector2(22, 0)
+	row.add_child(qty)
+	var percent := GameData.geometry_familiarity_percent(li.geometry_name)
+	var meter := UiKit.meter(percent / 100.0, _familiarity_color(percent), 8)
+	meter.custom_minimum_size.x = 64
+	row.add_child(meter)
+	var alloy := UiKit.label(li.alloy_name, UiKit.FONT_SMALL, "text_dim")
+	alloy.custom_minimum_size = Vector2(64, 0)
+	alloy.clip_text = true
+	row.add_child(alloy)
+	var each := UiKit.label("%dg" % GameData.contract_per_part_amount(offer))
+	each.custom_minimum_size = Vector2(26, 0)
+	row.add_child(each)
+	return row
+
+
+## The detail card sits right under the selected offer's card. move_child's
+## index is counted with the moved node already removed, hence skipping it.
+func _place_detail() -> void:
+	var selected: OfferRow = _offer_rows.get(_selected_offer_id)
+	if selected == null:
+		offers_root.move_child(_detail, offers_root.get_child_count() - 1)
+		return
+	var index := 0
+	for child in offers_root.get_children():
+		if child == _detail:
+			continue
+		if child == selected.box:
+			break
+		index += 1
+	offers_root.move_child(_detail, index + 1)
 
 
 func _on_accept_offer_pressed() -> void:
@@ -443,7 +392,7 @@ func _on_accept_offer_pressed() -> void:
 		return
 	GameData.accept_contract_offer(offer)
 	_selected_offer_id = -1
-	_refresh_offers_tab.call_deferred()
+	_refresh.call_deferred()
 
 
 func _find_offer(contract_id: int) -> Contract:
@@ -453,179 +402,36 @@ func _find_offer(contract_id: int) -> Contract:
 	return null
 
 
-func _build_line_item_row(li: Contract.LineItem) -> Control:
-	var row := HBoxContainer.new()
-
-	row.add_child(_make_geometry_icon(li.geometry_name))
-
-	var name_label := Label.new()
-	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_label.custom_minimum_size = Vector2(160.0, 0.0)
-	name_label.text = "%s x%d" % [li.geometry_name, li.quantity_required]
-	row.add_child(name_label)
-
-	var familiarity_label := Label.new()
-	familiarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# Same one-character-per-line wrap bug documented elsewhere in this
-	# codebase (CLAUDE.md: "short inline labels next to a wide sibling
-	# control could wrap vertically") - without an explicit minimum width,
-	# this label had none of its own and got squeezed down to a sliver next
-	# to name_label's wider fixed width, wrapping "0/5" onto three lines.
-	familiarity_label.custom_minimum_size = Vector2(45.0, 24.0)
-	familiarity_label.text = "%d/5" % GameData.average_familiarity_stars(li.geometry_name)
-	row.add_child(familiarity_label)
-
-	return row
-
-
-## Placeholder geometry icon (design doc Section 24.3/24.11 - real per-
-## geometry art is a future task, same "not built yet" gap as every other
-## station's placeholder art). A small tinted bordered box (same shape
-## language as Station._get_placeholder_texture()'s station placeholder,
-## just built from Controls here instead of a generated Texture2D, since
-## this only ever needs to be ~28x28 UI-space, not a world-space sprite)
-## with a short abbreviation - tinted per geometry family
-## (GameData.family_for_geometry()) so at least the FAMILY reads at a
-## glance even before real art exists.
-const FAMILY_ICON_COLOR := {
-	"Decorative": Color(0.75, 0.65, 0.3),
-	"Bracket": Color(0.55, 0.55, 0.6),
-	"Valve": Color(0.35, 0.5, 0.65),
-	"Housing": Color(0.5, 0.5, 0.55),
-	"Seal": Color(0.45, 0.45, 0.5),
-	"Impeller": Color(0.3, 0.55, 0.7),
-	"Manifold": Color(0.5, 0.42, 0.32),
-	"Strut": Color(0.4, 0.4, 0.45),
-	"Turbine": Color(0.7, 0.32, 0.18),
-	"HotSection": Color(0.75, 0.22, 0.15),
-}
-
-func _make_geometry_icon(geometry_name: String) -> Control:
-	var family := GameData.family_for_geometry(geometry_name)
-	var color: Color = FAMILY_ICON_COLOR.get(family, Color(0.5, 0.5, 0.5))
-
-	var box := Panel.new()
-	box.custom_minimum_size = Vector2(28.0, 28.0)
-	var style := StyleBoxFlat.new()
-	style.bg_color = color
-	style.border_width_left = 2
-	style.border_width_right = 2
-	style.border_width_top = 2
-	style.border_width_bottom = 2
-	style.border_color = Color(0.03, 0.03, 0.04)
-	style.anti_aliasing = false
-	box.add_theme_stylebox_override("panel", style)
-
-	var label := Label.new()
-	label.text = _abbreviation_for(geometry_name)
-	label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 10)
-	label.add_theme_color_override("font_color", Color.WHITE)
-	box.add_child(label)
-
-	return box
-
-
-## "Turbine Blades" -> "TB", "Nozzle Guide Vanes" -> "NGV", "Blisks" -> "BL" -
-## first letter of up to 3 words, or the first 2 letters of a single-word name.
-func _abbreviation_for(geometry_name: String) -> String:
-	var words := geometry_name.split(" ", false)
-	if words.size() >= 2:
-		var abbr := ""
-		for w in words:
-			if abbr.length() >= 3:
-				break
-			abbr += w.substr(0, 1)
-		return abbr.to_upper()
-	return geometry_name.substr(0, 2).to_upper()
-
-
-func _offer_average_familiarity_stars(offer: Contract) -> int:
-	if offer.line_items.is_empty():
-		return 0
-	var total := 0
-	for li in offer.line_items:
-		total += GameData.average_familiarity_stars(li.geometry_name)
-	return int(round(float(total) / offer.line_items.size()))
-
-
-func _offer_weakest_familiarity_percent(offer: Contract) -> int:
-	var weakest := 100
-	for li in offer.line_items:
-		weakest = mini(weakest, GameData.weakest_familiarity_percent(li.geometry_name))
-	return weakest
-
-
-const COMPLEXITY_RANK := {"Low": 0, "Medium": 1, "High": 2, "Very High": 3}
-const COMPLEXITY_BY_RANK: Array[String] = ["Low", "Medium", "High", "Very High"]
-
-## The highest complexity among a multi-line-item offer's geometries -
-## a contract asking for even one Very-High-complexity part is a Very-High-
-## complexity contract overall, not averaged down by easier line items also
-## on the same order.
-func _offer_complexity_label(offer: Contract) -> String:
-	var rank := 0
-	for li in offer.line_items:
-		var label: String = GameData.complexity_label_for_geometry(li.geometry_name)
-		rank = maxi(rank, COMPLEXITY_RANK.get(label, 1))
-	return COMPLEXITY_BY_RANK[rank]
-
-
-func _offer_volume_label(offer: Contract) -> String:
-	var range: Vector2i = GameData.CONTRACT_QUANTITY_RANGE[offer.tier]
-	var total := offer.quantity_required
-	var mid := (range.x + range.y) / 2.0
-	if total >= mid * 1.3:
-		return "High Volume"
-	if total <= mid * 0.7:
-		return "Low Volume"
-	return "Medium Volume"
-
-
-func _clear_list(list: Container) -> void:
-	MenuLayout.clear(list)
-
-
 # ---------------------------------------------------------------------------
-# Active tab (unchanged from before this session, aside from the rename)
+# Active tab
 # ---------------------------------------------------------------------------
 
-## Persistent per-contract row - real Customer/Relationship/Progress/Time
-## columns instead of one run-on text string. Contracts are few and rarely
-## change structurally (only when one completes), so this is worth doing the
-## same persistent-widget way as the Overview overlay's rows.
 class ContractRow:
 	var box: PanelContainer
-	var container: VBoxContainer
-	var customer_label: Label
-	var relationship_label: Label
-	var progress_bar: ProgressBar
+	var icon: TextureRect
+	var customer: Label
+	var tier_label: Label
+	var tier_pill: PanelContainer
+	var status_pill: PanelContainer
+	var time: Label
 	var progress_label: Label
-	var time_label: Label
+	var relationship: Label
+	var progress_bar: ProgressBar
 	var engineer_button: Button
 	var contract_id: int = -1
-	## One entry per line item: {label, trial_button, production_button}.
-	var item_widgets: Array[Dictionary] = []
+	## Per line item: {name, progress, percent, meter, alloy, trial, production}.
+	var items: Array[Dictionary] = []
 
 var _contract_rows: Dictionary = {} # contract_id -> ContractRow
 var _contracts_empty_label: Label = null
-
-## Persistent shop-wide summary line, always the first child of
-## contracts_list (design doc Section 8's Reputation gating) - same
-## persistent-widget-updated-in-place pattern as every row below, kept
-## separate from the HUD's own ReputationLabel since this one also surfaces
-## the next tier threshold, which the HUD doesn't have room for.
-var _reputation_header_label: Label = null
-
+var _reputation_label: Label
+var _revert_label: Label
+var _amount_buttons: Array[Button] = []
+var _metal_buttons: Array[Button] = []
 var _queue_amount_index: int = 0
-var _queue_amount_button: Button = null
-## Trial metal toggle (user decision, 2026-10-03): pour trials in revert
-## (cheap, uses revert stock) or virgin metal (production price, uses none -
-## and each becomes revert when remelted, building the collection up).
+## Pour trials in revert (cheap, uses revert stock) or virgin metal
+## (production price, uses none - and each becomes revert when remelted).
 var _trial_in_virgin: bool = false
-var _trial_metal_button: Button = null
 
 
 func _queue_wanted() -> int:
@@ -633,45 +439,78 @@ func _queue_wanted() -> int:
 	return QUEUE_MAX_WANTED if amount == 0 else amount
 
 
+func _build_active_header() -> void:
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 4)
+	contracts_list.add_child(top)
+	top.add_child(UiKit.icon("reputation"))
+	_reputation_label = UiKit.label("", UiKit.FONT_BODY)
+	_reputation_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reputation_label.clip_text = true
+	_reputation_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top.add_child(_reputation_label)
+	top.add_child(UiKit.icon("room_vim"))
+	_revert_label = UiKit.label("", UiKit.FONT_BODY)
+	_revert_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_revert_label.tooltip_text = UiText.tip("Revert is remelted metal. Trial parts are poured in it; every trial and every casting under 90% quality is remelted back into it.")
+	_revert_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	top.add_child(_revert_label)
+
+	# Segmented toggles - one fixed row (~290px at 12px text, inside the
+	# ~356px list on every supported screen), so it never re-wraps.
+	var toggles := HBoxContainer.new()
+	toggles.add_theme_constant_override("separation", 2)
+	contracts_list.add_child(toggles)
+	var queue_caption := UiKit.label("Queue:", UiKit.FONT_SMALL, "text_dim")
+	queue_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	toggles.add_child(queue_caption)
+	for i in QUEUE_AMOUNTS.size():
+		var amount := QUEUE_AMOUNTS[i]
+		var b := UiKit.button("MAX" if amount == 0 else "x%d" % amount)
+		b.custom_minimum_size = Vector2(26, 0)
+		b.tooltip_text = UiText.tip("How many parts each Trial/Production button queues per tap")
+		b.pressed.connect(func():
+			_queue_amount_index = i
+			_refresh_contracts_tab.call_deferred())
+		toggles.add_child(b)
+		_amount_buttons.append(b)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(6, 0)
+	toggles.add_child(gap)
+	var metal_caption := UiKit.label("Trial metal:", UiKit.FONT_SMALL, "text_dim")
+	metal_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	toggles.add_child(metal_caption)
+	for virgin in [false, true]:
+		var b := UiKit.button("Virgin" if virgin else "Revert")
+		b.tooltip_text = UiText.tip("Virgin: production price, uses no revert, and each trial becomes revert when remelted - a way to build revert up." if virgin else "Revert: cheap, uses one revert per trial part.")
+		b.pressed.connect(func():
+			_trial_in_virgin = virgin
+			_refresh_contracts_tab.call_deferred())
+		toggles.add_child(b)
+		_metal_buttons.append(b)
+
+
 func _refresh_contracts_tab() -> void:
-	if _reputation_header_label == null:
-		_reputation_header_label = Label.new()
-		_reputation_header_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		contracts_list.add_child(_reputation_header_label)
-	_reputation_header_label.text = "%s\nRevert metal: %d (each trial part uses 1)" % [_reputation_summary_text(), GameData.revert_stock]
-	contracts_list.move_child(_reputation_header_label, 0)
-	if _queue_amount_button == null:
-		_queue_amount_button = Button.new()
-		_queue_amount_button.tooltip_text = UiText.tip("How many parts each Trial/Production button queues per tap")
-		_queue_amount_button.pressed.connect(_on_queue_amount_pressed)
-		contracts_list.add_child(_queue_amount_button)
-	var amount := QUEUE_AMOUNTS[_queue_amount_index]
-	_queue_amount_button.text = "Queue amount: %s - tap to change" % ("MAX" if amount == 0 else "x%d" % amount)
-	contracts_list.move_child(_queue_amount_button, 1)
-	if _trial_metal_button == null:
-		_trial_metal_button = Button.new()
-		_trial_metal_button.tooltip_text = UiText.tip("Revert: cheap, uses revert stock. Virgin: production price, uses no revert, and each trial becomes revert when it's remelted - a way to build up revert.")
-		_trial_metal_button.pressed.connect(_on_trial_metal_pressed)
-		contracts_list.add_child(_trial_metal_button)
-	_trial_metal_button.text = "Trial metal: %s - tap to change" % ("Virgin (builds revert)" if _trial_in_virgin else "Revert")
-	contracts_list.move_child(_trial_metal_button, 2)
+	_reputation_label.text = _reputation_summary_text()
+	_revert_label.text = "Revert: %d" % GameData.revert_stock
+	for i in _amount_buttons.size():
+		UiKit.set_button_kind(_amount_buttons[i], "primary" if i == _queue_amount_index else "neutral")
+	for i in _metal_buttons.size():
+		UiKit.set_button_kind(_metal_buttons[i], "primary" if (i == 1) == _trial_in_virgin else "neutral")
 
 	var active := GameData.get_active_contracts()
 	var active_ids: Dictionary = {}
 	for c in active:
 		active_ids[c.contract_id] = true
-
 	for contract_id in _contract_rows.keys().duplicate():
 		if not active_ids.has(contract_id):
-			var stale_row: ContractRow = _contract_rows[contract_id]
-			MenuLayout.remove_and_free(stale_row.box)
+			MenuLayout.remove_and_free(_contract_rows[contract_id].box)
 			_contract_rows.erase(contract_id)
 
 	if active.is_empty():
 		if _contracts_empty_label == null:
-			_contracts_empty_label = Label.new()
+			_contracts_empty_label = UiKit.label("No active contracts - accept one from Offers.", UiKit.FONT_BODY, "text_dim")
 			_contracts_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			_contracts_empty_label.text = "No active contracts."
 			contracts_list.add_child(_contracts_empty_label)
 		return
 	if _contracts_empty_label != null:
@@ -681,155 +520,189 @@ func _refresh_contracts_tab() -> void:
 	for c in active:
 		var row: ContractRow = _contract_rows.get(c.contract_id)
 		if row == null:
-			row = _create_contract_row()
+			row = _create_contract_row(c)
 			_contract_rows[c.contract_id] = row
 			contracts_list.add_child(row.box)
-		var in_pipeline := GameData.count_parts_in_pipeline(c.contract_id)
-		var relationship := GameData.relationship_stars_for(c.customer_name)
-		row.customer_label.text = "%s (%s)" % [c.customer_name, c.tier_label]
-		row.relationship_label.text = "%d/5 rel." % int(round(relationship))
-		row.progress_label.text = "%d/%d shipped (%d in pipe)" % [c.quantity_shipped, c.quantity_required, in_pipeline]
-		row.progress_bar.max_value = maxi(c.quantity_required, 1)
-		row.progress_bar.value = c.quantity_shipped
-		row.contract_id = c.contract_id
-		if row.item_widgets.is_empty():
-			_build_item_widgets(row, c)
-		_update_item_widgets(row, c)
-		var engineer := GameData.engineer_for_contract(c.contract_id)
-		if engineer != null:
-			row.engineer_button.text = "Engineer: %s" % engineer.technician_name
-		elif GameData.engineers().is_empty():
-			row.engineer_button.text = "No Engineer - hire one in Team"
-		else:
-			row.engineer_button.text = "Assign an Engineer"
-		row.engineer_button.disabled = GameData.engineers().is_empty()
-		row.time_label.text = "%s left" % _format_time(c.time_remaining)
+		_update_contract_row(row, c)
 
 
-## Next-tier-threshold text mirrors GameData.REPUTATION_TIER_THRESHOLD
-## directly rather than duplicating the numbers here, so this stays correct
-## if those constants are ever retuned.
-func _reputation_summary_text() -> String:
-	var reputation := GameData.reputation
-	var next_label := ""
-	var next_gap := -1
-	for tier in GameData.REPUTATION_TIER_THRESHOLD.keys():
-		var threshold: int = GameData.REPUTATION_TIER_THRESHOLD[tier]
-		if threshold > reputation and (next_gap < 0 or threshold < next_gap):
-			next_gap = threshold
-			next_label = Contract.TIER_LABEL[tier]
-	if next_label == "":
-		return "Shop Reputation: %d/%d (every contract tier unlocked)" % [reputation, GameData.REPUTATION_MAX]
-	return "Shop Reputation: %d/%d (%d more unlocks %s)" % [reputation, GameData.REPUTATION_MAX, next_gap - reputation, next_label]
-
-
-func _create_contract_row() -> ContractRow:
+func _create_contract_row(contract: Contract) -> ContractRow:
 	var row := ContractRow.new()
+	row.contract_id = contract.contract_id
+	row.box = UiKit.card()
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 3)
+	row.box.add_child(body)
 
-	row.box = PanelContainer.new()
-	row.box.add_theme_stylebox_override("panel", _row_box_style())
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 4)
+	body.add_child(head)
+	row.icon = UiKit.icon(_offer_icon(contract))
+	head.add_child(row.icon)
+	var names := VBoxContainer.new()
+	names.add_theme_constant_override("separation", 0)
+	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(names)
+	row.customer = UiKit.label(contract.customer_name)
+	row.customer.clip_text = true
+	names.add_child(row.customer)
+	row.tier_label = UiKit.label(contract.tier_label, UiKit.FONT_SMALL, "text_dim")
+	row.tier_label.clip_text = true
+	names.add_child(row.tier_label)
+	row.tier_pill = UiKit.pill(_tier_pill_text(contract), "info")
+	row.tier_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(row.tier_pill)
+	row.status_pill = UiKit.pill("On track", "good")
+	row.status_pill.custom_minimum_size = Vector2(46, 0)
+	row.status_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(row.status_pill)
+	var clock := UiKit.icon("st_clock")
+	head.add_child(clock)
+	row.time = UiKit.label("")
+	row.time.custom_minimum_size = Vector2(42, 0)
+	row.time.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(row.time)
 
-	# Stacked lines, not four fixed-width columns: the columns needed ~434px
-	# and overflowed once menus moved into the ~384px-wide panel slot beside
-	# the Hud rail (design doc Section 27.2). Each line is one expand-fill
-	# label plus one short no-wrap readout (CLAUDE.md UI rule 1), so the row
-	# fits any panel width. The bar is the first piece of 27.2's richer
-	# progression display.
-	row.container = VBoxContainer.new()
-	row.container.add_theme_constant_override("separation", 2)
-	row.box.add_child(row.container)
-
-	var top_line := HBoxContainer.new()
-	row.container.add_child(top_line)
-	row.customer_label = Label.new()
-	row.customer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	row.customer_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_line.add_child(row.customer_label)
-	row.time_label = Label.new()
-	top_line.add_child(row.time_label)
-
-	row.progress_bar = ProgressBar.new()
-	row.progress_bar.show_percentage = false
-	row.progress_bar.custom_minimum_size = Vector2(0.0, 8.0)
-	# The Theme has no ProgressBar style, and Godot's pale default fill is
-	# near-invisible at 8px. Gold-on-dark under both themes, like the other
-	# hardcoded gold accents.
-	row.progress_bar.add_theme_stylebox_override("background", _bar_style(Color(0.12, 0.11, 0.10)))
-	row.progress_bar.add_theme_stylebox_override("fill", _bar_style(Color(0.92, 0.70, 0.20)))
-	row.container.add_child(row.progress_bar)
-
-	var bottom_line := HBoxContainer.new()
-	row.container.add_child(bottom_line)
-	row.progress_label = Label.new()
-	row.progress_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var progress := HBoxContainer.new()
+	progress.add_theme_constant_override("separation", 4)
+	body.add_child(progress)
+	row.progress_label = UiKit.label("", UiKit.FONT_SMALL)
 	row.progress_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom_line.add_child(row.progress_label)
-	row.relationship_label = Label.new()
-	bottom_line.add_child(row.relationship_label)
+	row.progress_label.clip_text = true
+	progress.add_child(row.progress_label)
+	row.relationship = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	progress.add_child(row.relationship)
+	row.progress_bar = UiKit.bar("good", 6)
+	body.add_child(row.progress_bar)
 
-	# Design doc 28.2: each contract is owned by an Engineer, who diagnoses
-	# its defects. Tapping cycles through the hired Engineers (and "none").
-	row.engineer_button = Button.new()
+	var engineer_line := HBoxContainer.new()
+	engineer_line.add_theme_constant_override("separation", 4)
+	body.add_child(engineer_line)
+	engineer_line.add_child(UiKit.icon("role_engineer"))
+	var engineer_caption := UiKit.label("Engineer:", UiKit.FONT_SMALL, "text_dim")
+	engineer_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	engineer_line.add_child(engineer_caption)
+	row.engineer_button = UiKit.button("")
+	row.engineer_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.engineer_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	row.engineer_button.tooltip_text = UiText.tip("The Engineer who diagnoses this contract's defects. Tap to change.")
+	row.engineer_button.tooltip_text = UiText.tip("The Engineer who diagnoses this contract's defects and runs its trials. Tap to change.")
 	row.engineer_button.pressed.connect(_on_engineer_pressed.bind(row))
-	row.container.add_child(row.engineer_button)
+	engineer_line.add_child(row.engineer_button)
 
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	body.add_child(header)
+	for spec in [["Part type", 0, true], ["Shipped", 44, false], ["Familiarity", 70, false], ["Alloy", 60, false]]:
+		var l := UiKit.label(spec[0], UiKit.FONT_SMALL, "text_dim")
+		if spec[2]:
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		else:
+			l.custom_minimum_size = Vector2(spec[1], 0)
+		header.add_child(l)
+
+	for i in contract.line_items.size():
+		var li: Contract.LineItem = contract.line_items[i]
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 4)
+		body.add_child(line)
+		line.add_child(UiKit.icon(UiKit.part_icon(li.geometry_name)))
+		var name := UiKit.label(li.geometry_name)
+		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name.clip_text = true
+		line.add_child(name)
+		var shipped := UiKit.label("")
+		shipped.custom_minimum_size = Vector2(44, 0)
+		line.add_child(shipped)
+		var percent := UiKit.label("", UiKit.FONT_SMALL)
+		percent.custom_minimum_size = Vector2(26, 0)
+		line.add_child(percent)
+		var meter := UiKit.meter(0.0, "gold", 8)
+		line.add_child(meter)
+		var alloy := UiKit.label(li.alloy_name, UiKit.FONT_SMALL, "text_dim")
+		alloy.custom_minimum_size = Vector2(60, 0)
+		alloy.clip_text = true
+		line.add_child(alloy)
+		# Button widths change with price/count - HFlowContainer (UI rule 2).
+		var actions := HFlowContainer.new()
+		actions.add_theme_constant_override("h_separation", 3)
+		actions.alignment = FlowContainer.ALIGNMENT_END
+		body.add_child(actions)
+		var trial := UiKit.button("", "act_queue")
+		trial.pressed.connect(_on_queue_pressed.bind(row, i, true))
+		actions.add_child(trial)
+		var production := UiKit.button("", "act_lock", "primary")
+		production.pressed.connect(_on_queue_pressed.bind(row, i, false))
+		actions.add_child(production)
+		row.items.append({"shipped": shipped, "percent": percent, "meter": meter, "trial": trial, "production": production})
 	return row
 
 
-## Per-line-item queue controls (design doc 28.7): production no longer
-## starts by itself - the player queues trial parts (poured in revert, never
-## shipped) or production parts (virgin metal, unlocked at 85% familiarity)
-## and pays per part. Built once per row, the first time its contract is
-## seen, since a contract's line items never change.
-func _build_item_widgets(row: ContractRow, contract: Contract) -> void:
-	for i in contract.line_items.size():
-		var label := Label.new()
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		row.container.add_child(label)
-		# Button text varies with price - HFlowContainer (UI rule 2).
-		var buttons := HFlowContainer.new()
-		row.container.add_child(buttons)
-		var trial := Button.new()
-		trial.pressed.connect(_on_queue_pressed.bind(row, i, true))
-		buttons.add_child(trial)
-		var production := Button.new()
-		production.pressed.connect(_on_queue_pressed.bind(row, i, false))
-		buttons.add_child(production)
-		row.item_widgets.append({"label": label, "trial_button": trial, "production_button": production})
+func _update_contract_row(row: ContractRow, contract: Contract) -> void:
+	row.time.text = _format_time(contract.time_remaining)
+	var status := _contract_status(contract)
+	UiKit.set_pill(row.status_pill, status[0], status[1])
+	var in_pipeline := GameData.count_parts_in_pipeline(contract.contract_id)
+	var fraction := float(contract.quantity_shipped) / maxf(contract.quantity_required, 1.0)
+	row.progress_label.text = "%d/%d shipped (%d%%)  -  %d in production" % [
+		contract.quantity_shipped, contract.quantity_required, roundi(fraction * 100.0), in_pipeline]
+	row.relationship.text = "%d/5 rel." % roundi(GameData.relationship_stars_for(contract.customer_name))
+	row.progress_bar.value = fraction
+	UiKit.set_bar_color(row.progress_bar, status[1])
+
+	var engineer := GameData.engineer_for_contract(contract.contract_id)
+	if engineer != null:
+		row.engineer_button.text = engineer.technician_name
+		UiKit.set_button_kind(row.engineer_button, "neutral")
+	elif GameData.engineers().is_empty():
+		row.engineer_button.text = "None - hire one in Team"
+		UiKit.set_button_kind(row.engineer_button, "neutral")
+	else:
+		row.engineer_button.text = "Assign an Engineer"
+		UiKit.set_button_kind(row.engineer_button, "warn")
+	row.engineer_button.disabled = GameData.engineers().is_empty()
+
+	for i in row.items.size():
+		var w: Dictionary = row.items[i]
+		var li: Contract.LineItem = contract.line_items[i]
+		var percent := GameData.geometry_familiarity_percent(li.geometry_name)
+		w.shipped.text = "%d/%d" % [li.quantity_shipped, li.quantity_required]
+		w.percent.text = "%d%%" % roundi(percent)
+		w.meter.value = percent / 100.0
+		w.meter.color_key = _familiarity_color(percent)
+		_update_queue_button(w.trial, contract, i, true, "Trial",
+			"Poured in revert - never shipped. Teaches the shop this part and carries your Engineer's latest fix.")
+		_update_queue_button(w.production, contract, i, false, "Production",
+			"Poured in virgin metal for the customer. Unlocks at %d%% familiarity; ships only at %d%%+ quality." % [
+				int(GameData.PRODUCTION_FAMILIARITY_PERCENT), int(GameData.SHIP_QUALITY_THRESHOLD)])
 
 
-func _update_item_widgets(row: ContractRow, contract: Contract) -> void:
-	for i in row.item_widgets.size():
-		var widgets: Dictionary = row.item_widgets[i]
-		var item: Contract.LineItem = contract.line_items[i]
-		var familiarity := GameData.geometry_familiarity_percent(item.geometry_name)
-		var queued_trial := GameData.queued_order_count(contract.contract_id, i, true)
-		var queued_production := GameData.queued_order_count(contract.contract_id, i, false)
-		widgets.label.text = "%s: %d/%d shipped, %d%% familiar%s" % [
-			item.geometry_name, item.quantity_shipped, item.quantity_required, roundi(familiarity),
-			" (queued: %d trial, %d production)" % [queued_trial, queued_production] if queued_trial + queued_production > 0 else "",
-		]
-		_update_queue_button(widgets.trial_button, contract, i, true, "Trial",
-			"Poured in revert - never shipped. Teaches the shop this geometry and carries your Engineer's latest fix.")
-		_update_queue_button(widgets.production_button, contract, i, false, "Production",
-			"Poured in virgin metal for the customer. Ships only at %d%%+ quality." % int(GameData.SHIP_QUALITY_THRESHOLD))
+## "On track" compares shipped-plus-half-of-in-production against the share
+## of the deadline used; overdue is its own state.
+func _contract_status(contract: Contract) -> Array:
+	if contract.is_overdue:
+		return ["Overdue", "bad"]
+	var done := (contract.quantity_shipped + 0.5 * GameData.count_parts_in_pipeline(contract.contract_id)) / maxf(contract.quantity_required, 1.0)
+	var time_used := 1.0 - contract.time_remaining / maxf(contract.deadline_seconds, 1.0)
+	if done + 0.1 >= time_used:
+		return ["On track", "good"]
+	return ["Behind", "warn"]
 
 
-## Shows how many this tap will actually queue at the current multiplier
-## (fewer than asked when gold, revert or the contract's need runs out) and
-## the total price.
+## Shows how many this tap will really queue at the current multiplier and
+## the total price; a locked Production button keeps its lock icon.
 func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, kind: String, about: String) -> void:
 	var virgin := is_trial and _trial_in_virgin
 	var blocker := GameData.print_order_blocker(contract, index, is_trial, virgin)
 	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted(), virgin)
 	var unit := GameData.part_cost_for(contract, is_trial, virgin)
+	var locked := not is_trial and not GameData.can_run_production(contract.line_items[index].geometry_name)
 	if count > 0:
-		button.text = "%s x%d (%dg)" % [kind, count, unit * count]
+		button.text = "%s x%d  %dg" % [kind, count, unit * count]
 	else:
-		button.text = "%s (%dg each)" % [kind, unit]
+		button.text = "%s  %dg each" % [kind, unit]
 	button.disabled = count == 0
+	if not is_trial:
+		button.icon = UiIcons.get_icon("act_lock" if locked else "act_start")
 	button.tooltip_text = UiText.tip(about if blocker == "" else "%s\n%s" % [blocker, about])
 
 
@@ -837,16 +710,6 @@ func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:
 	var contract := GameData.get_contract(row.contract_id)
 	if contract != null:
 		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted(), is_trial and _trial_in_virgin)
-	_refresh_contracts_tab.call_deferred()
-
-
-func _on_trial_metal_pressed() -> void:
-	_trial_in_virgin = not _trial_in_virgin
-	_refresh_contracts_tab.call_deferred()
-
-
-func _on_queue_amount_pressed() -> void:
-	_queue_amount_index = (_queue_amount_index + 1) % QUEUE_AMOUNTS.size()
 	_refresh_contracts_tab.call_deferred()
 
 
@@ -859,15 +722,16 @@ func _on_engineer_pressed(row: ContractRow) -> void:
 	_refresh_contracts_tab.call_deferred()
 
 
-func _bar_style(color: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = color
-	style.border_color = Color(0.05, 0.04, 0.03)
-	style.set_border_width_all(1)
-	style.anti_aliasing = false
-	return style
-
-
-func _format_time(seconds: float) -> String:
-	var total := int(seconds)
-	return "%d:%02d" % [total / 60, total % 60]
+## Next-tier-threshold text mirrors GameData.REPUTATION_TIER_THRESHOLD.
+func _reputation_summary_text() -> String:
+	var reputation := GameData.reputation
+	var next_label := ""
+	var next_gap := -1
+	for tier in GameData.REPUTATION_TIER_THRESHOLD.keys():
+		var threshold: int = GameData.REPUTATION_TIER_THRESHOLD[tier]
+		if threshold > reputation and (next_gap < 0 or threshold < next_gap):
+			next_gap = threshold
+			next_label = Contract.TIER_LABEL[tier]
+	if next_label == "":
+		return "Reputation %d - every tier unlocked" % reputation
+	return "Reputation %d - %d more unlocks %s" % [reputation, next_gap - reputation, next_label]

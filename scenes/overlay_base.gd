@@ -81,6 +81,7 @@ func _set_open(open: bool) -> void:
 	if rail_button != null:
 		rail_button.set_pressed_no_signal(open)
 	if open:
+		MenuLayout.reset(panel)
 		_on_open()
 		opened.emit()
 

@@ -82,6 +82,8 @@ func set_theme(choice: ThemeChoice) -> void:
 	_apply_theme()
 	_save_settings()
 	theme_changed.emit(current_theme)
+	# Menu widgets built by UiKit take explicit per-theme colors.
+	UiKit.restyle(get_tree())
 
 
 func set_cutout_side(side: CutoutSide) -> void:
