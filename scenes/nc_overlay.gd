@@ -124,19 +124,25 @@ func _build_row(part: Part) -> Dictionary:
 	actions.custom_minimum_size.x = ACTION_COLUMN_WIDTH
 	actions.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	line.add_child(actions)
-	_add_action(actions, "Scrap", "act_scrap", "danger",
-		"Scrap the part. You learn nothing from it, and an undiagnosed defect keeps raising risk.",
-		func(): GameData.scrap_nc_part(part))
+	# A casting's metal is remelted, so scrapping it gives revert back.
+	if part.is_poured:
+		_add_action(actions, "Scrap\n+1 revert", "act_scrap", "danger",
+			"Scrap the casting - it's remelted into 1 revert for future trials. You learn nothing from it, and an undiagnosed defect keeps raising risk.",
+			func(): GameData.scrap_nc_part(part))
+	else:
+		_add_action(actions, "Scrap", "act_scrap", "danger",
+			"Scrap the part. It hasn't been poured, so there's no metal to recover. You learn nothing from it, and an undiagnosed defect keeps raising risk.",
+			func(): GameData.scrap_nc_part(part))
 	if part.nc_diagnosed:
 		var rework_at := GameData.rework_station_for(part)
 		if rework_at != "":
 			var station_name: String = GameData.get_station(rework_at).display_name
 			_add_action(actions, "Rework at\n%s" % station_name, "act_rework", "warn",
-				"Back onto the line to be repaired at %s and learned from. Learning only - it won't ship." % station_name,
+				"Back onto the line to be repaired at %s and learned from. Learning only - it won't ship; once it's cast, its metal is remelted into 1 revert at the end." % station_name,
 				func(): GameData.rework_nc_part(part))
 		else:
 			_add_action(actions, "Scan to learn", "act_scan", "go",
-				"Can't be repaired. Send it to Structured Light Scan to learn from, then it's retired.",
+				"Can't be repaired. Send it to Structured Light Scan to learn from, then it's retired%s." % (" and remelted into 1 revert" if part.is_poured else ""),
 				func(): GameData.scan_nc_part(part))
 	box.tooltip_text = "Part #%d - %s\n%s from %s" % [part.part_id, GameData.geometry_name_for_part(part),
 		GameData.DEFECT_CATEGORY_LABEL[part.defect_category], origin_name]

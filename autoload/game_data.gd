@@ -1262,6 +1262,19 @@ func remelt_to_revert(part: Part) -> void:
 	unregister_part(part)
 
 
+## Every poured casting that leaves without shipping is remelted (user
+## decision, 2026-10-17): scrapping a cast part off the NC shelf, retiring a
+## learning part that went through Pour, or losing a Push Through at Pour all
+## give its metal back as 1 revert - the same rule trials and sub-90%
+## castings already follow. A part scrapped before Pour has no metal in it
+## yet, so nothing comes back. Returns whether revert was gained.
+func recover_metal(part: Part) -> bool:
+	if not part.is_poured:
+		return false
+	revert_stock += 1
+	return true
+
+
 func get_contract(id: int) -> Contract:
 	for c in contracts:
 		if c.contract_id == id:
@@ -1990,9 +2003,11 @@ func _finish_diagnosis(part: Part, engineer: Technician) -> void:
 
 
 ## Disposition: scrap. Allowed with or without a diagnosis (you just learn
-## nothing). The contract will start a replacement part on its own.
+## nothing). The contract will start a replacement part on its own. A
+## casting (flagged at Pour or later) is remelted to revert.
 func scrap_nc_part(part: Part) -> void:
 	nc_shelf.erase(part)
+	recover_metal(part)
 	unregister_part(part)
 	scrapped_part_count += 1
 	nc_shelf_changed.emit()
@@ -2031,10 +2046,12 @@ func _release_for_learning(part: Part) -> void:
 
 
 ## A learning-only part reaching the end of its usefulness (Ship, or Scan
-## for scan_to_learn): retired, never credited.
+## for scan_to_learn): retired, never credited - and remelted to revert if
+## it was ever poured.
 func retire_learning_part(part: Part, at_station_id: String) -> void:
 	if part.scan_to_learn:
 		raise_familiarity(geometry_name_for_part(part), part.learning_origin_station_id, FAMILIARITY_GAIN_LEARNING_SCAN)
+	recover_metal(part)
 	unregister_part(part)
 
 
@@ -2566,6 +2583,7 @@ func can_scrap_for_expertise(part: Part) -> bool:
 func scrap_part_for_expertise(part: Part) -> bool:
 	if not can_scrap_for_expertise(part):
 		return false
+	recover_metal(part)
 	unregister_part(part)
 	return true
 

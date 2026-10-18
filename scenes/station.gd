@@ -1574,6 +1574,8 @@ func _on_run_finished() -> void:
 	current_state = State.READY
 	if current_part != null:
 		current_part.status = Part.Status.READY_TO_ROUTE
+		if station_id == "pour":
+			current_part.is_poured = true
 		_maybe_flag_defect(current_part, _run_duration)
 		if station_id == "patching":
 			_resolve_patching(current_part)
@@ -1730,6 +1732,8 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 ## Burnout-specific logic needed.
 func _resolve_push_through(part: Part) -> void:
 	part.is_push_through = false
+	if station_id == "pour":
+		part.is_poured = true
 	GameData.raise_familiarity(
 		GameData.geometry_name_for_part(part), station_id, GameData.FAMILIARITY_GAIN_PUSH_THROUGH
 	)
@@ -1746,6 +1750,7 @@ func _resolve_push_through(part: Part) -> void:
 			shelling_ready_parts.append(part)
 			status_label.text = "Push Through succeeded on part #%d%s" % [part.part_id, _rack_suffix()]
 		else:
+			GameData.recover_metal(part)
 			GameData.unregister_part(part)
 			status_label.text = "Push Through failed - lost part #%d to %s%s" % [
 				part.part_id, GameData.DEFECT_CATEGORY_LABEL[outcome], _rack_suffix()
@@ -1764,6 +1769,8 @@ func _resolve_push_through(part: Part) -> void:
 		return
 	current_part = null
 	current_state = State.IDLE
+	# A casting lost at Pour still has its metal - remelted to revert.
+	GameData.recover_metal(part)
 	GameData.unregister_part(part)
 	status_label.text = "Push Through failed - lost part #%d to %s%s" % [
 		part.part_id, GameData.DEFECT_CATEGORY_LABEL[outcome], _rack_suffix()

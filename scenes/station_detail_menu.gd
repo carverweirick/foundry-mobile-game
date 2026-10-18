@@ -711,7 +711,8 @@ func _add_defect_fix_buttons(row: Container, part: Part) -> void:
 		# The weakest-link percentage stays on the face (21.7 wants it in front
 		# of the player here); the sentence lives in the tooltip.
 		var scrap := UiKit.button("Scrap (%d%%)" % weakest, "act_scrap", "danger")
-		scrap.tooltip_text = UiText.tip("Scrap this part - it won't meet tolerance. Weakest-link familiarity for this geometry: %d%%." % weakest)
+		scrap.tooltip_text = UiText.tip("Scrap this part - it won't meet tolerance.%s Weakest-link familiarity for this geometry: %d%%." % [
+			" The casting is remelted into 1 revert." if part.is_poured else "", weakest])
 		scrap.pressed.connect(_on_scrap_part.bind(part))
 		row.add_child(scrap)
 

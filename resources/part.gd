@@ -73,6 +73,11 @@ var is_trial: bool = false
 ## Quality %, rolled when the part is poured (GameData.roll_casting_quality());
 ## -1 until then. A production part ships only at >= GameData.SHIP_QUALITY_THRESHOLD.
 var quality: float = -1.0
+## Metal has been poured into this part - set the moment its Pour run ends,
+## before the defect roll, so a part flagged AT Pour counts even though its
+## quality was never rolled. A poured part that leaves without shipping is
+## remelted to revert (GameData.recover_metal()).
+var is_poured: bool = false
 ## An Engineer's trial fix stamped on at queue time (design doc 28.7): at the
 ## station whose defect table matches fix_station_id, this part's defect risk
 ## is multiplied by fix_risk_mult. "" = no fix.
@@ -157,6 +162,7 @@ func to_dict() -> Dictionary:
 		"learning_origin_station_id": learning_origin_station_id,
 		"is_trial": is_trial,
 		"quality": quality,
+		"is_poured": is_poured,
 		"fix_station_id": fix_station_id,
 		"fix_risk_mult": fix_risk_mult,
 	}
@@ -185,6 +191,11 @@ static func from_dict(data: Dictionary) -> Part:
 	part.learning_origin_station_id = str(data.get("learning_origin_station_id", ""))
 	part.is_trial = bool(data.get("is_trial", false))
 	part.quality = float(data.get("quality", -1.0))
+	# Saves from before is_poured existed: a rolled quality, a position past
+	# Pour, or a defect flagged at Pour all mean the metal is in it.
+	part.is_poured = bool(data.get("is_poured",
+		part.quality >= 0.0 or part.current_station_index > GameData.PIPELINE_ORDER.find("pour")
+		or part.defect_station_id == "pour"))
 	part.fix_station_id = str(data.get("fix_station_id", ""))
 	part.fix_risk_mult = float(data.get("fix_risk_mult", 1.0))
 	return part
