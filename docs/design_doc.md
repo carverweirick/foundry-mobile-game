@@ -1525,3 +1525,137 @@ for now; revisit with the balance pass, ideally before the materials system
 - **If done:** a single scale constant plus an abbreviating number
   formatter, 10x (not 100x - true idle-game escalation runs against the
   real-time-sim direction in Section 26.3), saves migrated on load.
+
+---
+
+## 29. Balance Notes from Simulated Playthroughs (2026-10-17)
+
+*Input for the balance pass (26.4 item 7). A throwaway bot played fresh
+games headless by stepping `GameData.simulate()` - four player styles, 3-4
+seeds each, 90 simulated minutes (plus two 4-hour runs): **solo** (no
+hires, every collect/route/start-cycle by hand), **tech1** (one Apprentice
+Technician, then only decisions), **team** (Technician + Engineer, two T1
+contracts, learns from defects), **grow** (team, plus spends on hires,
+bottleneck upgrades, printers, level-ups). No numbers were changed - these
+are notes, every proposal below is still the user's call.*
+
+### 29.1 What a good opening looks like today (one Technician, Local Hardware Co.)
+
+| Moment | Minutes in |
+|---|---|
+| First trial part retired at Ship | 8-9 |
+| Production unlocks (85% familiarity) | 16-24 (median 18) |
+| First production part shipped | 27-33 |
+| First contract complete (on time; deadline 120) | 31-42 |
+
+Two T1 contracts finish in 90 minutes (13 parts). Station timers sum to
+172 game-minutes (5.7 real minutes), but a part actually takes 9-18 real
+minutes print-to-ship: one technician walks the whole 14-station floor
+(35-50% of their time walking, 25-37% handling, the rest parked) and
+Clean/UV Cure/Burnout each wait up to 30s to fill a load. Production
+quality lands 85-100 (mean ~93), so 8-25% of production castings remelt.
+
+### 29.2 Hard blockers found
+
+1. **A solo player can never run production.**
+   `geometry_familiarity_percent()` averages staff and shop familiarity,
+   and with nobody hired the staff half is 0 - so it caps at 50% and the
+   85% gate never opens. The solo bot ran 21-24 trials in 90 minutes and
+   shipped nothing, at ~13 taps a minute. Nothing in-game says hiring is
+   the way out (the blocker text is "Needs 85% familiarity").
+2. **~9% of new games have no affordable Technician to hire.** The
+   opening pool is 4 random applicants (50/50 role, Masters at 900g);
+   P(no Technician at all) is 6%, P(none at or under 450g) about 9%. The
+   pool only refills slots a hire empties, and a reroll costs 3 gems (you
+   start with 0). Seen in 2 of the 6 natural-pool seeds.
+3. **Gold soft-lock.** Parts are paid for when queued, and the 20%
+   up-front contract payment doesn't even cover that contract's own
+   production parts (Local Hardware: 10g up front vs 5 x 5g of production).
+   A player who spends the starting 500g - one Senior hire plus an upgrade
+   - reaches production with ~0g, can't queue, can't ship, can't earn.
+   Hit in 2 of 9 "grow" runs; the 28.9 fix only covers a player who
+   hasn't spent the up-front money.
+4. **Up-front exploit.** Accepting all six starting offers at minute 0
+   pays 754g up front (500 -> 1254 gold, verified). Every deadline then
+   lapses at no cost: Reputation is already 0 and clamps there, and
+   nothing claws the up-front payment back. T3/T4 offers (Summit,
+   Meridian) are acceptable at Reputation 0.
+
+### 29.3 Pacing and economy
+
+- **Contracts barely pay.** Local Hardware pays 60g in total (50 + the
+  early bonus) against ~40g of parts: about +20g for ~35 minutes of play.
+  Over 90 minutes a one-technician shop takes in 170-310g. Meanwhile the
+  first real purchases cost 100g (tier), 150g (Technician), 250g
+  (printer), 400g (level up) - the first upgrade costs about five T1
+  contracts, roughly three hours. With payouts at 4x (tested), gold kept
+  flowing and the grow bot could buy something every ~15 minutes.
+- **Most upgrades do nothing.** Tier is cosmetic except on printers,
+  Shelling, Abrasive Blast and the batch stations; the Factory screen
+  points at the busiest station, and the bot's first "bottleneck fix"
+  (Printing Tier 2) changed nothing.
+- **Factory Level 2 is far away**: 150 EXP is 15 T1 contracts (10 EXP
+  each) - 7-10 hours at the observed rate - before the 400g price.
+- Reputation pacing is fine: two on-time T1s (+8 each) unlock Tier 2
+  (15) in about an hour.
+
+### 29.4 The heart of the game barely fires
+
+- **Defects vanish after the first part.** `Technician.geometry_familiarity`
+  is one counter per geometry, +1 on every run at any of ~7 mapped
+  stations, so a technician hits 5 stars on a geometry after a single
+  part. Staffed defect rates fall to 1-7%; the NC shelf sees 2-6 parts in
+  90 minutes and the Engineer is idle 96-99% of the time.
+- **Unstaffed, they never improve.** Worker-mapped stations fall back to
+  the staff average, which is 0 with nobody hired: Shelling stayed at
+  ~22% and Pour ~19% for the whole solo game.
+- **Decision density swings between extremes.** Staffed: 28-60 player
+  decisions in 90 minutes, 88-98% of the session in stretches of over a
+  minute with nothing to decide, longest 10-14 minutes. Solo: ~13 taps a
+  minute with no breaks.
+
+### 29.5 Variables worth changing first (proposals, not applied)
+
+| Change | Where | Fixes |
+|---|---|---|
+| Guarantee an Apprentice Technician in the opening applicant pool (or start with one, framed as the founder's assistant) | `GameData._refill_applicant_pool()` / `_init()` | 29.2 #2 |
+| Familiarity % uses shop familiarity alone when nobody is hired | `geometry_familiarity_percent()` | 29.2 #1 |
+| Up-front share >= production cost share (e.g. `CONTRACT_UPFRONT_SHARE` 0.5), or charge parts on credit / out of the per-part payment | `CONTRACT_UPFRONT_SHARE`, `PRODUCTION_COST_SHARE` | 29.2 #3 |
+| Offers above the Reputation-unlocked tier can't be accepted (the starting six include T2-T4); claw the up-front back on a missed deadline | `accept_contract_offer()`, Contracts Offers tab | 29.2 #4 |
+| Contract payouts ~4x (`CONTRACT_PAYOUT_PER_UNIT`, starting six), or prices ~1/4 - ties into 28.11's tabled 10x currency scale | economy tables | 29.3 |
+| Level 2 at ~50 EXP | `FACTORY_LEVEL_EXP_THRESHOLD` | 29.3 |
+| Every tier does something (e.g. -10% cycle time per tier) | `Station._effective_timer_duration()` | 29.3 |
+| Per-worker familiarity grows per finished part, or per department, so defects last a contract or two | `Station._gain_worker_experience()` | 29.4 |
+
+---
+
+## 30. Art and UI Detail Pass (2026-10-17)
+
+*User request: "changing the art to more like 128x128... a little bit more
+detail in the sprites... same goes for the icons, for buttons, for the
+text", and "when you're hovering over a button the text isn't very
+readable." Supersedes Section 16's "16x16 to 32x32 tile density" for
+stations, icons and text.*
+
+The reasoning is device pixels: the iPhone draws the 480x270 logical view
+at ~4.5 device pixels per logical pixel. A station draws in an 80px box,
+so a 48px sprite put ~7.5 device pixels on each texel at 1x zoom (128px:
+~2.8); a 16px icon at 16 logical px ~4.5 (32px: ~2.2). Every change below
+keeps the logical sizes, so no layout moved.
+
+- **Stations: "Pixel HD" 128x128** set, now the default (Settings >
+  Station art keeps 8-bit and Painted). Derived from the user's AI set by
+  `tools/gen_station_pixel_hd.py`.
+- **Icons: 32x32**, all 48 redrawn by `tools/gen_ui_icons.py`, shown in
+  the same 16px slots.
+- **Buttons: pixel bevels** like the mockups (outline, lit top edge,
+  darker lip) at half-pixel detail. Hover no longer recolors the button -
+  the old gold hover slab left the rail labels at ~1.5:1 contrast - it
+  lights a rim instead; text color never changes on hover. Tooltips got a
+  real opaque style.
+- **Text: "HD" font** (VT323, re-em'd to m5x7's exact widths), now the
+  default; Settings > Text switches back to Classic m5x7.
+
+All of it was checked in real renders at the 16 Pro's native resolution
+(offscreen, no window), not just headless - but has not been seen on the
+device yet.
