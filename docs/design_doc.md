@@ -1673,3 +1673,158 @@ keeps the logical sizes, so no layout moved.
 All of it was checked in real renders at the 16 Pro's native resolution
 (offscreen, no window), not just headless - but has not been seen on the
 device yet.
+
+---
+
+## 31. Economy Rebalance Options (2026-10-18) - PROPOSAL, awaiting a pick
+
+User: "the contracts only giving 60g and a part costing 4 gold for a trial
+when you need to do like 50 trials to get familiar just doesnt add up...
+consider every variable." Nothing here is applied yet. Numbers marked *model*
+come from a back-of-envelope model fed by the 2026-10-17 simulated
+playthroughs (one Technician ships ~22 parts/hour when the line is kept fed;
+a part spends ~10 minutes in the line).
+
+### 31.1 What is actually wrong
+
+1. **Income is ~10x too low for the prices.** Purchase prices (50-400g early)
+   are sized for roughly 6-10g a minute of income; a Tier 1 contract nets
+   ~24g in ~36 minutes - **0.7g/min** *model*. At that rate an Apprentice is
+   75 minutes of play, a Tier 2 station upgrade 2.5 hours, a second printer
+   6 hours, Factory Level 2 nine hours (15 Tier 1 contracts for 150 EXP).
+2. **Bigger is always better, and it's available on day one.** Line time is
+   the same for every part, part cost is a flat share of the tier's unit
+   price, and trials/latency amortize over quantity - so per minute a Tier 4
+   contract earns ~7x a Tier 1 (4.8 vs 0.7 g/min) *model*. The six starting
+   offers include Tier 2-4 at Reputation 0, and accepting pays 20% up front.
+   **The user's own save is this exact trap:** every offer accepted
+   (Meridian's 120 Turbine Blades among them), ~5 hours on the game clock,
+   11 blades shipped, gold 1, Factory EXP 0 - no contract finished, so no
+   progress at all, since EXP only comes on completion.
+3. **Learning costs time and defects, not gold - and the gate is unfair.**
+   A trial's gold price (2-4g) is irrelevant; what hurts is that each one is
+   ~10 minutes of line time and many fail. `geometry_familiarity_percent()`
+   averages *every* hired worker, so staff who haven't handled a geometry
+   drag it down: in the user's save both technicians have only ever handled
+   Turbine Blades, so every other geometry's staff half sits at ~2 stars
+   and trials alone top out at **~70%** until each technician personally
+   runs one of those parts (solo is capped at 50% for good). The more you
+   hire, the worse it gets. Early trials also hit the defect spiral:
+   Burnout at 0 stars is 15%, times up to 3x while parts sit undiagnosed
+   (the multiplier is per station across every geometry) - the user's save
+   shows Burnout flagging 37 of 133 parts (28%).
+4. **The production gate and the quality bar disagree.** Production unlocks
+   at 85% familiarity, but quality = 55 + 40 x familiarity +/- 6, so at 85%
+   a casting averages 89 and **~58% are remelted** for missing the 90 bar
+   (42% at 90% familiarity). Starting production at unlock quietly throws
+   away half the parts.
+5. **Purchases don't raise income.** One Technician's line is bound by the
+   technician (~100s of walking and handling per part), not the machines,
+   so station tiers - mostly cosmetic anyway - change nothing measurable.
+   Hiring is the only real income lever early, and wages (5-75g, paid only
+   at a Factory level-up) never push back.
+6. **Progress is lumpy.** EXP only on contract completion, gems only per
+   Factory level, so a long contract is hours of zero progress.
+
+### 31.2 Targets the options are built to hit (proposed - adjust freely)
+
+- First real purchase within ~10 minutes; a purchase every 5-10 minutes
+  early, every 20-40 minutes mid-game.
+- A Tier 1 contract fits one sitting (~20-30 min) and pays for one
+  meaningful upgrade.
+- A new geometry takes ~3 retired trials (~10 minutes) to reach production,
+  and production castings then pass quality almost always.
+- Factory Level 2 at ~1 hour, 3 at ~3 hours, 4 at ~8, 5 at ~20.
+- Each higher contract tier earns ~1.5-2x per minute - and is gated by
+  Reputation so it's earned, not grabbed.
+- Every purchase shows what it buys you ("+N parts/hour", "pays back in ~M
+  minutes").
+
+### 31.3 The options
+
+**Option A - Re-anchor the numbers (tables only; fastest, lowest risk).**
+Price everything in *minutes of income at the level it's meant for*:
+`price = target_minutes x income_rate(level)`, with income rate roughly
+doubling per Factory level. Concretely: unit prices T1-T4 9/14/16/20 ->
+**40/55/70/90**; production part cost 50% -> ~30% of unit price
+(12/17/22/28); trials ~half of production (6/8/10/13 - the metal is
+revert); early bonus 20% -> 15%; EXP per shipped production part (T1 4 ...
+T4 8) with Level 2 at 40; hire/upgrade/printer/level prices nudged up
+~20-50% (they were already sized for this income). Result *model*: T1 nets
+~170g in ~33 min (**5.1 g/min, 7x today**); a second Apprentice is ~12
+minutes of play and pays itself back in ~30 (10 at Tier 2); Level 2 at ~1
+hour. Station speeds unchanged. Doesn't by itself fix 31.1 #2-#4 - needs
+the cross-cutting fixes below.
+
+**Option B - Contracts sized to your shop (the market reads your
+capacity).** Keep A's fixed unit prices per tier, but generate each offer's
+*quantity* from your measured throughput (`station_stats` parts/hour):
+`quantity = target_minutes(tier) x parts_per_minute`, clamped, with the
+deadline at ~2x that. A Tier 1 is always ~20 minutes whether you run one
+technician or five, so contracts never balloon into 6-hour grinds - but
+income still grows with every hire and upgrade, because more parts per
+minute at a fixed unit price is more gold per minute. Add **Rush /
+Standard / Relaxed** variants per offer (pay x1.4 / 1 / 0.85, deadline
+x0.6 / 1 / 1.6) for a real risk choice. Optional: part *size class* scales
+station minutes (small brackets ~0.6x, turbine blades ~1.6x) so small jobs
+finish fast and big ones suit idle/offline play.
+
+**Option C - Real materials, cost-plus pricing (builds 28.10).**
+`unit material = size_units x (resin + ceramic + alloy price)`, alloys
+priced by real-world ratio (mild steel 1, cast iron 1, stainless 2, bronze
+2.5, alloy steel 3, nickel superalloy ~12); `unit price = material x
+markup(tier) + labor(tier)`. Trials pour revert, so they cost resin + shell
+only: learning is cheap in gold, expensive in time - which is the honest
+version of today. Geometry and alloy finally matter (learning Turbine Blades
+in nickel is a real investment; brackets in mild steel aren't), and size
+class drives both material and station time. Ordering, delivery times and
+making materials in-house become the mid/late-game money sinks. Biggest
+build; most depth; A's numbers become what this formula outputs.
+
+**Option D - Operating costs (a live P&L).** Wages per game hour while
+hired (Apprentice ~0.5 g/min ... Master ~5), power per machine-minute
+(furnace and pour expensive), rent from Factory Level 3; contracts pay ~2x
+Option A to cover it. Idle staff and idle machines now cost money, so
+utilization, routing strategy and the Factory tab's busy % become profit.
+Hiring becomes a real trade-off instead of a one-off fee. Risks: debt
+spirals (needs an always-available small "job shop" order and a floor),
+offline catch-up draining the player (costs would pause or shrink offline),
+and it's punishing for a casual mobile player. Best as a later layer, not
+the first fix.
+
+### 31.4 Cross-cutting fixes (needed under any option)
+
+1. **Familiarity gate that never punishes hiring:** shop familiarity
+   (trials, learning, diagnosis) plus the *best* crew member per department
+   instead of the average of everyone; works solo; 3 retired trials reach
+   the gate. Show "~N trials to production" on every offer and contract row.
+2. **Align quality with the gate:** e.g. quality = 64 + 36 x familiarity
+   +/- 4, so a part made at the 85% gate always passes 90 - remelts then
+   come from rushing *below* the gate (if that's ever allowed), not from
+   following the rules.
+3. **Gate offers by Reputation tier** (the starting six included) and cap
+   active contracts by Factory Level (L1: 2). Replace the 20% up-front with
+   a **material advance**: the customer pays a production part's cost when
+   you queue it, and the profit on delivery - kills both the +754g exploit
+   and the prepaid-parts soft-lock (29.2).
+4. **Damp the early defect spiral:** the undiagnosed multiplier only for
+   the same geometry, capped at 2x.
+5. **Purchases must move income:** station tiers cut handling time or
+   cycle time at that station (the line is technician-bound early), and
+   every buy button shows "+N parts/h" / "pays back in ~M min"
+   (price / change in income).
+6. **Smooth progress:** EXP per shipped part; a gem now and then for
+   on-time Tier 2+ contracts; wages that are real (per hour, or a level-up
+   payroll of ~20 minutes of that worker's output).
+
+### 31.5 Recommendation
+
+Start with **A + the 31.4 fixes**: mostly table changes plus a few small
+functions, and it directly answers the complaint (familiarity in ~3 trials,
+a Tier 1 that pays ~170g instead of ~24g, no more grabbing a flagship at
+Reputation 0). Then **B's capacity-sized quantities and Rush/Relaxed
+variants** once that feels right. **C** when the materials system is built
+(A's numbers become C's outputs, so nothing is thrown away). **D** only if
+the mid-game needs more tension. Every change should be checked the way
+Section 29 was: simulated playthroughs measuring time-to-first-purchase,
+gold per minute by tier, trials per geometry, and remelt rate.
