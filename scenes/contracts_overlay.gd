@@ -23,9 +23,15 @@ class_name ContractsOverlay
 ## card per active contract: an On track / Behind / Overdue pill, progress
 ## bar, its Engineer (tap to cycle), and per line item a familiarity meter,
 ## trials still needed, and Trial / Production queue buttons (Production
-## locked below 85%; free while the customer's material advance covers it).
+## locked below the 60% gate; free while the customer's material advance covers it).
 ##
-## Both tabs keep persistent cards updated in place on the 0.25s poll -
+## Sales tab - the transaction log (GameData.sales_log): one line per good
+## part sold and per on-time bonus, newest first, with last-hour and
+## all-time totals. A new sale is added at the top; if the player has
+## scrolled down, the scroll moves with it so the rows under their finger
+## stay put.
+##
+## Every tab keeps persistent cards updated in place on the 0.25s poll -
 ## rebuilding would make the list jump (CLAUDE.md UI rule 5).
 
 const REFRESH_INTERVAL: float = 0.25
@@ -35,6 +41,10 @@ const QUEUE_MAX_WANTED: int = 9999
 const ROW_TAP_MOVE_THRESHOLD: float = 24.0
 const TAB_OFFERS := 0
 const TAB_ACTIVE := 1
+const TAB_SALES := 2
+## Sales log columns (px).
+const SALE_COL_PAID: float = 40.0
+const SALE_COL_WHEN: float = 34.0
 
 @onready var tabs: TabContainer = $Panel/TabContainer
 @onready var contracts_list: VBoxContainer = %ContractsList
@@ -46,9 +56,11 @@ var _refresh_elapsed: float = 0.0
 func _on_ready() -> void:
 	GameData.contract_updated.connect(func(_c): _on_data_changed())
 	GameData.contract_offers_changed.connect(func(): _on_data_changed())
+	GameData.sale_recorded.connect(_on_sale_recorded)
 	_build_offers_header()
 	_build_offer_detail()
 	_build_active_header()
+	_build_sales_tab()
 
 
 func _process(delta: float) -> void:
@@ -63,6 +75,7 @@ func _process(delta: float) -> void:
 
 func _on_open() -> void:
 	_refresh_elapsed = 0.0
+	_rebuild_sales()
 	_refresh()
 
 
@@ -74,6 +87,7 @@ func _on_data_changed() -> void:
 func _refresh() -> void:
 	_refresh_offers_tab()
 	_refresh_contracts_tab()
+	_refresh_sales()
 	tabs.set_tab_title(TAB_OFFERS, "Offers (%d)" % GameData.contract_offers.size())
 	tabs.set_tab_title(TAB_ACTIVE, "Active (%d/%d)" % [GameData.get_active_contracts().size(), GameData.max_active_contracts()])
 
@@ -91,11 +105,12 @@ func _tier_pill_text(contract: Contract) -> String:
 	return "T%d" % int(contract.tier) # ContractTier is 1-based
 
 
-## Familiarity colors: green once production unlocks, gold in between, red low.
+## Familiarity colors: green once production unlocks, gold from halfway
+## there, red below.
 func _familiarity_color(percent: float) -> String:
 	if percent >= GameData.PRODUCTION_FAMILIARITY_PERCENT:
 		return "good"
-	if percent >= 40.0:
+	if percent >= GameData.PRODUCTION_FAMILIARITY_PERCENT * 0.5:
 		return "gold"
 	return "bad"
 
@@ -115,9 +130,9 @@ func _offer_risk(offer: Contract) -> Array:
 	var weakest := 100.0
 	for li in offer.line_items:
 		weakest = minf(weakest, GameData.geometry_familiarity_percent(li.geometry_name))
-	if weakest >= 80.0:
+	if weakest >= GameData.PRODUCTION_FAMILIARITY_PERCENT:
 		return ["Low", "good"]
-	if weakest >= 40.0:
+	if weakest >= GameData.PRODUCTION_FAMILIARITY_PERCENT * 0.5:
 		return ["Med", "warn"]
 	return ["High", "bad"]
 
@@ -804,3 +819,160 @@ func _reputation_summary_text() -> String:
 	if next_label == "":
 		return "Reputation %d - every tier unlocked" % reputation
 	return "Reputation %d - %d more unlocks %s" % [reputation, next_gap - reputation, next_label]
+
+
+# ---------------------------------------------------------------------------
+# Sales tab - the transaction log
+# ---------------------------------------------------------------------------
+
+var _sales_scroll: ScrollContainer
+var _sales_list: VBoxContainer
+var _sales_summary: Label
+var _sales_empty: Label
+## Row -> its log entry, for the "when" column that ages on every poll.
+var _sale_rows: Array[Dictionary] = []
+
+
+func _build_sales_tab() -> void:
+	var page := Control.new()
+	page.name = "Sales"
+	tabs.add_child(page)
+	_sales_scroll = ScrollContainer.new()
+	_sales_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_sales_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	page.add_child(_sales_scroll)
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sales_scroll.add_child(root)
+
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 4)
+	root.add_child(top)
+	top.add_child(UiKit.icon("gold"))
+	_sales_summary = UiKit.label("", UiKit.FONT_BODY)
+	_sales_summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sales_summary.clip_text = true
+	_sales_summary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top.add_child(_sales_summary)
+
+	var inset := MarginContainer.new()
+	inset.add_theme_constant_override("margin_left", 6)
+	inset.add_theme_constant_override("margin_right", 6)
+	root.add_child(inset)
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	inset.add_child(header)
+	for spec in [["Sold", 0, true], ["Paid", SALE_COL_PAID, false], ["When", SALE_COL_WHEN, false]]:
+		var l := UiKit.label(spec[0], UiKit.FONT_SMALL, "text_dim")
+		if spec[2]:
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		else:
+			l.custom_minimum_size = Vector2(spec[1], 0)
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		header.add_child(l)
+
+	_sales_empty = UiKit.label("Nothing sold yet. Every good part a customer pays for shows up here.", UiKit.FONT_BODY, "text_dim")
+	_sales_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(_sales_empty)
+	_sales_list = VBoxContainer.new()
+	_sales_list.add_theme_constant_override("separation", 2)
+	root.add_child(_sales_list)
+	tabs.set_tab_title(TAB_SALES, "Sales")
+
+
+## Full rebuild, newest first - only on open (and after a load), never while
+## the player is looking.
+func _rebuild_sales() -> void:
+	MenuLayout.clear(_sales_list)
+	_sale_rows.clear()
+	for i in range(GameData.sales_log.size() - 1, -1, -1):
+		var entry: Dictionary = GameData.sales_log[i]
+		var row := _build_sale_row(entry)
+		_sales_list.add_child(row.box)
+		_sale_rows.append(row)
+	_refresh_sales()
+
+
+func _on_sale_recorded(entry: Dictionary) -> void:
+	if not panel.visible:
+		return
+	var row := _build_sale_row(entry)
+	_sales_list.add_child(row.box)
+	_sales_list.move_child(row.box, 0)
+	_sale_rows.push_front(row)
+	while _sale_rows.size() > GameData.SALES_LOG_MAX:
+		MenuLayout.remove_and_free(_sale_rows.pop_back().box)
+	# Keep what the player is looking at in place if they've scrolled down.
+	if _sales_scroll.scroll_vertical > 0 and tabs.current_tab == TAB_SALES:
+		_keep_scroll_after_insert.call_deferred(row.box)
+	_refresh_sales()
+
+
+func _keep_scroll_after_insert(box: Control) -> void:
+	await get_tree().process_frame
+	if is_instance_valid(box):
+		_sales_scroll.scroll_vertical += int(box.size.y) + _sales_list.get_theme_constant("separation")
+
+
+func _build_sale_row(entry: Dictionary) -> Dictionary:
+	var box := UiKit.card("card_border")
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 4)
+	box.add_child(line)
+	var is_part: bool = entry.get("kind", "part") == "part"
+	var geometry: String = entry.get("geometry", "")
+	line.add_child(UiKit.icon(UiKit.part_icon(geometry) if is_part else "st_check"))
+	var names := VBoxContainer.new()
+	names.add_theme_constant_override("separation", 0)
+	names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(names)
+	var title := UiKit.label("Part #%d - %s" % [int(entry.get("part_id", 0)), geometry] if is_part else "On-time bonus")
+	title.clip_text = true
+	names.add_child(title)
+	var detail: String = str(entry.get("customer", ""))
+	if is_part:
+		var quality := float(entry.get("quality", -1.0))
+		if quality >= 0.0:
+			detail += " - %d%% quality" % roundi(quality)
+		detail += " - %s shipped" % str(entry.get("shipped", ""))
+	elif int(entry.get("gems", 0)) > 0:
+		detail += " - contract done, +%d gem%s" % [int(entry.gems), "" if int(entry.gems) == 1 else "s"]
+	else:
+		detail += " - contract done early"
+	var sub := UiKit.label(detail, UiKit.FONT_SMALL, "text_dim")
+	sub.clip_text = true
+	names.add_child(sub)
+	var paid := UiKit.label("+%dg" % int(entry.get("amount", 0)), UiKit.FONT_BODY, "good")
+	paid.custom_minimum_size = Vector2(SALE_COL_PAID, 0)
+	paid.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	paid.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(paid)
+	var when := UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	when.custom_minimum_size = Vector2(SALE_COL_WHEN, 0)
+	when.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	when.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(when)
+	return {"box": box, "when": when, "entry": entry}
+
+
+func _refresh_sales() -> void:
+	_sales_summary.text = "Last hour: %dg   All time: %dg from %d part%s" % [
+		GameData.sales_gold_since(3600.0), GameData.sales_total_gold,
+		GameData.sales_total_parts, "" if GameData.sales_total_parts == 1 else "s"]
+	_sales_empty.visible = _sale_rows.is_empty()
+	if tabs.current_tab != TAB_SALES:
+		return
+	for row in _sale_rows:
+		(row.when as Label).text = _ago(GameData.stats_elapsed - float(row.entry.get("t", 0.0)))
+
+
+## "now", "45s", "12m", "3h" - simulated time since the sale.
+static func _ago(seconds: float) -> String:
+	if seconds < 5.0:
+		return "now"
+	if seconds < 60.0:
+		return "%ds" % int(seconds)
+	if seconds < 3600.0:
+		return "%dm" % int(seconds / 60.0)
+	return "%dh" % int(seconds / 3600.0)
+

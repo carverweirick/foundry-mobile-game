@@ -1851,14 +1851,20 @@ number is still a placeholder):
 - **EXP (31.4 #6).** 4/5/6/8 per good part shipped by tier, plus 5/15/40/100
   for finishing the contract. Level thresholds 40 / 500 / 2500 / 8000.
   On-time Tier 2/3/4 contracts give 1/2/3 gems.
-- **Familiarity gate (31.4 #1).** % = 29 per shop star (trials, learning
-  parts, diagnosis) + up to 30 from the crew's best worker per department.
-  Three retired trials reach 85% with nobody hired; an experienced crew gets
-  there in two. Hiring never lowers it. Offer cards and contract rows say
-  "~N trials to production". Unstaffed stations' defect rolls use the
-  shop's familiarity too, so a solo shop's defect rates improve.
-- **Quality (31.4 #2).** 64 + 36 x familiarity +/- 4: at the 85% gate a
-  casting is at least 90.6, so following the rules never remelts a part.
+- **Familiarity gate (31.4 #1).** 100% now means mastered (every tracked
+  station at 5 shop stars): 20% per shop star (trials, learning parts,
+  diagnosis) + up to 20% from the crew's best worker per department, the
+  crew covering at most half of what the shop hasn't learned yet.
+  **Production unlocks at 60%** - three retired trials with nobody hired,
+  two with an experienced crew. Hiring never lowers it. Offer cards and
+  contract rows say "~N trials to production". Unstaffed stations' defect
+  rolls use the shop's familiarity too, so a solo shop's defect rates
+  improve. (The first pass used 29%/star with an 85% gate; it hit 100% at
+  ~3.5 stars, so NC Rework/Scan buttons read "+0% familiarity" while the
+  shop still had learning left - user report, same day. The NC buttons now
+  say "nothing new to learn" only when that's true.)
+- **Quality (31.4 #2).** 86 + 14 x familiarity +/- 4: at the 60% gate a
+  casting is at least 90.4, so following the rules never remelts a part.
 - **Offers and income (31.4 #3).** The Tier 2-4 starting offers are locked
   until Reputation reaches their tier (shown dimmed with "Rep 15", Accept
   says why). Active contracts are capped by Factory Level - **2 / 3 / 4 / 5
@@ -1905,6 +1911,10 @@ left worth buying and gold piles up (70-80k by hour 10). That's the job of
 later sinks - the upgrade tree below, materials (28.10), Option D's
 operating costs. Reputation also climbs fast with a quick shop (Tier 4 by
 ~3 hours for the bot); worth watching in real play.
+
+- **Sales log (user request, same day).** A third Contracts tab lists every
+  good part sold and every on-time bonus, newest first, with last-hour and
+  all-time totals. Saved (last 200 entries).
 
 ### 31.7 The upgrade tree hook (user idea, 2026-10-18 - NOT built)
 

@@ -1111,11 +1111,14 @@ func get_active_contracts() -> Array[Contract]:
 # production parts per contract line item (Contracts menu), paying per part,
 # and printers - staffed or not - work through print_orders front to back.
 # A trial part is poured in revert and never ships; a production part is
-# poured in virgin metal, unlocked once the geometry is >= 85% familiar, and
+# poured in virgin metal, unlocked once the geometry is >= 60% familiar, and
 # ships only at >= 90% quality. Every number here is a placeholder.
 
 const SHIP_QUALITY_THRESHOLD: float = 90.0
-const PRODUCTION_FAMILIARITY_PERCENT: float = 85.0
+## 100% familiarity means fully mastered (every tracked station at 5 stars),
+## so production unlocks well before that: three retired trials solo, two
+## with an experienced crew.
+const PRODUCTION_FAMILIARITY_PERCENT: float = 60.0
 const STARTING_REVERT_STOCK: int = 10
 ## Shares of the tier's unit price (CONTRACT_PAYOUT_PER_UNIT): a production
 ## part's material is 12/17/21/27g by tier, a revert trial 6/8/10/13g (design
@@ -1123,20 +1126,26 @@ const STARTING_REVERT_STOCK: int = 10
 const TRIAL_COST_SHARE: float = 0.14
 const PRODUCTION_COST_SHARE: float = 0.3
 ## Quality = BASE + SPAN x familiarity share, +/- SPREAD. Lined up with the
-## production gate (design doc 31.4 #2): a part made at 85% familiarity is
-## 94.6 +/- 4, so it always clears the 90 bar - remelts only come from
+## production gate (design doc 31.4 #2): a part made at 60% familiarity is
+## 94.4 +/- 4, so it always clears the 90 bar - remelts only come from
 ## rushing below the gate. (Was 55 + 40x +/- 6: ~58% remelted at the gate.)
-const QUALITY_BASE: float = 64.0
-const QUALITY_FAMILIARITY_SPAN: float = 36.0
+const QUALITY_BASE: float = 86.0
+const QUALITY_FAMILIARITY_SPAN: float = 14.0
 const QUALITY_SPREAD: float = 4.0
 ## How the familiarity % is built (design doc 31.4 #1). Shop familiarity
 ## (stars at the tracked stations, raised by trials, learning parts and
-## diagnosis) is worth this much per star - three retired trials reach the
-## 85% gate on their own, so a solo player can run production.
-const FAMILIARITY_PERCENT_PER_SHOP_STAR: float = 29.0
+## diagnosis) is worth this much per star - 5 stars is 100%, and three
+## retired trials reach the 60% gate on their own, so a solo player can run
+## production.
+const FAMILIARITY_PERCENT_PER_SHOP_STAR: float = 20.0
 ## ...plus up to this much from the crew: the BEST worker per department,
-## never the average, so hiring someone new can only help.
-const FAMILIARITY_CREW_PERCENT_MAX: float = 30.0
+## never the average, so hiring someone new can only help. The crew covers
+## at most half of what the shop hasn't learned yet, so only the shop's own
+## mastery reaches 100% - and a Rework or Scan keeps showing what it teaches
+## right up to that point (user report, 2026-10-18: the NC buttons read
+## "+0% familiarity" on parts the old curve had already called 100%).
+const FAMILIARITY_CREW_PERCENT_MAX: float = 20.0
+const FAMILIARITY_CREW_GAP_SHARE: float = 0.5
 const TRIAL_FIX_USES: int = 3
 const ENGINEER_FIX_RISK_MULT := {
 	Technician.SkillTier.APPRENTICE: 0.6,
@@ -1166,7 +1175,8 @@ signal print_orders_changed()
 
 ## 0-100, what gates production and drives quality (design doc 31.4 #1):
 ## shop familiarity (FAMILIARITY_PERCENT_PER_SHOP_STAR per star) plus the
-## crew's best (up to FAMILIARITY_CREW_PERCENT_MAX). It used to be the mean
+## crew's best (up to FAMILIARITY_CREW_PERCENT_MAX, never more than half the
+## shop's remaining gap) - 100% only once the shop has mastered it. It used to be the mean
 ## of the shop and the AVERAGE of every hired worker, which capped a solo
 ## player at 50% and let every new hire who hadn't handled this geometry
 ## drag it down - ~50 trials to production in the user's own save.
@@ -1175,7 +1185,9 @@ func geometry_familiarity_percent(geometry_name: String) -> float:
 
 
 func _familiarity_percent(shop_stars: float, crew_stars: float) -> float:
-	return clampf(shop_stars * FAMILIARITY_PERCENT_PER_SHOP_STAR + crew_stars / 5.0 * FAMILIARITY_CREW_PERCENT_MAX, 0.0, 100.0)
+	var crew_bonus := minf(crew_stars / 5.0 * FAMILIARITY_CREW_PERCENT_MAX,
+		(5.0 - shop_stars) * FAMILIARITY_PERCENT_PER_SHOP_STAR * FAMILIARITY_CREW_GAP_SHARE)
+	return clampf(shop_stars * FAMILIARITY_PERCENT_PER_SHOP_STAR + maxf(crew_bonus, 0.0), 0.0, 100.0)
 
 
 ## Mean stars at the familiarity-tracked stations (0-5).
@@ -1453,11 +1465,13 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 		var per_part := clampi(contract_per_part_amount(contract), 0, cash_total - contract.paid_so_far)
 		contract.paid_so_far += per_part
 		_pay(per_part)
+		_record_sale("part", contract, part, per_part)
 	else:
 		# Whatever's left (rounding, or a contract from an older save).
 		var remainder := maxi(cash_total - contract.paid_so_far, 0)
 		contract.paid_so_far += remainder
 		_pay(remainder)
+		_record_sale("part", contract, part, remainder)
 		# Finishing at all earns the completion EXP, on time or not - a
 		# broader condition than Reputation's on-time-only gate below.
 		_award_factory_exp(FACTORY_EXP_PER_CONTRACT_TIER.get(contract.tier, 0))
@@ -1474,8 +1488,53 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 			if gem_reward > 0:
 				gems += gem_reward
 				gems_changed.emit(gems)
+			_record_sale("bonus", contract, null, contract_early_bonus(contract), gem_reward)
 
 	contract_updated.emit(contract)
+
+
+# --- Sales log (user request 2026-10-18) ------------------------------------
+
+## Every payment for a good part shipped, plus each on-time bonus - "a
+## transaction log for when compliant parts are sold". Oldest first, the
+## newest SALES_LOG_MAX kept. Saved. Each entry: {t (stats_elapsed seconds),
+## kind "part"|"bonus", customer, tier, amount, gems, and for a part:
+## part_id, geometry, quality, shipped ("3/5" on its contract)}.
+const SALES_LOG_MAX: int = 200
+var sales_log: Array[Dictionary] = []
+## Lifetime totals - the log itself is capped. Saved.
+var sales_total_gold: int = 0
+var sales_total_parts: int = 0
+signal sale_recorded(entry: Dictionary)
+
+
+func _record_sale(kind: String, contract: Contract, part: Part, amount: int, gem_reward: int = 0) -> void:
+	var entry := {
+		"t": stats_elapsed, "kind": kind, "customer": contract.customer_name,
+		"tier": int(contract.tier), "amount": amount, "gems": gem_reward,
+	}
+	if part != null:
+		entry["part_id"] = part.part_id
+		entry["geometry"] = geometry_name_for_part(part)
+		entry["quality"] = part.quality
+		entry["shipped"] = "%d/%d" % [contract.quantity_shipped, contract.quantity_required]
+		sales_total_parts += 1
+	sales_total_gold += amount
+	sales_log.append(entry)
+	if sales_log.size() > SALES_LOG_MAX:
+		sales_log.pop_front()
+	sale_recorded.emit(entry)
+
+
+## Gold from sales logged in the last `seconds` of simulated time.
+func sales_gold_since(seconds: float) -> int:
+	var total := 0
+	for i in range(sales_log.size() - 1, -1, -1):
+		var entry: Dictionary = sales_log[i]
+		if stats_elapsed - float(entry.t) > seconds:
+			break
+		total += int(entry.amount)
+	return total
 
 
 func _adjust_reputation(delta: int) -> void:
@@ -3254,6 +3313,9 @@ func to_save_dict() -> Dictionary:
 		"pending_trial_fixes": pending_trial_fixes.keys().map(func(id): return {"contract_id": id, "fix": pending_trial_fixes[id]}),
 		"scrapped_part_count": scrapped_part_count,
 		"stats_elapsed": stats_elapsed,
+		"sales_log": sales_log,
+		"sales_total_gold": sales_total_gold,
+		"sales_total_parts": sales_total_parts,
 	}
 
 
@@ -3303,6 +3365,11 @@ func load_from_dict(data: Dictionary) -> bool:
 			"busy": float(entry.get("busy", 0.0)),
 		}
 	stats_elapsed = float(data.get("stats_elapsed", 0.0))
+	sales_log.clear()
+	for raw in data.get("sales_log", []):
+		sales_log.append(raw)
+	sales_total_gold = int(data.get("sales_total_gold", 0))
+	sales_total_parts = int(data.get("sales_total_parts", 0))
 	company_relationships = {}
 	for customer in data.get("company_relationships", {}):
 		company_relationships[str(customer)] = float(data["company_relationships"][customer])

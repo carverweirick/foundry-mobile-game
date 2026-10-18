@@ -903,8 +903,20 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   Overdue pill (`_contract_status()`: shipped + half of in-production vs
   share of deadline used), time, shipped bar, Engineer button (tap cycles),
   and per line item a familiarity meter, "~N trials to production", and
-  Trial / Production buttons (Production shows a lock icon below 85% and
+  Trial / Production buttons (Production shows a lock icon below 60% and
   reads "advanced" while the customer's metal covers it).
+- **Sales tab** (third tab of the Contracts menu; user request 2026-10-18,
+  "a transaction log for when compliant parts are sold"): `GameData.sales_log`
+  (saved, newest `SALES_LOG_MAX` = 200) gets an entry from
+  `credit_contract_shipment()` for every good part paid for and every
+  on-time bonus (`_record_sale()`, `sale_recorded` signal; `t` is
+  `stats_elapsed`), plus lifetime `sales_total_gold`/`sales_total_parts`.
+  The tab shows last-hour (`sales_gold_since()`) and all-time totals, then
+  one card per entry, newest first: part # and type, customer, quality,
+  "3/5 shipped", "+28g", and how long ago. Rebuilt only on open; a sale
+  while it's open is inserted at the top and, if the player has scrolled
+  down, the scroll is pushed by the row's height so nothing moves under
+  their finger.
 - **Multi-line-item contracts** - `Contract.line_items: Array[Contract.LineItem]`
   (each own geometry/alloy/quantity_required/quantity_shipped);
   `quantity_required`/`quantity_shipped`/`is_complete` are computed
@@ -994,7 +1006,9 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   casting's Scrap, "+N% familiarity" on Rework/Scan from
   `GameData.learning_gain_percent(part, scan)` (shop-wide stars it's sure
   to add, in `geometry_familiarity_percent()` units; staff learning not
-  counted). The intake card's source line shows the geometry's current %.
+  counted), or "nothing new to learn" once the stations it would pass are
+  mastered (the tooltip then suggests scrapping). The intake card's source
+  line shows the geometry's current %.
 - **The pickup side is a routing destination, not a Station.**
   `GameData.NC_PICKUP_ID` ("nc_shelf") is used as a technician's
   `current_station_id`/`travel_target_station_id`; `Technician.tick()`
@@ -1142,15 +1156,20 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   from a Senior/Master Engineer) at every familiarity-tracked station and
   for the contract's Engineer.
 - **Production parts** are poured in virgin metal and unlock once
-  `geometry_familiarity_percent()` >= 85 (design doc 31.4 #1): 29% per
-  shop star (mean over the tracked stations - trials, learning parts and
-  diagnosis raise it) plus up to 30% from `crew_best_familiarity_stars()`
+  `geometry_familiarity_percent()` >= 60 (design doc 31.4 #1). **100%
+  means mastered** - every tracked station at 5 shop stars: 20% per shop
+  star (mean over the tracked stations - trials, learning parts and
+  diagnosis raise it) plus up to 20% from `crew_best_familiarity_stars()`
   (the best hired worker per department, averaged over departments - hiring
-  never lowers it). Three retired trials reach the gate solo, two with an
-  experienced crew; `trials_to_production()` estimates the rest.
+  never lowers it), but the crew never covers more than half the shop's
+  remaining gap, so only the shop's own learning reaches 100%. Three
+  retired trials reach the gate solo, two with an experienced crew;
+  `trials_to_production()` estimates the rest. (A first pass used 29%/star
+  with an 85% gate, which hit 100% at ~3.5 stars, so Rework/Scan on the NC
+  shelf read "+0%" while real learning was still left.)
 - **Quality %** (`Part.quality`, -1 until poured) is rolled at Pour (also on
-  a pushed-through Pour) by `roll_casting_quality()`: 64 + 36 x familiarity
-  share, +/-4 - so a part made at the 85% gate is always >= 90.6. At Ship a
+  a pushed-through Pour) by `roll_casting_quality()`: 86 + 14 x familiarity
+  share, +/-4 - so a part made at the 60% gate is always >= 90.4. At Ship a
   production part under `SHIP_QUALITY_THRESHOLD` (90)
   is remelted to revert (`remelt_to_revert()`), never credited; -1 (poured
   before this existed) ships as before.

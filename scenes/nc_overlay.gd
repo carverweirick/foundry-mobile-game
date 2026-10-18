@@ -171,15 +171,18 @@ func _build_row(part: Part) -> Dictionary:
 		if rework_at != "":
 			var station_name: String = GameData.get_station(rework_at).display_name
 			var gain := GameData.learning_gain_percent(part, false)
-			_add_action(actions, "Rework at %s\n+%s familiarity" % [station_name, _percent(gain)], "act_rework", "warn",
-				"Back onto the line to be repaired at %s and learned from: +%s familiarity with %s, one star at each tracked station it passes (whoever runs it learns too). It goes to the shelf's pickup side for a technician to carry. Learning only - it won't ship; once it's cast, its metal is remelted into 1 revert at the end." % [station_name, _percent(gain), GameData.geometry_name_for_part(part)],
+			var geometry := GameData.geometry_name_for_part(part)
+			_add_action(actions, "Rework at %s\n%s" % [station_name, _gain_text(gain)], "act_rework", "warn",
+				("Back onto the line to be repaired at %s and learned from: +%s familiarity with %s, one star at each tracked station it passes (whoever runs it learns too). " % [station_name, _percent(gain), geometry]
+					if gain > 0.0 else "%s is already mastered at every station this part would pass, so it can't teach the shop anything - scrapping it is usually better. Whoever runs it still learns. " % geometry)
+				+ "It goes to the shelf's pickup side for a technician to carry. Learning only - it won't ship; once it's cast, its metal is remelted into 1 revert at the end.",
 				func(): GameData.rework_nc_part(part))
 		else:
 			var gain := GameData.learning_gain_percent(part, true)
-			_add_action(actions, "Scan to learn\n+%s familiarity" % _percent(gain), "act_scan", "go",
+			_add_action(actions, "%s\n%s" % ["Scan to learn" if gain > 0.0 else "Scan", _gain_text(gain)], "act_scan", "go",
 				"Can't be repaired. Send it to Structured Light Scan to learn from: +%s familiarity with %s%s. It goes to the shelf's pickup side for a technician to carry, then it's retired%s." % [
 					_percent(gain), GameData.geometry_name_for_part(part),
-					"" if gain > 0.0 else " (%s is already fully familiar where this defect came from)" % GameData.geometry_name_for_part(part),
+					"" if gain > 0.0 else " (%s is already mastered where this defect came from - scrapping it is usually better)" % GameData.geometry_name_for_part(part),
 					" and remelted into 1 revert" if part.is_poured else ""],
 				func(): GameData.scan_nc_part(part))
 	box.tooltip_text = "Part #%d - %s\n%s from %s" % [part.part_id, GameData.geometry_name_for_part(part),
@@ -187,8 +190,15 @@ func _build_row(part: Part) -> Dictionary:
 	return row
 
 
-## "+10%" / "+2.5%" - familiarity moves in 2.5% steps (one star at one of
-## the four tracked stations).
+## A learning button's second line: what it teaches, or that it can't.
+static func _gain_text(gain: float) -> String:
+	if gain <= 0.0:
+		return "nothing new to learn"
+	return "+%s familiarity" % _percent(gain)
+
+
+## "+20%" / "+5%" - one star at one of the four tracked stations is 5%
+## (a little less once the crew's head start is shrinking).
 static func _percent(value: float) -> String:
 	if is_equal_approx(value, roundf(value)):
 		return "%d%%" % roundi(value)
