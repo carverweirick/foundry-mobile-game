@@ -18,9 +18,9 @@ class_name ContractsOverlay
 ## (GameData.offer_blocker()). Each card says roughly how many trials stand
 ## between it and production (GameData.trials_to_production()).
 ##
-## Active tab - reputation and revert metal, the Queue amount (x1/x5/x10/MAX,
-## AdVenture Capitalist style) and Trial metal (Revert/Virgin) toggles, then a
-## card per active contract: an On track / Behind / Overdue pill, progress
+## Active tab - the Queue amount (x1/x5/x10/MAX, AdVenture Capitalist style)
+## and Trial metal (Revert/Virgin) toggles pinned above the list, then,
+## scrolling, reputation and revert metal and a card per active contract: an On track / Behind / Overdue pill, progress
 ## bar, its Engineer (tap to cycle), and per line item a familiarity meter,
 ## trials still needed, and Trial / Production queue buttons (Production
 ## locked below the 60% gate; free while the customer's material advance covers it).
@@ -48,6 +48,8 @@ const SALE_COL_WHEN: float = 34.0
 
 @onready var tabs: TabContainer = $Panel/TabContainer
 @onready var contracts_list: VBoxContainer = %ContractsList
+## Above the Active tab's scroll list, so it never scrolls away.
+@onready var active_header: VBoxContainer = %ActiveHeader
 @onready var offers_root: VBoxContainer = %OffersRoot
 
 var _refresh_elapsed: float = 0.0
@@ -525,10 +527,12 @@ func _build_active_header() -> void:
 	top.add_child(_revert_label)
 
 	# Segmented toggles - one fixed row (~290px at 12px text, inside the
-	# ~356px list on every supported screen), so it never re-wraps.
+	# ~356px list on every supported screen), so it never re-wraps. Pinned
+	# above the scroll list (user request 2026-10-18: "the quantity I want
+	# to buy should always remain visible when im scrolling").
 	var toggles := HBoxContainer.new()
 	toggles.add_theme_constant_override("separation", 2)
-	contracts_list.add_child(toggles)
+	active_header.add_child(toggles)
 	var queue_caption := UiKit.label("Queue:", UiKit.FONT_SMALL, "text_dim")
 	queue_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	toggles.add_child(queue_caption)

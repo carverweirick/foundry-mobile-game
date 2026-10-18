@@ -902,9 +902,11 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   with the blocker in red underneath). Acceptable offers list first, locked
   ones after, dimmed, with "Rep N" in place of the risk pill. Each card's
   second line is "~N trials to production" (`GameData.trials_to_production()`,
-  summed over distinct geometries). **Active tab** (title "Active (n/cap)"): reputation and revert stock,
-  segmented Queue x1/x5/x10/MAX and Trial metal Revert/Virgin toggles (one
-  fixed HBox row), then a card per contract: tier pill, On track / Behind /
+  summed over distinct geometries). **Active tab** (title "Active (n/cap)"):
+  the segmented Queue x1/x5/x10/MAX and Trial metal Revert/Virgin toggles
+  (one fixed HBox row) are pinned in `%ActiveHeader` above `ContractsScroll`
+  so they never scroll away (user request 2026-10-18); inside the scroll,
+  reputation and revert stock, then a card per contract: tier pill, On track / Behind /
   Overdue pill (`_contract_status()`: shipped + half of in-production vs
   share of deadline used), time, shipped bar, Engineer button (tap cycles),
   and per line item a familiarity meter, "~N trials to production", and
