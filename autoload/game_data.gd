@@ -344,9 +344,9 @@ var currency: int = 500
 ## will be an additional type of currency like the diamond that are harder
 ## to get and will be used to finish upgrades, fill in for normal currency
 ## if you dont have enough for a purchase") - a real first-pass build, not
-## just a documented idea. Earned far more sparingly than currency: the only
-## source right now is a small reward on every Factory Level gain (see
-## _award_factory_exp()) - a genuine milestone, not routine contract income.
+## just a documented idea. Earned far more sparingly than currency: a reward
+## on every Factory Level gain (level_up_factory()) and a gem or few for
+## finishing a Tier 2+ contract on time (ON_TIME_GEM_REWARD).
 var gems: int = 0
 
 ## First-pass placeholder exchange rate for "filling in" a currency
@@ -358,6 +358,13 @@ const GEM_TO_CURRENCY_VALUE: int = 50
 
 ## First-pass placeholder reward per Factory Level gained.
 const FACTORY_LEVEL_UP_GEM_REWARD: int = 5
+## Gems for finishing a contract on time, by tier (design doc 31.4 #6 - "a
+## gem now and then"). Tier 1 gives none.
+const ON_TIME_GEM_REWARD := {
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 1,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 2,
+	Contract.ContractTier.FLAGSHIP: 3,
+}
 
 var stations: Array[StationDef] = []
 var contracts: Array[Contract] = []
@@ -533,11 +540,51 @@ func _refill_applicant_pool() -> void:
 		applicant_pool_changed.emit()
 
 
+## A new game's pool always has an Apprentice Technician (design doc 29.2:
+## ~9% of openings had no affordable Technician at all, and the pool only
+## refills slots a hire empties). Replaces the first applicant if needed.
+func _guarantee_starter_technician() -> void:
+	for applicant in applicant_pool:
+		if applicant.role == Technician.StaffRole.TECHNICIAN and applicant.skill_tier == Technician.SkillTier.APPRENTICE:
+			return
+	var starter := generate_applicant()
+	starter.role = Technician.StaffRole.TECHNICIAN
+	starter.skill_tier = Technician.SkillTier.APPRENTICE
+	starter.department_skill.clear()
+	starter.roll_department_skills()
+	if applicant_pool.is_empty():
+		applicant_pool.append(starter)
+	else:
+		applicant_pool[0] = starter
+	applicant_pool_changed.emit()
+
+
 func _process_applicant_pool(delta: float) -> void:
 	_applicant_pool_cooldown = max(_applicant_pool_cooldown - delta, 0.0)
 	if _applicant_pool_cooldown <= 0.0:
 		_refill_applicant_pool()
+		_ensure_technician_applicant()
 		_applicant_pool_cooldown = APPLICANT_POOL_REFRESH_COOLDOWN_SECONDS
+
+
+## The pool always offers at least one Technician: Technicians are the only
+## hire that moves more parts, and a pool of four Engineers never changed
+## on its own (it only refills slots a hire empties) - one 2026-10-18
+## playthrough ran 90 minutes on a single Technician because of it. Swaps
+## the first Engineer for a fresh Technician at the next refill tick.
+func _ensure_technician_applicant() -> void:
+	for applicant in applicant_pool:
+		if not applicant.is_engineer:
+			return
+	if applicant_pool.is_empty():
+		return
+	var replacement := generate_applicant()
+	if replacement.is_engineer:
+		replacement.role = Technician.StaffRole.TECHNICIAN
+		replacement.department_skill.clear()
+		replacement.roll_department_skills()
+	applicant_pool[0] = replacement
+	applicant_pool_changed.emit()
 
 
 ## Read-only window onto _applicant_pool_cooldown for the Staff overlay's
@@ -601,7 +648,17 @@ var station_by_id: Dictionary = {}
 ## spirit as the Technician hire costs - Section 17 only says each tier
 ## should cost roughly 1.5-2x the previous one, no concrete numbers given.
 ## Index = tier being upgraded TO; index 0-1 unused since Tier 1 is the free starting tier.
-const STATION_TIER_UPGRADE_COST: Array[int] = [0, 0, 100, 175, 300, 500]
+## Nudged up for the design doc 31 rebalance (was 100/175/300/500).
+const STATION_TIER_UPGRADE_COST: Array[int] = [0, 0, 120, 220, 400, 650]
+
+## Every tier above 1 runs that station's cycles this much faster (design
+## doc 31.4 #5: "purchases must move income" - before this, tiers were
+## cosmetic on most stations). Stacks with the station-specific tier effects
+## (printer batching, Shelling's parallel slots, batch load sizes).
+const STATION_TIER_SPEED_BONUS_PER_TIER: float = 0.15
+
+static func station_tier_speed_multiplier(tier: int) -> float:
+	return 1.0 + STATION_TIER_SPEED_BONUS_PER_TIER * (maxi(tier, 1) - 1)
 
 ## Design doc Section 21.1: rack capacity is now its own purchase, entirely
 ## separate from current_tier - see Station.rack_capacity/try_upgrade_rack().
@@ -727,6 +784,8 @@ const REPUTATION_QUALITY_BONUS_MAX: float = 0.35
 ## pool settles at roughly this size and only grows a fresh offer once an
 ## existing one gets accepted (freeing a slot) - see _process_contracts().
 const MIN_ACTIVE_CONTRACTS: int = 4
+## Never more offers than this in the pool, locked ones included.
+const MAX_CONTRACT_OFFERS: int = 8
 const CONTRACT_GENERATION_COOLDOWN_SECONDS: float = 45.0
 var _contract_generation_cooldown: float = 0.0
 
@@ -859,11 +918,14 @@ const CONTRACT_DEADLINE_GAME_MINUTES := {
 	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 8100.0,
 	Contract.ContractTier.FLAGSHIP: 16200.0,
 }
+## Economy rebalance (design doc 31, Option A): re-anchored from 9/14/16/20,
+## which paid ~0.7g a minute against prices sized for 6-10. Every price in
+## the game is meant to read as "minutes of income at the level it's for".
 const CONTRACT_PAYOUT_PER_UNIT := {
-	Contract.ContractTier.LOCAL_SHOPS: 9.0,
-	Contract.ContractTier.REGIONAL_MANUFACTURERS: 14.0,
-	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 16.0,
-	Contract.ContractTier.FLAGSHIP: 20.0,
+	Contract.ContractTier.LOCAL_SHOPS: 40.0,
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 55.0,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 70.0,
+	Contract.ContractTier.FLAGSHIP: 90.0,
 }
 ## Rolled tier weights, index 0..3 for Tier 1..4 - weighted toward lower
 ## tiers even once higher ones are Reputation-unlocked, so the offered pool
@@ -1055,11 +1117,26 @@ func get_active_contracts() -> Array[Contract]:
 const SHIP_QUALITY_THRESHOLD: float = 90.0
 const PRODUCTION_FAMILIARITY_PERCENT: float = 85.0
 const STARTING_REVERT_STOCK: int = 10
-const TRIAL_COST_SHARE: float = 0.2
-const PRODUCTION_COST_SHARE: float = 0.5
-const QUALITY_BASE: float = 55.0
-const QUALITY_FAMILIARITY_SPAN: float = 40.0
-const QUALITY_SPREAD: float = 6.0
+## Shares of the tier's unit price (CONTRACT_PAYOUT_PER_UNIT): a production
+## part's material is 12/17/21/27g by tier, a revert trial 6/8/10/13g (design
+## doc 31, Option A - was 50% and 20%).
+const TRIAL_COST_SHARE: float = 0.14
+const PRODUCTION_COST_SHARE: float = 0.3
+## Quality = BASE + SPAN x familiarity share, +/- SPREAD. Lined up with the
+## production gate (design doc 31.4 #2): a part made at 85% familiarity is
+## 94.6 +/- 4, so it always clears the 90 bar - remelts only come from
+## rushing below the gate. (Was 55 + 40x +/- 6: ~58% remelted at the gate.)
+const QUALITY_BASE: float = 64.0
+const QUALITY_FAMILIARITY_SPAN: float = 36.0
+const QUALITY_SPREAD: float = 4.0
+## How the familiarity % is built (design doc 31.4 #1). Shop familiarity
+## (stars at the tracked stations, raised by trials, learning parts and
+## diagnosis) is worth this much per star - three retired trials reach the
+## 85% gate on their own, so a solo player can run production.
+const FAMILIARITY_PERCENT_PER_SHOP_STAR: float = 29.0
+## ...plus up to this much from the crew: the BEST worker per department,
+## never the average, so hiring someone new can only help.
+const FAMILIARITY_CREW_PERCENT_MAX: float = 30.0
 const TRIAL_FIX_USES: int = 3
 const ENGINEER_FIX_RISK_MULT := {
 	Technician.SkillTier.APPRENTICE: 0.6,
@@ -1087,19 +1164,70 @@ var pending_trial_fixes: Dictionary = {}
 signal print_orders_changed()
 
 
-## 0-100: the mean of the staff's average familiarity with the geometry and
-## the shop-wide familiarity at the tracked stations, as a share of 5 stars.
+## 0-100, what gates production and drives quality (design doc 31.4 #1):
+## shop familiarity (FAMILIARITY_PERCENT_PER_SHOP_STAR per star) plus the
+## crew's best (up to FAMILIARITY_CREW_PERCENT_MAX). It used to be the mean
+## of the shop and the AVERAGE of every hired worker, which capped a solo
+## player at 50% and let every new hire who hadn't handled this geometry
+## drag it down - ~50 trials to production in the user's own save.
 func geometry_familiarity_percent(geometry_name: String) -> float:
-	var staff := 0.0
-	if not technicians.is_empty():
-		for tech in technicians:
-			staff += tech.shopwide_familiarity_for_geometry(geometry_name)
-		staff /= technicians.size()
+	return _familiarity_percent(shop_familiarity_stars(geometry_name), crew_best_familiarity_stars(geometry_name))
+
+
+func _familiarity_percent(shop_stars: float, crew_stars: float) -> float:
+	return clampf(shop_stars * FAMILIARITY_PERCENT_PER_SHOP_STAR + crew_stars / 5.0 * FAMILIARITY_CREW_PERCENT_MAX, 0.0, 100.0)
+
+
+## Mean stars at the familiarity-tracked stations (0-5).
+func shop_familiarity_stars(geometry_name: String) -> float:
 	var shop := 0.0
 	for station_id in FAMILIARITY_TRACKED_STATIONS:
 		shop += familiarity_stars_for(geometry_name, station_id)
-	shop /= FAMILIARITY_TRACKED_STATIONS.size()
-	return (staff + shop) * 0.5 / 5.0 * 100.0
+	return shop / FAMILIARITY_TRACKED_STATIONS.size()
+
+
+## The best hired worker's stars in each department, averaged over the
+## departments (0-5) - one experienced hand per department is what counts,
+## so hiring can never lower it. 0 with nobody hired.
+func crew_best_familiarity_stars(geometry_name: String) -> float:
+	if technicians.is_empty():
+		return 0.0
+	var total := 0.0
+	for department in Technician.TECHNICIAN_DEPARTMENTS:
+		var best := 0
+		for tech in technicians:
+			best = maxi(best, tech.familiarity_for_geometry(geometry_name, department))
+		total += best
+	return total / Technician.TECHNICIAN_DEPARTMENTS.size()
+
+
+## Stars one retired trial of this contract adds at every tracked station
+## (more from a Senior/Master Engineer - retire_trial_part()).
+func trial_familiarity_gain(contract: Contract) -> int:
+	var engineer := engineer_for_contract(contract.contract_id) if contract != null else null
+	return TRIAL_FAMILIARITY_GAIN.get(engineer.skill_tier, 1) if engineer != null else 1
+
+
+## Roughly how many more retired trials until production unlocks for this
+## geometry, counting only the shop stars trials add - the crew learns too
+## while it runs them, so this is the cautious figure. 0 when it's already
+## unlocked. Shown as "~N trials to production" on offers and contracts.
+func trials_to_production(geometry_name: String, contract: Contract = null) -> int:
+	if can_run_production(geometry_name):
+		return 0
+	var gain := trial_familiarity_gain(contract)
+	var crew := crew_best_familiarity_stars(geometry_name)
+	var stars: Array[int] = []
+	for station_id in FAMILIARITY_TRACKED_STATIONS:
+		stars.append(familiarity_stars_for(geometry_name, station_id))
+	for trials in range(1, 11):
+		var total := 0.0
+		for i in stars.size():
+			stars[i] = mini(stars[i] + gain, 5)
+			total += stars[i]
+		if _familiarity_percent(total / stars.size(), crew) >= PRODUCTION_FAMILIARITY_PERCENT:
+			return trials
+	return 10
 
 
 func can_run_production(geometry_name: String) -> bool:
@@ -1135,9 +1263,28 @@ func part_cost_for(contract: Contract, is_trial: bool, virgin: bool) -> int:
 	return part_cost(contract, is_trial and not virgin)
 
 
+## Production parts on this line item the customer's material advance still
+## covers (free to queue). 0 for trials' purposes and for older contracts.
+func advance_left(contract: Contract, line_item_index: int) -> int:
+	if contract.advance_per_part <= 0:
+		return 0
+	var item: Contract.LineItem = contract.line_items[line_item_index]
+	return maxi(item.quantity_required - item.advanced_count, 0)
+
+
+## What queueing `count` parts costs the player right now: production parts
+## are free while the advance covers them, then the full material price.
+func print_orders_cost(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool, count: int) -> int:
+	var paid := count
+	if not is_trial:
+		paid = maxi(count - advance_left(contract, line_item_index), 0)
+	return paid * part_cost_for(contract, is_trial, virgin)
+
+
 ## "" if this part can be queued now, otherwise the reason it can't.
 func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> String:
-	if not can_afford_with_gems(part_cost_for(contract, is_trial, virgin)):
+	var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, 1)
+	if cost > 0 and not can_afford_with_gems(cost):
 		return "Not enough gold"
 	if is_trial:
 		if not virgin and revert_stock <= 0:
@@ -1153,8 +1300,12 @@ func print_order_blocker(contract: Contract, line_item_index: int, is_trial: boo
 func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> bool:
 	if print_order_blocker(contract, line_item_index, is_trial, virgin) != "":
 		return false
-	if not try_spend_with_gems(part_cost_for(contract, is_trial, virgin)):
+	var covered := not is_trial and advance_left(contract, line_item_index) > 0
+	var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, 1)
+	if cost > 0 and not try_spend_with_gems(cost):
 		return false
+	if covered:
+		contract.line_items[line_item_index].advanced_count += 1
 	var order := {
 		"contract_id": contract.contract_id,
 		"line_item_index": line_item_index,
@@ -1190,8 +1341,10 @@ func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, w
 			limit = mini(limit, revert_stock)
 	else:
 		limit = mini(limit, production_still_needed(contract, line_item_index))
-	var cost := part_cost_for(contract, is_trial, virgin)
-	while limit > 0 and not can_afford_with_gems(cost * limit):
+	while limit > 0:
+		var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, limit)
+		if cost <= 0 or can_afford_with_gems(cost):
+			break
 		limit -= 1
 	return maxi(limit, 0)
 
@@ -1294,20 +1447,20 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 	var line_item := contract.line_item_at(part.line_item_index)
 	if line_item != null:
 		line_item.quantity_shipped += 1
+	_award_factory_exp(FACTORY_EXP_PER_PART_TIER.get(contract.tier, 0))
+	var cash_total := contract_cash_total(contract)
 	if not contract.is_complete:
-		var per_part := mini(contract_per_part_amount(contract), contract.payout - contract.paid_so_far)
+		var per_part := clampi(contract_per_part_amount(contract), 0, cash_total - contract.paid_so_far)
 		contract.paid_so_far += per_part
 		_pay(per_part)
 	else:
-		# Whatever's left of the payout (rounding, or a contract started
-		# before up-front/per-part payments existed).
-		var remainder := contract.payout - contract.paid_so_far
-		contract.paid_so_far = contract.payout
+		# Whatever's left (rounding, or a contract from an older save).
+		var remainder := maxi(cash_total - contract.paid_so_far, 0)
+		contract.paid_so_far += remainder
 		_pay(remainder)
-		# Factory Level EXP (this session): awarded for completing the
-		# contract at all, regardless of on-time status - a broader
-		# condition than Reputation's own on-time-only gate just below.
-		_award_factory_exp(contract.tier)
+		# Finishing at all earns the completion EXP, on time or not - a
+		# broader condition than Reputation's on-time-only gate below.
+		_award_factory_exp(FACTORY_EXP_PER_CONTRACT_TIER.get(contract.tier, 0))
 		# Design doc Section 8: "finishing contracts on time with a low
 		# defect rate raises your reputation." A contract that already
 		# tripped the missed-deadline penalty in _process_contracts() below
@@ -1317,6 +1470,10 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 			_pay(contract_early_bonus(contract))
 			_adjust_reputation(REPUTATION_GAIN_ON_TIME_COMPLETE)
 			_adjust_relationship(contract.customer_name, RELATIONSHIP_GAIN_ON_TIME_COMPLETE)
+			var gem_reward: int = ON_TIME_GEM_REWARD.get(contract.tier, 0)
+			if gem_reward > 0:
+				gems += gem_reward
+				gems_changed.emit(gems)
 
 	contract_updated.emit(contract)
 
@@ -1527,14 +1684,19 @@ func generate_contract() -> Contract:
 	return offer
 
 
-## Contract income (user decision, 2026-10-03 - fixes a soft-lock where a
-## contract only paid on completion, so running out of gold mid-contract left
-## no way to finish it): a share up front on accepting, the rest spread over
-## each good part as it ships, and a bonus for finishing before the
-## deadline. Finishing late still pays in full - the only penalties are the
-## Reputation hit and that company offering less next time. Placeholders.
-const CONTRACT_UPFRONT_SHARE: float = 0.2
-const CONTRACT_EARLY_BONUS_SHARE: float = 0.2
+## Contract income (design doc 31.4 #3, replacing 28.9's 20% up front).
+## The customer advances the material: each of the contract's production
+## parts is free to queue, up to its quantity (Contract.advance_per_part,
+## LineItem.advanced_count). Everything else is paid per good part as it
+## ships - the payout minus the material already advanced - with any
+## rounding left over on completion, plus a bonus for finishing before the
+## deadline. Replacements for scrapped or remelted parts are the shop's own
+## cost. This closed two holes the 20% up front had: accepting every offer
+## at minute 0 was free gold, and parts were prepaid while the up front
+## didn't cover them, so a player who spent their gold couldn't finish.
+## Finishing late still pays in full - the only penalties are the
+## Reputation hit and that company offering less next time.
+const CONTRACT_EARLY_BONUS_SHARE: float = 0.15
 ## Each late contract multiplies that company's future offers by this.
 const LATE_COMPANY_PAYOUT_FACTOR: float = 0.85
 const MIN_COMPANY_PAYOUT_MULTIPLIER: float = 0.5
@@ -1542,13 +1704,20 @@ const MIN_COMPANY_PAYOUT_MULTIPLIER: float = 0.5
 var company_payout_multiplier: Dictionary = {}
 
 
-func contract_upfront_amount(contract: Contract) -> int:
-	return int(round(contract.payout * CONTRACT_UPFRONT_SHARE))
+## What the customer advances in material for the whole contract.
+func contract_advance_total(contract: Contract) -> int:
+	return contract.advance_per_part * contract.quantity_required
 
 
-## Each good part's share of everything after the up-front payment.
+## The gold the contract pays out on delivery: the payout less the material
+## already advanced (a contract from an older save has no advance).
+func contract_cash_total(contract: Contract) -> int:
+	return maxi(contract.payout - contract_advance_total(contract), 0)
+
+
+## Each good part's share of the delivery money.
 func contract_per_part_amount(contract: Contract) -> int:
-	return int(floor(float(contract.payout - contract_upfront_amount(contract)) / maxi(contract.quantity_required, 1)))
+	return int(floor(float(contract_cash_total(contract)) / maxi(contract.quantity_required, 1)))
 
 
 func contract_early_bonus(contract: Contract) -> int:
@@ -1567,17 +1736,52 @@ func _pay(amount: int) -> void:
 ## own comment), removes it from contract_offers, and appends it to
 ## `contracts` so get_active_contracts()/the backpressure and auto-queue
 ## logic all pick it up exactly like any other active contract from here on.
-func accept_contract_offer(offer: Contract) -> void:
-	if not contract_offers.has(offer):
-		return
+func accept_contract_offer(offer: Contract) -> bool:
+	if not contract_offers.has(offer) or offer_blocker(offer) != "":
+		return false
 	contract_offers.erase(offer)
 	offer.start()
 	contracts.append(offer)
-	var upfront := contract_upfront_amount(offer)
-	offer.paid_so_far += upfront
-	_pay(upfront)
 	contract_offers_changed.emit()
 	contract_updated.emit(offer)
+	return true
+
+
+## How many contracts can be active at once (user request 2026-10-18).
+## Rises with Factory Level for now; the planned upgrade tree (achievements
+## and levels buying permanent perks) is meant to add slots on top of this.
+const FACTORY_LEVEL_CONTRACT_CAP := {1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
+
+
+func max_active_contracts() -> int:
+	return FACTORY_LEVEL_CONTRACT_CAP.get(factory_level, FACTORY_LEVEL_CONTRACT_CAP[1])
+
+
+func has_free_contract_slot() -> bool:
+	return get_active_contracts().size() < max_active_contracts()
+
+
+## "" if the offer can be accepted now, otherwise why not: it needs more
+## Reputation than the shop has (design doc 31.4 #3 - the starting six
+## included Tier 2-4 work at Reputation 0), or every contract slot is taken.
+func offer_blocker(offer: Contract) -> String:
+	if reputation < offer.required_reputation:
+		return "Needs Reputation %d" % offer.required_reputation
+	if not has_free_contract_slot():
+		return "Contract slots full (%d/%d) - finish one first" % [get_active_contracts().size(), max_active_contracts()]
+	return ""
+
+
+func offer_is_locked(offer: Contract) -> bool:
+	return reputation < offer.required_reputation
+
+
+func _acceptable_offer_count() -> int:
+	var count := 0
+	for offer in contract_offers:
+		if not offer_is_locked(offer):
+			count += 1
+	return count
 
 
 ## Section 8's "at 5 stars" is the Reputation-0 baseline - eases down toward
@@ -1624,8 +1828,11 @@ func _process_contracts(delta: float) -> void:
 				MIN_COMPANY_PAYOUT_MULTIPLIER)
 			contract_updated.emit(c)
 
+	# Locked offers (not enough Reputation yet) don't count toward the floor,
+	# or the starting six's four locked ones would stop new work arriving.
 	_contract_generation_cooldown = max(_contract_generation_cooldown - delta, 0.0)
-	if _contract_generation_cooldown <= 0.0 and contract_offers.size() < MIN_ACTIVE_CONTRACTS:
+	if _contract_generation_cooldown <= 0.0 and _acceptable_offer_count() < MIN_ACTIVE_CONTRACTS \
+			and contract_offers.size() < MAX_CONTRACT_OFFERS:
 		generate_contract()
 		_contract_generation_cooldown = CONTRACT_GENERATION_COOLDOWN_SECONDS
 
@@ -1858,6 +2065,106 @@ func _stats_for(station_id: String) -> Dictionary:
 	return station_stats[station_id]
 
 
+# --- Purchase previews (design doc 31.4 #5) ---------------------------------
+#
+# Every buy button says what it buys: "+N parts/h, pays back in ~M min". A
+# deliberately simple model of the shop's output - the line runs at the pace
+# of its slowest station or of its crew, whichever is lower - so a purchase
+# that doesn't touch the limit honestly shows no gain. Early on that limit is
+# the crew: one Technician walking and handling for the whole floor.
+
+## A Technician's walking and handling time per part through the whole line
+## (measured in simulated playthroughs: one Technician kept fed ships ~22
+## parts an hour). Placeholder until the stats collector measures it.
+const CREW_SECONDS_PER_PART: float = 160.0
+## A shop with nobody hired runs on the player's own taps - counted as half
+## a Technician.
+const SOLO_CREW_EQUIVALENT: float = 0.5
+## Each extra Technician adds a little less (they share the floor and wait
+## on the same machines): n Technicians count as n^this.
+const CREW_SCALING_EXPONENT: float = 0.85
+
+
+func crew_parts_per_hour(extra_technicians: int = 0) -> float:
+	var count := extra_technicians
+	for tech in technicians:
+		if not tech.is_engineer:
+			count += 1
+	var crew := pow(float(count), CREW_SCALING_EXPONENT) if count > 0 else SOLO_CREW_EQUIVALENT
+	return crew * 3600.0 / CREW_SECONDS_PER_PART
+
+
+## The slowest station's parts an hour, all printers counted together.
+## `change` previews a purchase: {"station": Station, "tier": int},
+## {"printers": 1}, or {"speed": multiplier} (a factory level-up).
+func stations_parts_per_hour(change: Dictionary = {}) -> float:
+	var speed: float = change.get("speed", 1.0)
+	var printers := 0.0
+	var printer_tier_one := 0.0
+	var slowest := INF
+	for id in all_real_station_ids():
+		var station: Station = station_by_id.get(id)
+		if station == null or station.station_type == Station.StationType.AUTOMATIC:
+			continue
+		var tier: int = change.tier if change.get("station") == station else station.current_tier
+		var capacity := station.capacity_per_hour(tier, speed)
+		if id.begins_with("printing"):
+			printers += capacity
+			printer_tier_one = station.capacity_per_hour(1, speed)
+		else:
+			slowest = minf(slowest, capacity)
+	printers += int(change.get("printers", 0)) * printer_tier_one
+	return minf(slowest, printers)
+
+
+func line_parts_per_hour(change: Dictionary = {}) -> float:
+	return minf(stations_parts_per_hour(change), crew_parts_per_hour(int(change.get("technicians", 0))))
+
+
+## True when the crew, not a machine, is what limits output right now.
+func crew_is_bottleneck() -> bool:
+	return crew_parts_per_hour() < stations_parts_per_hour()
+
+
+## Profit on one more good part: the average over active contracts of what
+## a part pays on delivery, less its material where the shop pays for it.
+## A Tier 1 part's margin when nothing is active.
+func profit_per_part_estimate() -> float:
+	var total := 0.0
+	var count := 0
+	for contract in get_active_contracts():
+		var material := 0 if contract.advance_per_part > 0 else part_cost(contract, false)
+		total += contract_per_part_amount(contract) - material
+		count += 1
+	if count == 0:
+		return CONTRACT_PAYOUT_PER_UNIT[Contract.ContractTier.LOCAL_SHOPS] * (1.0 - PRODUCTION_COST_SHARE)
+	return maxf(total / count, 0.0)
+
+
+## {parts_per_hour: the gain, payback_minutes: -1 when there's no gain}.
+func purchase_gain(change: Dictionary, price: int) -> Dictionary:
+	var gain := line_parts_per_hour(change) - line_parts_per_hour()
+	var payback := -1.0
+	var gold_per_hour := gain * profit_per_part_estimate()
+	if gain > 0.05 and gold_per_hour > 0.0:
+		payback = price / gold_per_hour * 60.0
+	return {"parts_per_hour": maxf(gain, 0.0), "payback_minutes": payback}
+
+
+## "+3.2 parts/h - pays back in ~25 min", or why there's no gain.
+func purchase_gain_text(gain: Dictionary) -> String:
+	if gain.payback_minutes < 0.0:
+		return "No gain yet - your %s sets the pace" % ("crew" if crew_is_bottleneck() else "slowest station")
+	return "+%.1f parts/h - pays back in ~%d min" % [gain.parts_per_hour, maxi(roundi(gain.payback_minutes), 1)]
+
+
+## The short form for tight spots: "+3.2/h ~25m", or "no gain yet".
+func purchase_gain_short(gain: Dictionary) -> String:
+	if gain.payback_minutes < 0.0:
+		return "no gain yet"
+	return "+%.1f/h ~%dm" % [gain.parts_per_hour, maxi(roundi(gain.payback_minutes), 1)]
+
+
 # --- Nonconformance shelf and Engineers (design doc Section 28) ------------
 
 ## Every defective part, the moment it's flagged (Station quarantines it via
@@ -1894,7 +2201,7 @@ const ENGINEER_DIAGNOSIS_SPEED := {
 ## parts coming through will also have a chance to have that defect occur"),
 ## up to UNDIAGNOSED_RISK_MAX_MULTIPLIER.
 const UNDIAGNOSED_RISK_PER_PART: float = 0.5
-const UNDIAGNOSED_RISK_MAX_MULTIPLIER: float = 3.0
+const UNDIAGNOSED_RISK_MAX_MULTIPLIER: float = 2.0
 ## An idle Engineer earns one star of familiarity on each of their contracts'
 ## geometries per this many game minutes (design doc 28.2).
 const PASSIVE_LEARNING_GAME_MINUTES: float = 60.0
@@ -1937,10 +2244,14 @@ func nc_parts_needing_player() -> int:
 	return count
 
 
-func undiagnosed_risk_multiplier(station_id: String) -> float:
+## Only parts of the same geometry raise the risk (design doc 31.4 #4) -
+## an unknown defect on one part says little about a different one, and
+## counting every geometry turned early trials into a defect spiral.
+func undiagnosed_risk_multiplier(station_id: String, geometry_name: String) -> float:
 	var count := 0
 	for part in nc_shelf:
-		if not part.nc_diagnosed and part.defect_station_id == station_id:
+		if not part.nc_diagnosed and part.defect_station_id == station_id \
+				and geometry_name_for_part(part) == geometry_name:
 			count += 1
 	return minf(1.0 + UNDIAGNOSED_RISK_PER_PART * count, UNDIAGNOSED_RISK_MAX_MULTIPLIER)
 
@@ -2090,7 +2401,9 @@ func learning_gain_percent(part: Part, scan: bool) -> float:
 			continue
 		var now := familiarity_stars_for(geometry, station_id)
 		stars += mini(now + int(gains[station_id]), 5) - now
-	return float(stars) / FAMILIARITY_TRACKED_STATIONS.size() * 0.5 / 5.0 * 100.0
+	var shop := shop_familiarity_stars(geometry)
+	var crew := crew_best_familiarity_stars(geometry)
+	return _familiarity_percent(shop + float(stars) / FAMILIARITY_TRACKED_STATIONS.size(), crew) - _familiarity_percent(shop, crew)
 
 
 ## The first pickup-side part tech could carry to a station they work, or
@@ -2268,25 +2581,29 @@ func _init() -> void:
 	# when you start" - these load as unaccepted OFFERS now, same as any
 	# generated one, rather than immediately active with a running deadline
 	# clock. accept_contract_offer() is what actually starts each one.
+	# Payouts are quantity x CONTRACT_PAYOUT_PER_UNIT (design doc 31). The
+	# Tier 2-4 ones are locked until Reputation reaches their tier, so they
+	# show what's ahead without being grabbable at minute 0.
 	contract_offers = [
 		_make_single_item_contract("Local Hardware Co.", Contract.ContractTier.LOCAL_SHOPS,
-			"Mounting Brackets", "Mild Steel", 5, game_minutes_to_seconds(3600.0), 50),
+			"Mounting Brackets", "Mild Steel", 5, game_minutes_to_seconds(3600.0), 200),
 		_make_single_item_contract("Riverside Jewelers", Contract.ContractTier.LOCAL_SHOPS,
-			"Pendant Blanks", "Bronze", 8, game_minutes_to_seconds(3600.0), 70),
+			"Pendant Blanks", "Bronze", 8, game_minutes_to_seconds(3600.0), 300),
 		_make_single_item_contract("Cascade Fluid Systems", Contract.ContractTier.REGIONAL_MANUFACTURERS,
-			"Valve Bodies", "Stainless Steel", 15, game_minutes_to_seconds(5400.0), 220),
+			"Valve Bodies", "Stainless Steel", 15, game_minutes_to_seconds(5400.0), 825),
 		_make_single_item_contract("Northline Pumps Inc.", Contract.ContractTier.REGIONAL_MANUFACTURERS,
-			"Pump Housings", "Cast Iron Blend", 20, game_minutes_to_seconds(5400.0), 280),
+			"Pump Housings", "Cast Iron Blend", 20, game_minutes_to_seconds(5400.0), 1100),
 		_make_single_item_contract("Summit Industrial Group", Contract.ContractTier.INDUSTRIAL_ACCOUNTS,
-			"Gear Housings", "Alloy Steel", 40, game_minutes_to_seconds(8100.0), 650),
+			"Gear Housings", "Alloy Steel", 40, game_minutes_to_seconds(8100.0), 2800),
 		# Recurring flagship work isn't modeled yet - this is a one-time
 		# contract for now, same as the other five.
 		_make_single_item_contract("Meridian Aerospace", Contract.ContractTier.FLAGSHIP,
-			"Turbine Blades", "Nickel Superalloy", 120, game_minutes_to_seconds(16200.0), 2500),
+			"Turbine Blades", "Nickel Superalloy", 120, game_minutes_to_seconds(16200.0), 10800),
 	]
 
 	# Staff overlay should never open to an empty applicant pool.
 	_refill_applicant_pool()
+	_guarantee_starter_technician()
 
 
 ## `auto_start`: true for the six immediately-active starting contracts
@@ -2306,6 +2623,7 @@ func _make_contract(
 	c.line_items = line_items
 	c.deadline_seconds = deadline_seconds
 	c.payout = payout
+	c.advance_per_part = part_cost(c, false)
 	if auto_start:
 		c.start()
 	return c
@@ -2330,7 +2648,9 @@ func _make_single_item_contract(
 	li.alloy_name = alloy
 	li.quantity_required = quantity
 	var items: Array[Contract.LineItem] = [li]
-	return _make_contract(customer, tier, items, deadline_seconds, payout, false)
+	var c := _make_contract(customer, tier, items, deadline_seconds, payout, false)
+	c.required_reputation = REPUTATION_TIER_THRESHOLD.get(tier, 0)
+	return c
 
 
 ## Falls back to the shared "printing" template for any specific printer
@@ -2380,28 +2700,35 @@ func printer_cap() -> int:
 ## (roll/unlock first, a separate deliberate spend actually claims it).
 var factory_exp: int = 0
 
-## First-pass placeholder EXP-per-tier table, scaled the same direction as
-## every other tier-keyed table in this file (CONTRACT_PAYOUT_PER_UNIT,
-## CONTRACT_QUANTITY_RANGE) - a bigger, harder-to-land contract is worth
-## more EXP. Section 8/21 give no numbers for this since the mechanic didn't
-## exist before this session.
+## EXP for every good production part shipped (design doc 31.4 #6 - EXP
+## used to come only when a whole contract finished, so a long contract was
+## hours of no progress at all)...
+const FACTORY_EXP_PER_PART_TIER := {
+	Contract.ContractTier.LOCAL_SHOPS: 4,
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 5,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 6,
+	Contract.ContractTier.FLAGSHIP: 8,
+}
+## ...plus a bonus for finishing the contract, on time or not.
 const FACTORY_EXP_PER_CONTRACT_TIER := {
-	Contract.ContractTier.LOCAL_SHOPS: 10,
-	Contract.ContractTier.REGIONAL_MANUFACTURERS: 25,
-	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 60,
-	Contract.ContractTier.FLAGSHIP: 150,
+	Contract.ContractTier.LOCAL_SHOPS: 5,
+	Contract.ContractTier.REGIONAL_MANUFACTURERS: 15,
+	Contract.ContractTier.INDUSTRIAL_ACCOUNTS: 40,
+	Contract.ContractTier.FLAGSHIP: 100,
 }
 
 ## Cumulative lifetime EXP required to BE at a given level - level N is
-## reached the moment factory_exp crosses this table's entry for N. A
-## first-pass placeholder curve, same invented-but-reasonable spirit as
-## every other cost/threshold table in this file.
+## reached the moment factory_exp crosses this table's entry for N. Aimed at
+## Level 2 in about an hour, 3 at ~3 hours, 4 at ~8, 5 at ~20 (design doc
+## 31.2). Checked against simulated playthroughs: a bot that buys whatever
+## pays back fastest reached them at ~1h / 2.5h / 4.5h / 9h, so a person
+## should land near the targets.
 const FACTORY_LEVEL_EXP_THRESHOLD := {
 	1: 0,
-	2: 150,
-	3: 400,
-	4: 900,
-	5: 1800,
+	2: 40,
+	3: 500,
+	4: 2500,
+	5: 8000,
 }
 
 func factory_exp_for_level(level: int) -> int:
@@ -2423,9 +2750,18 @@ func is_factory_level_maxed() -> bool:
 ## EXP itself keeps accumulating past the next threshold with no cap, so a
 ## big contract that clears two levels' worth at once just leaves the player
 ## able to immediately pay for a second level-up right after the first.
-func _award_factory_exp(tier: Contract.ContractTier) -> void:
-	factory_exp += FACTORY_EXP_PER_CONTRACT_TIER.get(tier, FACTORY_EXP_PER_CONTRACT_TIER[Contract.ContractTier.LOCAL_SHOPS])
+func _award_factory_exp(amount: int) -> void:
+	if amount <= 0:
+		return
+	factory_exp += amount
 	factory_progress_changed.emit()
+
+
+## Everything a contract is worth in EXP if it's finished: per part plus
+## the completion bonus. What the Offers screen shows.
+func contract_total_exp(contract: Contract) -> int:
+	return FACTORY_EXP_PER_PART_TIER.get(contract.tier, 0) * contract.quantity_required \
+		+ FACTORY_EXP_PER_CONTRACT_TIER.get(contract.tier, 0)
 
 
 func can_level_up_factory() -> bool:
@@ -2437,7 +2773,7 @@ func can_level_up_factory() -> bool:
 ## didn't exist before this session. Priced above PRINTER_PURCHASE_COST's own
 ## top end since leveling the whole factory (faster processes shop-wide, a
 ## higher printer cap) is a bigger deal than any single purchase.
-const FACTORY_LEVEL_UP_PRICE := {2: 400, 3: 800, 4: 1400, 5: 2200}
+const FACTORY_LEVEL_UP_PRICE := {2: 400, 3: 1000, 4: 3000, 5: 8000}
 
 func factory_level_up_price() -> int:
 	if is_factory_level_maxed():
@@ -2505,7 +2841,7 @@ func can_buy_printer() -> bool:
 ## bigger buy than a single tier step. Index = the printer being bought
 ## (1-based - buying the 2nd printer reads index 2); index 0-1 unused since
 ## the 1st printer is already owned for free at game start.
-const PRINTER_PURCHASE_COST: Array[int] = [0, 0, 250, 450, 750, 1100, 1500]
+const PRINTER_PURCHASE_COST: Array[int] = [0, 0, 300, 550, 900, 1300, 1800]
 
 func printer_purchase_cost() -> int:
 	var next_index: int = clampi(owned_printer_count + 1, 0, PRINTER_PURCHASE_COST.size() - 1)
@@ -2613,15 +2949,17 @@ func department_for_station(station_id: String) -> String:
 ## mapping. Staffed: the specific worker's own familiarity_for_geometry()
 ## (the whole point - "each time they process a part... they gain some
 ## amount of familiarity," and it's THEIR run, not a shop average).
-## Unstaffed: nobody specific is running it, so this falls back to the same
-## shop-wide average_familiarity_stars() shown on the contract, rather than
-## reading nobody's personal value.
+## Unstaffed: nobody specific is running it, so this falls back to what
+## the shop as a whole knows (see the comment inside).
 func familiarity_multiplier_for_worker(geometry_name: String, department_name: String, worker: Technician) -> float:
 	var stars: int
 	if worker != null:
 		stars = worker.familiarity_for_geometry(geometry_name, department_name)
 	else:
-		stars = average_familiarity_stars(geometry_name)
+		# Unstaffed: what the shop has learned (trials, diagnosis) or the
+		# crew's best, whichever is more - the staff average alone was 0
+		# with nobody hired, so a solo shop's defect rates never improved.
+		stars = roundi(maxf(shop_familiarity_stars(geometry_name), crew_best_familiarity_stars(geometry_name)))
 	return FAMILIARITY_MULTIPLIER[stars]
 
 
@@ -2649,31 +2987,17 @@ func raise_familiarity(geometry_name: String, station_id: String, stars: int) ->
 	per_station[station_id] = clampi(per_station.get(station_id, 0) + stars, 0, 5)
 
 
-## Reworked this session (design request: "the familiarity rating you see on
-## the contract is the average familiarity of your technicians and engineers
-## as well as R&D eventually when we build that out") - was previously a
-## single average across the 4 FAMILIARITY_TRACKED_STATIONS (shop-wide, no
-## staff involved at all); now averages every hired Technician/Engineer's OWN
-## familiarity_stars_for_staff() below instead. Same signature/rounding as
-## before, so every existing call site (Contracts Offers screen, Station
-## Detail Menu tooltips) keeps working unchanged - only what the number
-## MEANS changed. Falls back to 0 if nobody's hired yet (can't average an
-## empty roster) - R&D's own contribution isn't built yet, noted for when it
-## is (Section 12).
-func average_familiarity_stars(geometry_name: String) -> int:
-	if technicians.is_empty():
-		return 0
-	var total := 0.0
-	for tech in technicians:
-		total += tech.shopwide_familiarity_for_geometry(geometry_name)
-	return roundi(total / technicians.size())
+## The geometry's familiarity % as 0-5 stars - the quick-glance number in
+## part lists and the Station Detail Menu, the same figure the Contracts
+## menu shows as a %.
+func familiarity_stars(geometry_name: String) -> int:
+	return roundi(geometry_familiarity_percent(geometry_name) / 20.0)
 
 
 ## The single lowest-familiarity staff member for this geometry, not the
-## lowest-familiarity STATION anymore (same rework as average_familiarity_stars()
-## above, same reasoning: Section 21.7's "an average could otherwise hide a
-## real problem area" now applies to your weakest-familiarity hire, not your
-## weakest-covered station).
+## lowest-familiarity STATION anymore (Section 21.7's "an average could
+## otherwise hide a real problem area" applies to your weakest-familiarity
+## hire). Only gates the legacy scrap-for-expertise path now.
 func weakest_familiarity_stars(geometry_name: String) -> int:
 	if technicians.is_empty():
 		return 0
@@ -2836,6 +3160,26 @@ func grace_period_seconds_for(station_id: String) -> float:
 ## Bumped only if a future change makes an older file unreadable; load_from_dict()
 ## refuses a file from the future rather than misreading it.
 const SAVE_FORMAT_VERSION: int = 1
+## Bumped when contract prices are re-anchored, so a save from before gets
+## its contracts re-priced once on load (_migrate_contracts_to_economy_v2()).
+const ECONOMY_VERSION: int = 2
+## The per-unit prices before the design doc 31 rebalance.
+const ECONOMY_V1_PAYOUT_PER_UNIT := {1: 9.0, 2: 14.0, 3: 16.0, 4: 20.0}
+
+
+## A save from before the rebalance has contracts priced for the old ~9g
+## parts, while a production part's material now costs 12g - every one of
+## them would lose money. Scales each payout to the new per-unit price
+## (keeping its jitter and Reputation bonus). Unaccepted offers also get the
+## new material advance; accepted ones keep paying for their own material,
+## since the parts already queued for them were paid for.
+func _migrate_contracts_to_economy_v2() -> void:
+	for contract in contracts + contract_offers:
+		var old_rate: float = ECONOMY_V1_PAYOUT_PER_UNIT.get(int(contract.tier), 9.0)
+		var new_rate: float = CONTRACT_PAYOUT_PER_UNIT.get(contract.tier, 40.0)
+		contract.payout = roundi(contract.payout * new_rate / old_rate)
+		if not contract.is_started:
+			contract.advance_per_part = part_cost(contract, false)
 
 
 func to_save_dict() -> Dictionary:
@@ -2879,6 +3223,7 @@ func to_save_dict() -> Dictionary:
 
 	return {
 		"format_version": SAVE_FORMAT_VERSION,
+		"economy_version": ECONOMY_VERSION,
 		"currency": currency,
 		"gems": gems,
 		"reputation": reputation,
@@ -3023,6 +3368,8 @@ func load_from_dict(data: Dictionary) -> bool:
 	contract_offers.clear()
 	for raw in data.get("contract_offers", []):
 		contract_offers.append(Contract.from_dict(raw))
+	if int(data.get("economy_version", 1)) < ECONOMY_VERSION:
+		_migrate_contracts_to_economy_v2()
 
 	# --- technicians before stations, which reference them by index ---
 	var tech_dicts: Array = data.get("technicians", [])

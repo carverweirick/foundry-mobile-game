@@ -12,11 +12,18 @@ class_name ContractsOverlay
 ## and per-part payment, the payment split, and Accept. A tap is a press and
 ## release that moves less than ROW_TAP_MOVE_THRESHOLD - a drag scrolls.
 ##
+## Offers above the shop's Reputation are listed last, dimmed, with the
+## Reputation they need instead of a risk pill; Accept says why it can't
+## when they're locked or every contract slot is taken
+## (GameData.offer_blocker()). Each card says roughly how many trials stand
+## between it and production (GameData.trials_to_production()).
+##
 ## Active tab - reputation and revert metal, the Queue amount (x1/x5/x10/MAX,
 ## AdVenture Capitalist style) and Trial metal (Revert/Virgin) toggles, then a
 ## card per active contract: an On track / Behind / Overdue pill, progress
-## bar, its Engineer (tap to cycle), and per line item a familiarity meter
-## and Trial / Production queue buttons (Production locked below 85%).
+## bar, its Engineer (tap to cycle), and per line item a familiarity meter,
+## trials still needed, and Trial / Production queue buttons (Production
+## locked below 85%; free while the customer's material advance covers it).
 ##
 ## Both tabs keep persistent cards updated in place on the 0.25s poll -
 ## rebuilding would make the list jump (CLAUDE.md UI rule 5).
@@ -68,7 +75,7 @@ func _refresh() -> void:
 	_refresh_offers_tab()
 	_refresh_contracts_tab()
 	tabs.set_tab_title(TAB_OFFERS, "Offers (%d)" % GameData.contract_offers.size())
-	tabs.set_tab_title(TAB_ACTIVE, "Active (%d)" % GameData.get_active_contracts().size())
+	tabs.set_tab_title(TAB_ACTIVE, "Active (%d/%d)" % [GameData.get_active_contracts().size(), GameData.max_active_contracts()])
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +122,24 @@ func _offer_risk(offer: Contract) -> Array:
 	return ["High", "bad"]
 
 
+## Trials still needed across the contract's distinct geometries.
+func _trials_needed(contract: Contract) -> int:
+	var seen: Dictionary = {}
+	var total := 0
+	for li in contract.line_items:
+		if seen.has(li.geometry_name):
+			continue
+		seen[li.geometry_name] = true
+		total += GameData.trials_to_production(li.geometry_name, contract)
+	return total
+
+
+func _trials_text(trials: int) -> String:
+	if trials <= 0:
+		return "Ready for production"
+	return "~%d trial%s to production" % [trials, "" if trials == 1 else "s"]
+
+
 func _offer_icon(offer: Contract) -> String:
 	return UiKit.part_icon(offer.line_items[0].geometry_name) if not offer.line_items.is_empty() else "contracts"
 
@@ -147,6 +172,8 @@ var _detail_meta: Label
 var _detail_risk: PanelContainer
 var _detail_items: VBoxContainer
 var _detail_payment: Label
+var _detail_blocker: Label
+var _detail_accept: Button
 
 
 func _build_offers_header() -> void:
@@ -185,12 +212,20 @@ func _refresh_offers_tab() -> void:
 		MenuLayout.remove_and_free(_offers_empty_label)
 		_offers_empty_label = null
 
-	for o in GameData.contract_offers:
+	# Acceptable offers first, locked ones after, each group in pool order.
+	var ordered: Array[Contract] = []
+	for locked in [false, true]:
+		for o in GameData.contract_offers:
+			if GameData.offer_is_locked(o) == locked:
+				ordered.append(o)
+	for i in ordered.size():
+		var o := ordered[i]
 		var row: OfferRow = _offer_rows.get(o.contract_id)
 		if row == null:
 			row = _create_offer_row()
 			_offer_rows[o.contract_id] = row
 			offers_root.add_child(row.box)
+		offers_root.move_child(row.box, 1 + i)   # after the column header
 		_update_offer_row(row, o)
 
 	_refresh_offer_detail()
@@ -250,15 +285,20 @@ func _update_offer_row(row: OfferRow, offer: Contract) -> void:
 	row.offer = offer
 	row.icon.texture = UiIcons.get_icon(_offer_icon(offer))
 	row.customer.text = offer.customer_name
-	row.tier_label.text = offer.tier_label
+	row.tier_label.text = _trials_text(_trials_needed(offer))
 	UiKit.set_pill(row.tier_pill, _tier_pill_text(offer), "info")
 	row.payout.text = "%dg" % offer.payout
 	row.time.text = _format_time(offer.deadline_seconds)
 	var familiarity := _offer_familiarity_percent(offer)
 	row.familiarity.value = familiarity / 100.0
 	row.familiarity.color_key = _familiarity_color(familiarity)
-	var risk := _offer_risk(offer)
-	UiKit.set_pill(row.risk, risk[0], risk[1])
+	var locked := GameData.offer_is_locked(offer)
+	if locked:
+		UiKit.set_pill(row.risk, "Rep %d" % offer.required_reputation, "bad")
+	else:
+		var risk := _offer_risk(offer)
+		UiKit.set_pill(row.risk, risk[0], risk[1])
+	row.box.modulate = Color(1, 1, 1, 0.55) if locked else Color.WHITE
 	var selected := offer.contract_id == _selected_offer_id
 	row.chevron.text = "v" if selected else ">"
 	UiKit.set_card_border(row.box, "gold" if selected else "card_border")
@@ -315,10 +355,13 @@ func _build_offer_detail() -> void:
 	_detail_payment.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_detail_payment.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bottom.add_child(_detail_payment)
-	var accept := UiKit.button("Accept", "st_check", "primary")
-	accept.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	accept.pressed.connect(_on_accept_offer_pressed)
-	bottom.add_child(accept)
+	_detail_accept = UiKit.button("Accept", "st_check", "primary")
+	_detail_accept.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_detail_accept.pressed.connect(_on_accept_offer_pressed)
+	bottom.add_child(_detail_accept)
+	_detail_blocker = UiKit.label("", UiKit.FONT_SMALL, "bad")
+	_detail_blocker.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_child(_detail_blocker)
 	offers_root.add_child(_detail)
 
 
@@ -331,11 +374,19 @@ func _refresh_offer_detail() -> void:
 	_detail_title.text = "%s" % offer.customer_name
 	var risk := _offer_risk(offer)
 	UiKit.set_pill(_detail_risk, "%s risk" % risk[0], risk[1])
-	var exp: int = GameData.FACTORY_EXP_PER_CONTRACT_TIER.get(offer.tier, 0)
-	_detail_meta.text = "%s  |  Payout %dg  |  %s to complete  |  +%d Factory EXP" % [
-		offer.tier_label, offer.payout, _format_time(offer.deadline_seconds), exp]
-	_detail_payment.text = "Pays %dg up front, %dg per good part shipped, +%dg if finished on time" % [
-		GameData.contract_upfront_amount(offer), GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer)]
+	_detail_meta.text = "%s  |  Payout %dg  |  %s to complete  |  +%d Factory EXP  |  %s" % [
+		offer.tier_label, offer.payout, _format_time(offer.deadline_seconds),
+		GameData.contract_total_exp(offer), _trials_text(_trials_needed(offer))]
+	if offer.advance_per_part > 0:
+		_detail_payment.text = "Customer advances the metal (%dg a part). Pays %dg per good part shipped, +%dg if finished on time" % [
+			offer.advance_per_part, GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer)]
+	else:
+		_detail_payment.text = "Pays %dg per good part shipped, +%dg if finished on time" % [
+			GameData.contract_per_part_amount(offer), GameData.contract_early_bonus(offer)]
+	var blocker := GameData.offer_blocker(offer)
+	_detail_blocker.text = blocker
+	_detail_blocker.visible = blocker != ""
+	_detail_accept.disabled = blocker != ""
 	# The selected offer's items only change when the selection does.
 	if _detail.get_meta("shown_offer", -1) != offer.contract_id:
 		_detail.set_meta("shown_offer", offer.contract_id)
@@ -347,6 +398,8 @@ func _refresh_offer_detail() -> void:
 func _build_detail_item(li: Contract.LineItem, offer: Contract) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.tooltip_text = _trials_text(GameData.trials_to_production(li.geometry_name, offer))
 	row.add_child(UiKit.icon(UiKit.part_icon(li.geometry_name)))
 	var name := UiKit.label(li.geometry_name)
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -390,8 +443,8 @@ func _on_accept_offer_pressed() -> void:
 	var offer := _find_offer(_selected_offer_id)
 	if offer == null:
 		return
-	GameData.accept_contract_offer(offer)
-	_selected_offer_id = -1
+	if GameData.accept_contract_offer(offer):
+		_selected_offer_id = -1
 	_refresh.call_deferred()
 
 
@@ -627,13 +680,16 @@ func _create_contract_row(contract: Contract) -> ContractRow:
 		actions.add_theme_constant_override("h_separation", 3)
 		actions.alignment = FlowContainer.ALIGNMENT_END
 		body.add_child(actions)
+		var trials_left := UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+		trials_left.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		actions.add_child(trials_left)
 		var trial := UiKit.button("", "act_queue")
 		trial.pressed.connect(_on_queue_pressed.bind(row, i, true))
 		actions.add_child(trial)
 		var production := UiKit.button("", "act_lock", "primary")
 		production.pressed.connect(_on_queue_pressed.bind(row, i, false))
 		actions.add_child(production)
-		row.items.append({"shipped": shipped, "percent": percent, "meter": meter, "trial": trial, "production": production})
+		row.items.append({"shipped": shipped, "percent": percent, "meter": meter, "trials_left": trials_left, "trial": trial, "production": production})
 	return row
 
 
@@ -669,11 +725,20 @@ func _update_contract_row(row: ContractRow, contract: Contract) -> void:
 		w.percent.text = "%d%%" % roundi(percent)
 		w.meter.value = percent / 100.0
 		w.meter.color_key = _familiarity_color(percent)
+		var trials := GameData.trials_to_production(li.geometry_name, contract)
+		w.trials_left.text = _trials_text(trials)
+		UiKit.set_label_color(w.trials_left, "good" if trials == 0 else "text_dim")
+		w.trials_left.visible = not li.is_complete
 		_update_queue_button(w.trial, contract, i, true, "Trial",
-			"Poured in revert - never shipped. Teaches the shop this part and carries your Engineer's latest fix.")
+			"Poured in revert - never shipped. Each one that reaches Ship teaches the shop this part (+%d%% familiarity or so) and carries your Engineer's latest fix." % roundi(
+				GameData.trial_familiarity_gain(contract) * GameData.FAMILIARITY_PERCENT_PER_SHOP_STAR))
+		var advance := GameData.advance_left(contract, i)
+		var advance_note := ""
+		if contract.advance_per_part > 0:
+			advance_note = " The customer advances the metal for %d more; after that each costs %dg." % [advance, GameData.part_cost(contract, false)]
 		_update_queue_button(w.production, contract, i, false, "Production",
-			"Poured in virgin metal for the customer. Unlocks at %d%% familiarity; ships only at %d%%+ quality." % [
-				int(GameData.PRODUCTION_FAMILIARITY_PERCENT), int(GameData.SHIP_QUALITY_THRESHOLD)])
+			"Poured in virgin metal for the customer. Unlocks at %d%% familiarity; ships only at %d%%+ quality.%s" % [
+				int(GameData.PRODUCTION_FAMILIARITY_PERCENT), int(GameData.SHIP_QUALITY_THRESHOLD), advance_note])
 
 
 ## "On track" compares shipped-plus-half-of-in-production against the share
@@ -696,8 +761,12 @@ func _update_queue_button(button: Button, contract: Contract, index: int, is_tri
 	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted(), virgin)
 	var unit := GameData.part_cost_for(contract, is_trial, virgin)
 	var locked := not is_trial and not GameData.can_run_production(contract.line_items[index].geometry_name)
+	var covered := not is_trial and GameData.advance_left(contract, index) > 0
 	if count > 0:
-		button.text = "%s x%d  %dg" % [kind, count, unit * count]
+		var total := GameData.print_orders_cost(contract, index, is_trial, virgin, count)
+		button.text = "%s x%d  %s" % [kind, count, "advanced" if total == 0 else "%dg" % total]
+	elif covered:
+		button.text = "%s  advanced" % kind
 	else:
 		button.text = "%s  %dg each" % [kind, unit]
 	button.disabled = count == 0

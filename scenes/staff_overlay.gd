@@ -145,6 +145,7 @@ class ApplicantRow:
 	var skills: HBoxContainer
 	var cost_label: Label
 	var wage_label: Label
+	var gain_label: Label
 	var hire_button: Button
 	var applicant: Technician = null
 
@@ -240,6 +241,9 @@ func _create_applicant_row(applicant: Technician) -> ApplicantRow:
 	row.wage_label = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
 	row.wage_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	right.add_child(row.wage_label)
+	row.gain_label = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	row.gain_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	right.add_child(row.gain_label)
 	row.hire_button = UiKit.button("Hire", "act_hire", "warn")
 	row.hire_button.pressed.connect(_on_hire_applicant_pressed.bind(row))
 	right.add_child(row.hire_button)
@@ -256,6 +260,17 @@ func _update_applicant_row(row: ApplicantRow) -> void:
 	row.cost_label.text = "Hire %dg" % applicant.hire_cost
 	row.wage_label.text = "Wage %dg" % applicant.wage
 	row.hire_button.disabled = not GameData.can_afford_with_gems(applicant.hire_cost)
+	# What the hire buys (design doc 31.4 #5). Engineers don't move parts.
+	var wage_note := "Wage is paid at each factory level-up."
+	if applicant.is_engineer:
+		row.gain_label.text = "learning"
+		UiKit.set_label_color(row.gain_label, "info")
+		row.hire_button.tooltip_text = UiText.tip("Engineers own contracts: they diagnose defects and teach more per trial. They don't add parts/h. %s" % wage_note)
+	else:
+		var gain := GameData.purchase_gain({"technicians": 1}, applicant.hire_cost)
+		row.gain_label.text = GameData.purchase_gain_short(gain)
+		UiKit.set_label_color(row.gain_label, "good" if gain.payback_minutes >= 0.0 else "text_dim")
+		row.hire_button.tooltip_text = UiText.tip("%s. %s" % [GameData.purchase_gain_text(gain), wage_note])
 
 
 func _on_hire_applicant_pressed(row: ApplicantRow) -> void:

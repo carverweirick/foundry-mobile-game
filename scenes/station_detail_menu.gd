@@ -507,6 +507,9 @@ func _refresh_actions(is_automatic: bool, staffed: bool) -> void:
 		var cost := GameData.upgrade_cost_for_tier(_station.current_tier + 1)
 		_upgrade_button.text = "Tier %d: %dg" % [_station.current_tier + 1, cost]
 		_upgrade_button.disabled = not GameData.can_afford_with_gems(cost)
+		var gain := GameData.purchase_gain({"station": _station, "tier": _station.current_tier + 1}, cost)
+		_upgrade_button.tooltip_text = UiText.tip("%d%% faster cycles here. %s" % [
+			roundi(GameData.STATION_TIER_SPEED_BONUS_PER_TIER * 100.0), GameData.purchase_gain_text(gain)])
 	else:
 		_upgrade_button.text = "Max tier"
 		_upgrade_button.disabled = true
@@ -585,7 +588,7 @@ func _build_inventory_row(part: Part) -> Control:
 	who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	who.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	line.add_child(who)
-	var meter := UiKit.meter(GameData.average_familiarity_stars(geometry) / 5.0, "gold", 5)
+	var meter := UiKit.meter(GameData.familiarity_stars(geometry) / 5.0, "gold", 5)
 	meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	meter.tooltip_text = "Familiarity"
 	line.add_child(meter)
@@ -735,7 +738,7 @@ func _part_detail_text(part: Part) -> String:
 		var geometry := GameData.geometry_name_for_part(part)
 		lines.append("Part #%d - %s" % [part.part_id, contract.customer_name])
 		lines.append("%s, %s" % [geometry, GameData.alloy_name_for_part(part)])
-		lines.append("Familiarity %d/5" % GameData.average_familiarity_stars(geometry))
+		lines.append("Familiarity %d/5" % GameData.familiarity_stars(geometry))
 	else:
 		lines.append("Part #%d - no contract" % part.part_id)
 	var next_id := GameData.next_station_id_for(part)

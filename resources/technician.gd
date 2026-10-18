@@ -17,20 +17,22 @@ const TIER_LABEL := {
 }
 
 ## The design doc only gives Hire Cost / Wage as qualitative Low-Highest
-## per tier (Section 6); these are first-pass placeholder numbers scaled
-## roughly 2-2.5x per tier, same spirit as the Tier 1->5 upgrade cost note
-## in Section 16. Tune once the real economy lands.
+## per tier (Section 6); placeholder numbers scaled roughly 2-2.5x per tier.
+## Raised in the design doc 31 rebalance (was 50/150/400/900 and wages
+## 5/15/35/75): an Apprentice is ~10 minutes of Tier 1 income, and the wage -
+## paid in one lump at every factory level-up - is ~5-10 minutes of what that
+## worker adds, so a bigger crew is a real cost at each level.
 const TIER_HIRE_COST := {
-	SkillTier.APPRENTICE: 50,
-	SkillTier.TECHNICIAN: 150,
-	SkillTier.SENIOR_TECHNICIAN: 400,
-	SkillTier.MASTER: 900,
+	SkillTier.APPRENTICE: 60,
+	SkillTier.TECHNICIAN: 180,
+	SkillTier.SENIOR_TECHNICIAN: 480,
+	SkillTier.MASTER: 1100,
 }
 const TIER_WAGE := {
-	SkillTier.APPRENTICE: 5,
-	SkillTier.TECHNICIAN: 15,
-	SkillTier.SENIOR_TECHNICIAN: 35,
-	SkillTier.MASTER: 75,
+	SkillTier.APPRENTICE: 25,
+	SkillTier.TECHNICIAN: 60,
+	SkillTier.SENIOR_TECHNICIAN: 130,
+	SkillTier.MASTER: 260,
 }
 
 ## Defect rate multiplier, concrete numbers from Section 9's
@@ -165,8 +167,8 @@ var is_engineer: bool:
 	get: return role == StaffRole.ENGINEER
 
 
-## The shop-wide familiarity summary (GameData.average_familiarity_stars()/
-## weakest_familiarity_stars()) needs one number per worker per geometry
+## Shop-wide summaries (GameData.weakest_familiarity_stars(), Engineers'
+## general learning) need one number per worker per geometry
 ## without knowing which specific station/department is relevant - a
 ## contract's geometry can touch several of this worker's stations. Falls
 ## back to the average of every department this worker actually has a

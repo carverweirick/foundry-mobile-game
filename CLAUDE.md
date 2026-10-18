@@ -685,11 +685,17 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   at a time through the single active slot (not Section 4/17's real
   simultaneous multi-part batching, still not built except for Shelling's
   parallel-tier model below).
+- **Every tier runs that station's cycles 15% faster**
+  (`GameData.station_tier_speed_multiplier()`, applied in
+  `Station.base_cycle_seconds()` with the factory-level speed; design doc
+  31.4 #5). `Station.capacity_per_hour(tier, speed)` (parts/h if work never
+  ran out) feeds the purchase previews - see the Factory overlay.
 - **`batch_cap` has no generic upgrade purchase** - it only changes via
   tier for printer instances, Abrasive Blast, Shelling's parallel-run cap and
   Burnout's load size (`Station._apply_tier_batch_effects()`, also run in
   `_ready()` and on load); every other `BATCHED` station's `batch_cap` stays
-  flat at Tier 1.
+  flat at Tier 1. Printer/Abrasive Blast `batch_cap` isn't read by anything
+  (they run one part per cycle).
 - **Batch stations: Burnout, Clean, UV Cure** (user request 2026-10-03,
   explicitly NOT the Shelling model): `Station.is_batch_station()` (keys of
   `GameData.BATCH_TIER_LOAD_CAP`, load size by tier: Burnout 4-12, Clean
@@ -702,13 +708,18 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   the player (Start cycle button in the Station Detail Menu, a "Start" Board
   action, and a "Loaded - start the cycle" Attention item;
   `start_batch_cycle_manually()`). The machine only loads once the previous
-  cycle's parts are all unloaded (`_batch_machine_free()`). Overflow waits
-  on the queue rack (normal `rack_capacity`). Shares only the bookkeeping
+  cycle's parts are all unloaded (`_batch_machine_free()`); rack overflow
+  is moved into the machine every `simulate_step()` once it's free, so the
+  fill-wait clock runs for it. Overflow waits on the queue rack (normal
+  `rack_capacity`). Shares only the bookkeeping
   with Tier 2+ Shelling (`uses_parallel_runs()`: ShellingRuns while
   running, `shelling_ready_parts` while unloading). `_has_open_slot_to_fill()`
   means "a cycle is ready to start" for a batch station so the route
-  predictor matches the actor. Old saves' single-part Clean/UV Cure/Burnout
-  migrate on load.
+  predictor matches the actor, and `_batch_claim_waiting()` (room + a part
+  in Awaiting Transfer bound here) is a reason to visit in BOTH
+  `has_actionable_work()` and `_technician_act()` - without it a held part
+  bound for Clean drew nobody and every batch station downstream waited on
+  it forever. Old saves' single-part Clean/UV Cure/Burnout migrate on load.
 - **Rack first, everywhere** (user request 2026-10-03): `receive_part()`
   always appends an arriving part (a technician's delivery, a held-part
   claim, a player insert) to the BACK of the queue rack and then pulls from
@@ -802,14 +813,15 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   request, this session: "change how you get to the next factory level by
   paying a price" - reverses an earlier session's explicit "no currency to
   upgrade factory level" decision), same shape as `contract_offers`/
-  `applicant_pool` elsewhere in this file. `GameData.factory_exp` +=
-  `FACTORY_EXP_PER_CONTRACT_TIER` (10/25/60/150 by tier) on every contract
-  shipment (regardless of on-time status) and never resets/spends, but
-  crossing `FACTORY_LEVEL_EXP_THRESHOLD` only flips
+  `applicant_pool` elsewhere in this file. `GameData.factory_exp` gains
+  `FACTORY_EXP_PER_PART_TIER` (4/5/6/8) per good part shipped plus
+  `FACTORY_EXP_PER_CONTRACT_TIER` (5/15/40/100) on finishing a contract (on
+  time or not); it never resets/spends, and crossing
+  `FACTORY_LEVEL_EXP_THRESHOLD` (40/500/2500/8000 for L2-5) only flips
   `can_level_up_factory()` true - it no longer auto-levels.
   `GameData.level_up_factory()` is the deliberate paid action (a "Level Up"
   button on the Factory overlay's Growth tab): spends
-  `FACTORY_LEVEL_UP_PRICE` (400/800/1400/2200 for levels 2-5, gold-first-
+  `FACTORY_LEVEL_UP_PRICE` (400/1000/3000/8000 for levels 2-5, gold-first-
   then-gems via `try_spend_with_gems()` - a hard affordability gate, disables
   the button), THEN raises `factory_level`, THEN pays every hired
   Technician/Engineer's current wage as a lump sum ("you have to pay your
@@ -817,7 +829,10 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   push `currency` negative (see Wage economy below) rather than blocking the
   level-up itself. `FACTORY_LEVEL_PRINTER_CAP` populated through Level 5
   (`{1:2, 2:3, 3:4, 4:5, 5:6}`) - a placeholder ceiling, not a deliberate
-  cap. **Leveling up also speeds up every process shop-wide** -
+  cap. **Active contracts are capped by level too**:
+  `FACTORY_LEVEL_CONTRACT_CAP` 2/3/4/5/6 via `max_active_contracts()` (user
+  request 2026-10-18; the planned upgrade tree, design doc 31.7, is meant to
+  add slots on top). **Leveling up also speeds up every process shop-wide** -
   `GameData.factory_process_speed_multiplier()` (+8%/level, so 1.32x at
   Level 5) divides every station's effective timer duration
   (`Station._effective_timer_duration()`), staffed or not - the one
@@ -825,8 +840,9 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   `factory_progress_changed` signal fires on every EXP award and on every
   successful level-up.
 - **Gems** (`GameData.gems`, starts at 0) are a second, harder-to-get
-  currency. The only source is `FACTORY_LEVEL_UP_GEM_REWARD` (5) gems per
-  Factory Level gained - a milestone reward, not routine income. **Every
+  currency. Sources: `FACTORY_LEVEL_UP_GEM_REWARD` (5) per Factory Level
+  gained and `ON_TIME_GEM_REWARD` (1/2/3) for an on-time Tier 2/3/4
+  contract - milestone rewards, not routine income. **Every
   real purchase goes through `GameData.try_spend_with_gems()`** (gold first,
   then just enough gems at `GEM_TO_CURRENCY_VALUE` = 50 gold/gem, rounded up
   to cover any shortfall, failing cleanly if gold+gems can't cover it) - all
@@ -845,10 +861,15 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   (`REPEAT_CLIENT_TIER_BUMP_CHANCE` = 30%), gated by a relationship-star
   threshold that eases from 5 stars down toward `MIN_REPEAT_CLIENT_TIER_BUMP_STARS`
   (3) as shop-wide Reputation climbs. Quantity/payout/deadline per tier are
-  placeholders anchored to the six starting contracts' own numbers (±15%
-  jitter). Generation triggers from `_process_contracts()` whenever
-  `contract_offers` (not the active list - see below) drops below
-  `MIN_ACTIVE_CONTRACTS` (4) and a 45s cooldown has elapsed.
+  placeholders (±15% jitter; per-unit price `CONTRACT_PAYOUT_PER_UNIT`
+  40/55/70/90). Generation triggers from `_process_contracts()` whenever
+  the *acceptable* offers (locked ones don't count) drop below
+  `MIN_ACTIVE_CONTRACTS` (4), the pool is under `MAX_CONTRACT_OFFERS` (8),
+  and a 45s cooldown has elapsed. **Offer gating** (design doc 31.4 #3):
+  `Contract.required_reputation` (saved) locks the Tier 2-4 starting offers
+  until Reputation reaches their tier; generated offers are 0 (already
+  rolled within reach). `offer_blocker()` (locked, or contract slots full)
+  gates `accept_contract_offer()`, which now returns bool.
   `REPUTATION_QUALITY_BONUS_MAX` (0.35) scales every generated contract's
   quantity/payout up continuously (not just at tier thresholds) as
   Reputation climbs from 0 to `REPUTATION_MAX`.
@@ -872,13 +893,18 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   the *weakest* line item: >=80% Low, >=40% Med, else High); tapping one
   expands a gold detail card under it (accordion, one open): meta line,
   per-line-item table (icon, qty, familiarity meter, alloy, pay each), the
-  payment split, Accept. **Active tab**: reputation and revert stock,
+  payment split (metal advance / per part / on-time bonus), Accept (disabled
+  with the blocker in red underneath). Acceptable offers list first, locked
+  ones after, dimmed, with "Rep N" in place of the risk pill. Each card's
+  second line is "~N trials to production" (`GameData.trials_to_production()`,
+  summed over distinct geometries). **Active tab** (title "Active (n/cap)"): reputation and revert stock,
   segmented Queue x1/x5/x10/MAX and Trial metal Revert/Virgin toggles (one
   fixed HBox row), then a card per contract: tier pill, On track / Behind /
   Overdue pill (`_contract_status()`: shipped + half of in-production vs
   share of deadline used), time, shipped bar, Engineer button (tap cycles),
-  and per line item a familiarity meter plus Trial / Production buttons
-  (Production shows a lock icon below 85%).
+  and per line item a familiarity meter, "~N trials to production", and
+  Trial / Production buttons (Production shows a lock icon below 85% and
+  reads "advanced" while the customer's metal covers it).
 - **Multi-line-item contracts** - `Contract.line_items: Array[Contract.LineItem]`
   (each own geometry/alloy/quantity_required/quantity_shipped);
   `quantity_required`/`quantity_shipped`/`is_complete` are computed
@@ -922,15 +948,15 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   `GameData.department_for_station()`/`STATION_DEPARTMENT`) - see the
   per-worker bullet under Technicians-equivalent below for the mechanics.
   `familiarity_multiplier_for_worker()` is what `Station._roll_defect_outcome()`
-  calls for a mapped station (falls back to shop average when unstaffed);
-  non-mapped stations still use the old `familiarity_multiplier_for()`
-  unaffected. `average_familiarity_stars()`/`weakest_familiarity_stars()`
-  now average/min across every hired Technician/Engineer's own
-  familiarity (same function signatures, different underlying source) -
-  falls back to 0 with nobody hired. The weakest-link number is what
-  actually gates risk/Scrap eligibility; the average is the quick-glance
-  number shown in part lists. A genuine press-and-hold on a rack slot shows
-  the full per-station/per-worker breakdown.
+  calls for a mapped station (unstaffed: the higher of the shop's
+  tracked-station stars and the crew's best, so a solo shop's rates
+  improve with trials); non-mapped stations still use the old
+  `familiarity_multiplier_for()` unaffected. `familiarity_stars()` (the
+  geometry's familiarity % as 0-5 stars) is the quick-glance number in part
+  lists and the Station Detail Menu; `weakest_familiarity_stars()` (min
+  across hired staff) only gates legacy scrap-for-expertise. A genuine
+  press-and-hold on a rack slot shows the full per-station/per-worker
+  breakdown.
 - **Per-worker roles and skills**: `Technician.StaffRole { TECHNICIAN,
   ENGINEER }` on the same class (Engineers hired/waged/assigned exactly like
   Technicians, `role` only changes which departments they roll skill in) -
@@ -985,7 +1011,9 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   Attention item and the shelf's "!" badge; otherwise the badge is a green
   check while pickups wait. Pre-pickup saves keep released learning parts
   in Awaiting Transfer, which still works. While a part sits undiagnosed, its flagging station's
-  risk is ×(1 + 0.5 per undiagnosed part), capped ×3 - this replaced the old
+  risk for the SAME geometry is ×(1 + 0.5 per such part), capped ×2
+  (design doc 31.4 #4; it used to count every geometry, capped ×3, and
+  turned early trials into a defect spiral) - this replaced the old
   grace-period escalation/contamination (removed; `Part.defect_elapsed`/
   grace fields remain only for save compatibility).
 - **Engineers own contracts, not stations** (design doc 28.2):
@@ -1070,20 +1098,28 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
 - **Production doesn't start by itself.** The player queues parts per
   contract line item from the Contracts Active tab (a Trial and a Production
   button per line item, disabled with the reason in the tooltip via
-  `GameData.print_order_blocker()`), paying `part_cost()` per part (20% /
-  50% of the contract's per-part payout). Orders live in
+  `GameData.print_order_blocker()`), paying per part: a revert trial 14% of
+  the tier's unit price (6/8/10/13g), a production part 30% (12/17/21/27g) -
+  but production is free while the customer's material advance covers it
+  (`advance_left()`, `print_orders_cost()`, `LineItem.advanced_count` up to
+  the line item's quantity; replacements beyond that are the shop's cost).
+  Orders live in
   `GameData.print_orders` (saved); printers - staffed (auto-queue) or not
   (Queue button) - pop them front to back in `Station._try_create_part()`.
   Orders for finished contracts are dropped. Attention nags "queue parts to
   make" for an active contract with nothing queued or in the line.
-- **Contract income** (design doc 28.9): `accept_contract_offer()` pays
-  `contract_upfront_amount()` (20%); `credit_contract_shipment()` pays
-  `contract_per_part_amount()` per good part and the remainder on
-  completion, plus `contract_early_bonus()` (20%) if not overdue.
-  `Contract.paid_so_far` (saved) keeps the total exact. An overdue contract
-  multiplies `GameData.company_payout_multiplier[customer]` by 0.85 (floor
-  0.5, saved), applied to that company's future generated offers. The offer
-  card shows the up-front / per-part / on-time split.
+- **Contract income** (design doc 31.4 #3, replacing 28.9's 20% up front):
+  accepting pays nothing. The customer advances the metal
+  (`Contract.advance_per_part`, set when the offer is made, saved; 0 on a
+  pre-rebalance contract, which pays for its own material). Delivery pays
+  `contract_cash_total()` (payout minus the advance): `contract_per_part_amount()`
+  per good part, the remainder on completion, plus `contract_early_bonus()`
+  (15%) if not overdue. `Contract.paid_so_far` (saved) counts delivery
+  money. An overdue contract multiplies
+  `GameData.company_payout_multiplier[customer]` by 0.85 (floor 0.5,
+  saved), applied to that company's future generated offers. Saves from
+  before the rebalance get every contract and offer re-priced once on load
+  (`ECONOMY_VERSION`, `_migrate_contracts_to_economy_v2()`).
 - **Trial metal toggle** at the top of the Active tab (`_trial_in_virgin`,
   not saved): a virgin trial costs the production price
   (`GameData.part_cost_for()`), uses no revert, and still returns 1 revert
@@ -1106,11 +1142,16 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   from a Senior/Master Engineer) at every familiarity-tracked station and
   for the contract's Engineer.
 - **Production parts** are poured in virgin metal and unlock once
-  `geometry_familiarity_percent()` >= 85 (mean of staff average and
-  shop-wide tracked-station familiarity, as a share of 5 stars).
+  `geometry_familiarity_percent()` >= 85 (design doc 31.4 #1): 29% per
+  shop star (mean over the tracked stations - trials, learning parts and
+  diagnosis raise it) plus up to 30% from `crew_best_familiarity_stars()`
+  (the best hired worker per department, averaged over departments - hiring
+  never lowers it). Three retired trials reach the gate solo, two with an
+  experienced crew; `trials_to_production()` estimates the rest.
 - **Quality %** (`Part.quality`, -1 until poured) is rolled at Pour (also on
-  a pushed-through Pour) by `roll_casting_quality()`: 55 + 40 x familiarity
-  share, +/-6. At Ship a production part under `SHIP_QUALITY_THRESHOLD` (90)
+  a pushed-through Pour) by `roll_casting_quality()`: 64 + 36 x familiarity
+  share, +/-4 - so a part made at the 85% gate is always >= 90.6. At Ship a
+  production part under `SHIP_QUALITY_THRESHOLD` (90)
   is remelted to revert (`remelt_to_revert()`), never credited; -1 (poured
   before this existed) ships as before.
 - **Engineer trial fixes**: finishing a diagnosis stores
@@ -1230,9 +1271,14 @@ tile "Team"; team_UI mockup) - three tabs, all persistent cards:
 - **Hire**: the rotating applicant pool (`GameData.applicant_pool`,
   `generate_applicant()`/`hire_applicant()` gold-then-gems; gems-only full
   reroll `refresh_applicant_pool()`; passive `_refill_applicant_pool()`
-  on a long cooldown). Card: portrait, name, role pill, "<tier> Tier" (role
+  on a long cooldown). A new game's pool always has an Apprentice
+  Technician (`_guarantee_starter_technician()`), and each refill tick
+  swaps an Engineer for a Technician if the pool has none
+  (`_ensure_technician_applicant()`). Hire costs 60/180/480/1100g, wages
+  25/60/130/260g. Card: portrait, name, role pill, "<tier> Tier" (role
   and skill tier share the word "Technician", so they're never joined),
-  a 5-segment skill meter per department, hire cost / wage, orange Hire.
+  a 5-segment skill meter per department, hire cost / wage, the hire's
+  preview (a Technician's "+N/h ~Mm"; Engineers read "learning"), orange Hire.
 - **Roster**: payroll line (red in wage debt), ONE crew-wide strategy
   dropdown (`GameData.set_crew_routing_strategy()`), and a card per worker:
   portrait, name, role pill, single-line clipped status (walking to /
@@ -1294,12 +1340,21 @@ bottleneck, then buy the fix in the same place")
   cards), room strips with station counts, and a card per station (Ship
   excluded): name + tier, cycle, yield (defect-rolling stations only),
   busy meter + %, parts/hr from `GameData.station_stat_summary()`, then
-  Tier / Rack buttons in an `HFlowContainer`. The busiest station (above
+  Tier / Rack buttons in an `HFlowContainer`, the Tier button led by its
+  preview ("+N/h ~Mm" or "no gain yet"). The busiest station (above
   `BOTTLENECK_MIN_UTILIZATION` 25%) gets a red border, a BOTTLENECK pill
-  and a gold Tier button.
+  and a gold Tier button; an orange line above the list says when the crew,
+  not a machine, sets the pace. **Purchase previews** (design doc 31.4 #5,
+  `GameData.purchase_gain(change, price)` / `purchase_gain_text()` /
+  `purchase_gain_short()`): `line_parts_per_hour()` = min(slowest station
+  with all printers summed, crew) where the crew is n^0.85 Technicians x
+  3600 / `CREW_SECONDS_PER_PART` (160s; nobody hired = 0.5), and gold per
+  part is `profit_per_part_estimate()`. Also on the Station Detail Menu and
+  Board Tier tooltips, Buy Printer, the Level Up tooltip and Team hire
+  cards. Demand isn't modelled: it assumes the extra capacity gets used.
 - **Growth tab**: three cards. Factory Level - EXP bar, "Reach Level N to
-  unlock" listing only real effects (+8% speed, printer cap change, +5
-  gems, crew seniority), and the orange Level Up button (the sole caller of
+  unlock" listing only real effects (+8% speed, printer cap change, active
+  contracts change, +5 gems, crew seniority), and the orange Level Up button (the sole caller of
   `GameData.level_up_factory()`; shows price + payroll; disabled until
   `can_level_up_factory()` and `can_afford_factory_level_up()` - payroll
   never gates it). Process Speed. Printers - owned/cap, printer
@@ -1479,6 +1534,8 @@ autoload)
   Pixel HD station art, 32px icons, bevel buttons/hover rim, HD text font.
   Checked in offscreen renders at the 16 Pro's native resolution, never on
   the phone. Settings can switch each back.
+- The 2026-10-18 changes: the two-sided NC shelf and the Admin menu gaps,
+  and how the rebalanced economy (design doc 31.6) feels in real play.
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - mostly done, pending the user's on-device
@@ -1492,21 +1549,19 @@ autoload)
   No tutorial code of any kind exists.
 - **Progressive unlock gating** - every overlay and system is reachable from the
   first second. The MVP rule is gate, don't delete.
-- **A balance pass** - simulated playthroughs (design doc Section 29) found
-  hard blockers before any tuning: a solo player can never unlock production
-  (familiarity % caps at 50% with no staff), ~9% of new games have no
-  affordable Technician in the applicant pool, spending the starting gold
-  can soft-lock production (parts are prepaid; the 20% up-front doesn't
-  cover them), and accepting every starting offer is a free +754g. Plus
-  contracts that net ~+20g per 35 min against 100g+ purchases, and defects
-  that vanish after one part. Section 29.5 lists proposed changes; none
-  applied yet. **Section 31 lays out four economy options** (A re-anchored
-  numbers, B capacity-sized contracts, C materials cost-plus, D operating
-  costs) plus fixes needed under any of them (a familiarity gate that
-  doesn't average in idle staff, quality aligned with the 85% gate - today
-  ~58% of castings made at the gate are remelted - Reputation-gated offers,
-  a material advance instead of the 20% up-front). Waiting on the user's
-  pick; A + the 31.4 fixes recommended first.
+- **Balance, after the first pass** - Option A + the 31.4 fixes are built
+  (design doc 31.6 has the numbers and before/after playthroughs; the 29.2
+  blockers are fixed). Still open: nothing to spend on once a fast shop
+  maxes out (~4 hours in for an optimizing bot, gold piles up - needs the
+  sinks: upgrade tree 31.7, materials 28.10, maybe Option D); Reputation
+  reaching Tier 4 in ~3 hours for that bot; per-worker familiarity still
+  maxes after one part (29.4); Options B (capacity-sized contracts,
+  Rush/Relaxed) and C not started. The purchase previews don't model
+  demand. Needs a real play session to judge feel.
+- **Upgrade tree** (user idea 2026-10-18, design doc 31.7) - achievements
+  and level-ups buying permanent perks such as more contract slots or the
+  right to own more of a station; `max_active_contracts()`/`printer_cap()`
+  are where it would add. Not started.
 - **Minimum viable audio** - there is no audio at all, not one `AudioStream`.
 - **The returning-player recap UI** - `SaveManager.offline_catchup_finished`
   fires with a real summary, but nothing displays it.
@@ -1542,10 +1597,10 @@ From the design doc, still pending:
   together on one clock. The batch size `SpinBox` sets `Station.batch_size`
   but nothing reads it except printer instances/Abrasive Blast/Shelling's
   parallel cap.
-- **Station upgrade effects (Tier 2-5)** are mostly cosmetic (sprite swap
-  only) except the three stations above with real tier-driven `batch_cap`
-  changes. Rack capacity, by contrast, is a real tier-independent upgrade
-  for every station.
+- **Station upgrade effects (Tier 2-5)** are a flat 15% speed per tier
+  everywhere plus the batch/parallel caps above - no per-station flavor
+  yet, and tiers don't change the art. Rack capacity is a separate,
+  tier-independent upgrade for every station.
 - `FACTORY_LEVEL_PRINTER_CAP`/`FACTORY_LEVEL_EXP_THRESHOLD` only go to
   Level 5 (placeholder ceiling); nothing besides printer cap is gated by
   Factory Level yet (the Air Melter idea from Section 5 is earmarked for it

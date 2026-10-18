@@ -1470,6 +1470,11 @@ Sources: [TFG USA - Common Casting Defects](https://www.tfgusa.com/casting-defec
 
 ### 28.9 Contract income and the soft-lock fix (user, 2026-10-03) - BUILT
 
+*Superseded 2026-10-18 by 31.4 #3 (built): the 20% up front is gone; the
+customer advances the material for every production part instead, and the
+rest is paid per part on delivery. The early bonus is now 15%. Kept below
+for history.*
+
 A contract used to pay only when fully complete, so running short of gold
 mid-contract (parts now cost money to queue) left no way to finish it - a
 real soft-lock hit in play. Now:
@@ -1630,6 +1635,9 @@ quality lands 85-100 (mean ~93), so 8-25% of production castings remelt.
 
 ### 29.5 Variables worth changing first (proposals, not applied)
 
+*Mostly applied 2026-10-18 in reworked form as part of Option A + the 31.4
+fixes - see 31.6. The per-worker familiarity rate (last row) is still open.*
+
 | Change | Where | Fixes |
 |---|---|---|
 | Guarantee an Apprentice Technician in the opening applicant pool (or start with one, framed as the founder's assistant) | `GameData._refill_applicant_pool()` / `_init()` | 29.2 #2 |
@@ -1676,7 +1684,7 @@ device yet.
 
 ---
 
-## 31. Economy Rebalance Options (2026-10-18) - PROPOSAL, awaiting a pick
+## 31. Economy Rebalance Options (2026-10-18) - Option A + 31.4 BUILT (see 31.6)
 
 User: "the contracts only giving 60g and a part costing 4 gold for a trial
 when you need to do like 50 trials to get familiar just doesnt add up...
@@ -1828,3 +1836,94 @@ variants** once that feels right. **C** when the materials system is built
 the mid-game needs more tension. Every change should be checked the way
 Section 29 was: simulated playthroughs measuring time-to-first-purchase,
 gold per minute by tier, trials per geometry, and remelt rate.
+
+### 31.6 Built: Option A + the 31.4 fixes (user pick, 2026-10-18)
+
+User: "lets do what you said first option a plus the fixes. lets also give a
+cap on how many contracts you can hold at one time." What changed (every
+number is still a placeholder):
+
+- **Prices (A).** Unit price T1-T4 40/55/70/90. Production material 30% of
+  that (12/17/21/27g), a revert trial 14% (6/8/10/13g). Early bonus 15%.
+  Hires 60/180/480/1100g, wages (paid at each level-up) 25/60/130/260g.
+  Station tiers 120/220/400/650g, printers 300/550/900/1300/1800g, Factory
+  Level 2-5 400/1000/3000/8000g. The six starting offers re-priced to match.
+- **EXP (31.4 #6).** 4/5/6/8 per good part shipped by tier, plus 5/15/40/100
+  for finishing the contract. Level thresholds 40 / 500 / 2500 / 8000.
+  On-time Tier 2/3/4 contracts give 1/2/3 gems.
+- **Familiarity gate (31.4 #1).** % = 29 per shop star (trials, learning
+  parts, diagnosis) + up to 30 from the crew's best worker per department.
+  Three retired trials reach 85% with nobody hired; an experienced crew gets
+  there in two. Hiring never lowers it. Offer cards and contract rows say
+  "~N trials to production". Unstaffed stations' defect rolls use the
+  shop's familiarity too, so a solo shop's defect rates improve.
+- **Quality (31.4 #2).** 64 + 36 x familiarity +/- 4: at the 85% gate a
+  casting is at least 90.6, so following the rules never remelts a part.
+- **Offers and income (31.4 #3).** The Tier 2-4 starting offers are locked
+  until Reputation reaches their tier (shown dimmed with "Rep 15", Accept
+  says why). Active contracts are capped by Factory Level - **2 / 3 / 4 / 5
+  / 6** for Levels 1-5 (`GameData.max_active_contracts()`), shown as
+  "Active (1/2)". The 20% up front is gone: the customer advances the metal,
+  so each contract's production parts are free to queue up to its quantity
+  (`Contract.advance_per_part`, `LineItem.advanced_count`); delivery pays the
+  payout less that advance, per part. Replacements are the shop's cost.
+- **Defect spiral (31.4 #4).** The undiagnosed-part risk counts only the
+  same geometry and caps at 2x.
+- **Purchases move income (31.4 #5).** Every station tier runs cycles 15%
+  faster. A simple model - the line runs at its slowest station or its crew,
+  whichever is lower; one Technician is ~22 parts/h, each extra one a little
+  less - drives "+N parts/h, pays back in ~M min" on Tier buttons (Factory,
+  Station menu, Board), Buy Printer, the level-up tooltip and Technician
+  hire cards. A purchase that doesn't touch the limit says "no gain yet",
+  and the Factory screen says when the crew is the limit.
+- **Other blockers from 29.2.** A new game's applicant pool always has an
+  Apprentice Technician, and the pool swaps an Engineer for a Technician at
+  the next refill if it has none (one playthrough ran 90 minutes stuck on a
+  single Technician). Old saves have their contracts re-priced once on load
+  (`ECONOMY_VERSION`); contracts already over the new cap stay active.
+- **A routing bug the new pacing exposed.** A part in Awaiting Transfer
+  bound for a batch station (Clean, UV Cure, Burnout) was invisible to the
+  route planner, so nobody fetched it and every batch station downstream
+  waited on it forever. Fixed in the predictor and the actor together.
+
+**Measured** (the 29-style bot, 4 seeds per style, 90 minutes; before -> after):
+
+| | Before | After |
+|---|---|---|
+| Solo: production unlocks | never | 15-21 min |
+| One Technician: production unlocks | 17-20 min | ~10 min |
+| One Technician: first T1 contract done | 32-42 min | 25-28 min |
+| Grow bot: gold earned in 90 min | 210-380g | 1,500-2,400g |
+| Grow bot: Factory Level 2 | not reached | 30-66 min (3 of 4 runs) |
+| Trials before production | solo: 21-24 and still locked | ~3 (2 with an experienced crew) |
+| Production castings remelted | 8-25% | 0 |
+
+Ten-hour grow runs (a bot that buys whatever pays back fastest): Level 2 at
+0.5-1.5 h, 3 at ~2.5 h, 4 at ~4.6 h, 5 just past 10 h - a person should land
+near the 31.2 targets. **Open issue:** after ~4 hours that bot has nothing
+left worth buying and gold piles up (70-80k by hour 10). That's the job of
+later sinks - the upgrade tree below, materials (28.10), Option D's
+operating costs. Reputation also climbs fast with a quick shop (Tier 4 by
+~3 hours for the bot); worth watching in real play.
+
+### 31.7 The upgrade tree hook (user idea, 2026-10-18 - NOT built)
+
+"Eventually I want to add like a rpg tree you can upgrade by completing
+achievements and leveling up... one of the upgrades could be how many
+contracts you can have active. Same with upgrading how many of different
+stations you can buy, or that might be based on the factory level."
+
+- Caps are already single functions, so a tree adds on top of them:
+  `GameData.max_active_contracts()` (Factory Level table today) and
+  `GameData.printer_cap()` (same). A tree node would add "+1 contract slot"
+  or "+1 printer" there rather than changing the level tables.
+- "How many of different stations you can buy": only printers can be owned
+  more than once today. Buying a second Shelling line or furnace would need
+  the multi-instance machinery printers use (`printing_N` ids,
+  `all_real_station_ids()`), and the Floor Editor (Section 5) for where they
+  go. A reasonable split: Factory Level sets the hard ceiling (floor space),
+  the tree unlocks the right to buy extra machines of a kind.
+- Natural tree currencies: Factory Level-ups and achievements (contracts
+  finished on time, geometries mastered, zero-defect runs). Gems are already
+  a "harder currency" and could buy nodes too.
+

@@ -9,7 +9,10 @@ class_name FactoryOverlay
 ## (station_stat_summary(): average cycle time, yield, how busy it's been as
 ## a meter, parts per hour), grouped under room strips. The busiest station
 ## gets a red border and a BOTTLENECK pill, and every card carries its Tier
-## and Rack upgrade buttons so the numbers lead straight to a purchase.
+## and Rack upgrade buttons so the numbers lead straight to a purchase - each
+## Tier button with what it buys (GameData.purchase_gain(): "+N/h ~Mm", or
+## "no gain yet" when the crew or another station sets the pace). A line
+## above the list says when the crew, not a machine, is the limit.
 ##
 ## Growth tab: three cards - Factory Level (EXP bar, the real effects of the
 ## next level, and the paid Level Up: the one place
@@ -88,12 +91,14 @@ class StatRow:
 	var rate: Label
 	var bottleneck_pill: PanelContainer
 	var tier_button: Button
+	var gain_label: Label
 	var rack_button: Button
 	var station: Station = null
 
 var _stat_rows: Dictionary = {} # station_id -> StatRow
 var _room_headers: Dictionary = {} # room_name -> PanelContainer
 var _stats_header: Control
+var _crew_note: Label
 
 
 func _stat_columns(row: HBoxContainer, cycle: Control, yield_c: Control, busy: Control, rate: Control) -> void:
@@ -111,6 +116,9 @@ func _build_stats_header() -> void:
 	var intro := UiKit.label("Busy = share of time a station spends running. The busiest is your bottleneck - upgrade it first.", UiKit.FONT_SMALL, "text_dim")
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(intro)
+	_crew_note = UiKit.label("", UiKit.FONT_SMALL, "warn")
+	_crew_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_crew_note)
 	# Inset by a card's 2px border + 4px content margin so columns line up.
 	var inset := MarginContainer.new()
 	inset.add_theme_constant_override("margin_left", 6)
@@ -130,6 +138,8 @@ func _build_stats_header() -> void:
 
 func _refresh_stats() -> void:
 	stats_list.move_child(_stats_header, 0)
+	_crew_note.visible = GameData.crew_is_bottleneck()
+	_crew_note.text = "Your crew sets the pace (~%d parts/h) - hiring a Technician adds the most right now." % roundi(GameData.crew_parts_per_hour())
 	var bottleneck_id := _bottleneck_station_id()
 	var room_counts: Dictionary = {}
 	for id in GameData.all_real_station_ids():
@@ -220,6 +230,9 @@ func _create_stat_row() -> StatRow:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(spacer)
+	row.gain_label = UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+	row.gain_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	actions.add_child(row.gain_label)
 	row.tier_button = UiKit.button("", "act_upgrade")
 	row.tier_button.pressed.connect(_on_tier_pressed.bind(row))
 	actions.add_child(row.tier_button)
@@ -258,9 +271,16 @@ func _update_stat_row(row: StatRow, station: Station, is_bottleneck: bool) -> vo
 		row.tier_button.text = "Tier %d: %dg" % [target, cost]
 		row.tier_button.disabled = not GameData.can_afford_with_gems(cost)
 		UiKit.set_button_kind(row.tier_button, "primary" if is_bottleneck and not row.tier_button.disabled else "neutral")
+		var gain := GameData.purchase_gain({"station": station, "tier": target}, cost)
+		row.gain_label.text = GameData.purchase_gain_short(gain)
+		UiKit.set_label_color(row.gain_label, "good" if gain.payback_minutes >= 0.0 else "text_dim")
+		row.tier_button.tooltip_text = UiText.tip("%d%% faster cycles here. %s" % [
+			roundi(GameData.STATION_TIER_SPEED_BONUS_PER_TIER * 100.0), GameData.purchase_gain_text(gain)])
+		row.gain_label.visible = true
 	else:
 		row.tier_button.text = "Max tier"
 		row.tier_button.disabled = true
+		row.gain_label.visible = false
 
 	if station.rack_capacity < Station.MAX_RACK_CAPACITY:
 		var rack_target := station.rack_capacity + 1
@@ -414,7 +434,9 @@ func _refresh_growth() -> void:
 		if GameData.can_level_up_factory():
 			_level_up_button.text = "Level Up\n%dg\n+%dg payroll" % [price, payroll]
 			_level_up_button.disabled = not GameData.can_afford_factory_level_up()
-			_level_up_button.tooltip_text = UiText.tip("Costs %dg, then pays every hired worker's wage (%dg total) - that part can put you in debt." % [price, payroll])
+			var speed_gain := GameData.purchase_gain({"speed": _next_level_speed_ratio()}, price + payroll)
+			_level_up_button.tooltip_text = UiText.tip("Costs %dg, then pays every hired worker's wage (%dg total) - that part can put you in debt. Speed alone: %s" % [
+				price, payroll, GameData.purchase_gain_text(speed_gain)])
 		else:
 			_level_up_button.text = "Level Up\n%dg\nneed EXP" % price
 			_level_up_button.disabled = true
@@ -442,7 +464,9 @@ func _refresh_growth() -> void:
 		var cost := GameData.printer_purchase_cost()
 		_buy_printer_button.text = "Buy Printer\n%dg" % cost
 		_buy_printer_button.disabled = not GameData.can_afford_with_gems(cost)
-		_printer_note.text = "More printers start more parts at once. The cap rises with factory level."
+		var gain := GameData.purchase_gain({"printers": 1}, cost)
+		_buy_printer_button.tooltip_text = UiText.tip(GameData.purchase_gain_text(gain))
+		_printer_note.text = "More printers start more parts at once. The cap rises with factory level. %s." % GameData.purchase_gain_text(gain)
 	else:
 		_buy_printer_button.text = "Buy Printer\ncap reached"
 		_buy_printer_button.disabled = true
@@ -458,10 +482,20 @@ func _next_level_effects(next_level: int) -> Array[String]:
 	var cap_next: int = GameData.FACTORY_LEVEL_PRINTER_CAP.get(next_level, cap_now)
 	if cap_next > cap_now:
 		effects.append("- Printer cap %d -> %d" % [cap_now, cap_next])
+	var slots_now: int = GameData.FACTORY_LEVEL_CONTRACT_CAP.get(next_level - 1, 0)
+	var slots_next: int = GameData.FACTORY_LEVEL_CONTRACT_CAP.get(next_level, slots_now)
+	if slots_next > slots_now:
+		effects.append("- Active contracts %d -> %d" % [slots_now, slots_next])
 	effects.append("- +%d Gems" % GameData.FACTORY_LEVEL_UP_GEM_REWARD)
 	if not GameData.technicians.is_empty():
 		effects.append("- Your crew gains seniority: faster, fewer defects, higher wages")
 	return effects
+
+
+## How much faster every station runs after the next level-up.
+func _next_level_speed_ratio() -> float:
+	var now := GameData.factory_process_speed_multiplier()
+	return (now + GameData.FACTORY_LEVEL_SPEED_BONUS_PER_LEVEL) / now
 
 
 func _on_buy_printer_pressed() -> void:

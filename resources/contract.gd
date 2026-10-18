@@ -31,6 +31,9 @@ class LineItem:
 	var alloy_name: String = ""
 	var quantity_required: int = 1
 	var quantity_shipped: int = 0
+	## Production parts queued on the customer's material advance so far -
+	## up to quantity_required are free to queue (GameData.print_orders_cost()).
+	var advanced_count: int = 0
 
 	var is_complete: bool:
 		get: return quantity_shipped >= quantity_required
@@ -72,11 +75,19 @@ var is_started: bool = false
 ## incomplete. Set by GameData._process_contracts().
 var deadline_penalty_applied: bool = false
 
-## Gold paid out on this contract so far - the up-front payment plus every
-## per-part payment (GameData.CONTRACT_UPFRONT_SHARE etc.). Completion pays
-## whatever's left of payout, so the total always comes to exactly payout
-## (plus the early-completion bonus). Saved.
+## Gold paid out on delivery so far (every per-part payment; an older save's
+## 20% up-front payment too). Completion pays whatever's left of
+## GameData.contract_cash_total(), plus the early-completion bonus. Saved.
 var paid_so_far: int = 0
+
+## The material the customer advances per production part (design doc
+## 31.4 #3), fixed when the offer is made. 0 on a contract from a save made
+## before the advance existed - those keep paying the old way. Saved.
+var advance_per_part: int = 0
+
+## Shop Reputation needed to accept this offer - set on the starting offers
+## above Tier 1; generated offers are already rolled within reach. Saved.
+var required_reputation: int = 0
 
 ## Every line item complete - the contract as a whole isn't done until each
 ## individually rolled ask is fulfilled, not just the total unit count.
@@ -166,6 +177,7 @@ func to_dict() -> Dictionary:
 			"alloy_name": li.alloy_name,
 			"quantity_required": li.quantity_required,
 			"quantity_shipped": li.quantity_shipped,
+			"advanced_count": li.advanced_count,
 		})
 	return {
 		"contract_id": contract_id,
@@ -178,6 +190,8 @@ func to_dict() -> Dictionary:
 		"is_started": is_started,
 		"deadline_penalty_applied": deadline_penalty_applied,
 		"paid_so_far": paid_so_far,
+		"advance_per_part": advance_per_part,
+		"required_reputation": required_reputation,
 	}
 
 
@@ -192,6 +206,8 @@ static func from_dict(data: Dictionary) -> Contract:
 	c.is_started = bool(data.get("is_started", false))
 	c.deadline_penalty_applied = bool(data.get("deadline_penalty_applied", false))
 	c.paid_so_far = int(data.get("paid_so_far", 0))
+	c.advance_per_part = int(data.get("advance_per_part", 0))
+	c.required_reputation = int(data.get("required_reputation", 0))
 	c.line_items.clear()
 	for raw in data.get("line_items", []):
 		var li := LineItem.new()
@@ -199,6 +215,7 @@ static func from_dict(data: Dictionary) -> Contract:
 		li.alloy_name = str(raw.get("alloy_name", ""))
 		li.quantity_required = int(raw.get("quantity_required", 1))
 		li.quantity_shipped = int(raw.get("quantity_shipped", 0))
+		li.advanced_count = int(raw.get("advanced_count", 0))
 		c.line_items.append(li)
 	return c
 

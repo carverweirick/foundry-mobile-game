@@ -204,7 +204,9 @@ func _update_station_row(row: StationRow, station: Station) -> void:
 			_set_action(row, "Queue", "act_queue", "neutral", "Start printing the next queued part")
 		"upgrade":
 			var cost := GameData.upgrade_cost_for_tier(station.current_tier + 1)
-			_set_action(row, "%dg" % cost, "act_upgrade", "neutral", "Upgrade to Tier %d for %dg" % [station.current_tier + 1, cost])
+			var gain := GameData.purchase_gain({"station": station, "tier": station.current_tier + 1}, cost)
+			_set_action(row, "%dg" % cost, "act_upgrade", "neutral", "Upgrade to Tier %d for %dg. %s" % [
+				station.current_tier + 1, cost, GameData.purchase_gain_text(gain)])
 		_:
 			_set_action(row, "", "", "neutral", "")
 
@@ -339,7 +341,7 @@ func _add_transfer_row(part: Part) -> void:
 	row.add_child(id_label)
 
 	row.add_child(UiKit.icon("reputation"))
-	var familiarity_label := UiKit.label("%d/5" % GameData.average_familiarity_stars(GameData.geometry_name_for_part(part)))
+	var familiarity_label := UiKit.label("%d/5" % GameData.familiarity_stars(GameData.geometry_name_for_part(part)))
 	familiarity_label.custom_minimum_size = Vector2(24.0, 0.0)
 	familiarity_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(familiarity_label)

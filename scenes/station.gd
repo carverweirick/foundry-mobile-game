@@ -349,8 +349,13 @@ func _process(delta: float) -> void:
 func simulate_step(delta: float) -> void:
 	if current_state == State.RUNNING or not shelling_active_parts.is_empty():
 		GameData.record_station_busy(station_id, delta)
-	if is_batch_station() and _batch_machine_free() and not batch_load.is_empty():
-		_batch_wait += delta
+	if is_batch_station() and _batch_machine_free():
+		# Parts that queued on the rack while a cycle ran go in once it's
+		# unloaded - otherwise they sat on the rack with the fill-wait clock
+		# stopped, and the route planner never saw a load worth starting.
+		_top_up_batch_load()
+		if not batch_load.is_empty():
+			_batch_wait += delta
 	if uses_parallel_runs():
 		_advance_parallel_shelling(delta)
 	elif current_state == State.RUNNING:
@@ -677,7 +682,9 @@ func _technician_act(tech: Technician) -> void:
 	# parallel-shelling station with SOME slots busy and one free still gets
 	# noticed - current_state alone can't distinguish "fully busy" from
 	# "partially busy with room for one more" once there's more than one slot.
-	if _has_open_slot_to_fill() and _fill_active_slot_if_possible():
+	# (A batch station also claims a held part bound here, the same rule
+	# has_actionable_work() predicts with.)
+	if (_has_open_slot_to_fill() or _batch_claim_waiting()) and _fill_active_slot_if_possible():
 		tech.begin_interacting()
 		return
 
@@ -763,6 +770,13 @@ func _travel_if_worthwhile(tech: Technician) -> bool:
 ## itself would make on arrival, just evaluated remotely.
 func has_actionable_work() -> bool:
 	if _has_ready_part_to_send():
+		return true
+	# A batch station claims held parts bound for it on arrival
+	# (_fill_parallel_slot_if_possible()), but _has_open_slot_to_fill() below
+	# only sees what's already here - so a part waiting in Awaiting Transfer
+	# for Clean drew nobody, and every batch station downstream waited on it
+	# forever (a 3-part stall found in the 2026-10-18 playthroughs).
+	if _batch_claim_waiting():
 		return true
 	if _has_open_slot_to_fill():
 		# For a batch station an "open slot" already means a load is ready to
@@ -1132,9 +1146,10 @@ func remove_part(part: Part) -> bool:
 
 
 ## Spends currency to raise current_tier by one, if not already maxed and
-## affordable. Only changes current_tier/sprite for now - Tier 2-5 don't yet
-## shorten timer_duration or raise batch_cap, that's a later pass. Called
-## from StationDetailMenu's Upgrade button.
+## affordable. Every tier runs cycles faster
+## (GameData.station_tier_speed_multiplier()); some stations also batch more
+## (_apply_tier_batch_effects()). Called from the Station Detail Menu, the
+## Board and the Factory screen.
 func try_upgrade() -> bool:
 	if current_tier >= 5:
 		return false
@@ -1218,6 +1233,18 @@ func assign_technician(tech: Technician) -> void:
 ## any overflow beyond that keeps draining as the station cycles through
 ## work, the same way it would for newly-arriving parts). Returns whether
 ## it claimed anything.
+## A batch station with room and a part in Awaiting Transfer bound for it.
+func _batch_claim_waiting() -> bool:
+	return is_batch_station() and can_accept_part() and _has_held_part_bound_here()
+
+
+func _has_held_part_bound_here() -> bool:
+	for part in GameData.held_parts:
+		if GameData.next_station_id_for(part) == station_id:
+			return true
+	return false
+
+
 func _claim_held_parts_bound_here() -> bool:
 	var claimed_any := false
 	for part in GameData.held_parts.duplicate():
@@ -1418,8 +1445,9 @@ func _fill_active_slot_if_possible() -> bool:
 ## an open ShellingRun slot instead of the single current_part.
 func _fill_parallel_slot_if_possible() -> bool:
 	if is_batch_station():
-		_claim_held_parts_bound_here()
-		return _try_start_batch_cycle()
+		# Claiming counts as work done, so the visit isn't an empty one.
+		var claimed := _claim_held_parts_bound_here()
+		return _try_start_batch_cycle() or claimed
 	if not _has_open_slot_to_fill():
 		return false
 	if not queue_rack.is_empty() and (assigned_technicians.is_empty() or is_technician_present()):
@@ -1559,11 +1587,35 @@ func _start_running() -> void:
 ## and seniority_speed_multiplier (new this session - "faster processing
 ## time" from sticking around through level-ups).
 func _effective_timer_duration() -> float:
-	var base_duration: float = timer_duration / GameData.factory_process_speed_multiplier()
+	var base_duration: float = base_cycle_seconds(current_tier)
 	if active_worker == null:
 		return max(base_duration, 0.01)
 	var worker_speed := active_worker.productivity_multiplier * active_worker.seniority_speed_multiplier
 	return max(base_duration / worker_speed, 0.01)
+
+
+## One cycle at `tier`, before any worker's own speed: the factory level and
+## the station's tier both shorten it.
+func base_cycle_seconds(tier: int) -> float:
+	return timer_duration / GameData.factory_process_speed_multiplier() / GameData.station_tier_speed_multiplier(tier)
+
+
+## Parts an hour this station could finish at `tier` if work never ran out -
+## what GameData's purchase previews compare. `speed` scales the cycle (a
+## factory level-up preview). Batch stations count a full load per cycle and
+## Tier 2+ Shelling its parallel slots; every other station runs one part per
+## cycle (printer and Abrasive Blast batch caps aren't used by anything yet).
+func capacity_per_hour(tier: int = -1, speed: float = 1.0) -> float:
+	if tier < 0:
+		tier = current_tier
+	if station_type == StationType.AUTOMATIC:
+		return INF
+	var per_cycle := 1
+	if is_batch_station():
+		per_cycle = GameData.BATCH_TIER_LOAD_CAP[station_id].get(tier, batch_cap)
+	elif station_id == "shelling":
+		per_cycle = GameData.SHELLING_TIER_PARALLEL_CAP.get(tier, 1)
+	return per_cycle * 3600.0 * speed / maxf(base_cycle_seconds(tier), 0.01)
 
 
 func _on_run_finished() -> void:
@@ -1700,7 +1752,7 @@ func _roll_defect_outcome(part: Part) -> int: # GameData.DefectCategory
 	var tech_mult := (
 		active_worker.defect_multiplier if active_worker != null else 1.0
 	)
-	var risk := base_risk * familiarity_mult * tech_mult * GameData.undiagnosed_risk_multiplier(station_id)
+	var risk := base_risk * familiarity_mult * tech_mult * GameData.undiagnosed_risk_multiplier(station_id, geometry_name)
 	# An Engineer's trial fix aimed at this station (design doc 28.7).
 	if part.fix_station_id != "" and GameData.defect_table_key(part.fix_station_id) == GameData.defect_table_key(station_id):
 		risk *= part.fix_risk_mult

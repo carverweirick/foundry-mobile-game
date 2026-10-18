@@ -141,9 +141,13 @@ func _accept_offer() -> void:
 	if GameData.contract_offers.is_empty():
 		_report("No offers waiting.")
 		return
-	var offer: Contract = GameData.contract_offers[0]
-	GameData.accept_contract_offer(offer)
-	_report("Accepted %s." % offer.customer_name)
+	var blocker := ""
+	for offer in GameData.contract_offers:
+		if GameData.accept_contract_offer(offer):
+			_report("Accepted %s." % offer.customer_name)
+			return
+		blocker = GameData.offer_blocker(offer)
+	_report("Can't accept: %s." % blocker)
 
 
 func _cycle_defect_mode() -> void:
