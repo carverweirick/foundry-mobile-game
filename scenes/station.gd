@@ -1048,23 +1048,23 @@ func queue_new_part() -> bool:
 
 ## Bug fix (this session): whether it's actually worth making a brand new
 ## Part right now, rather than just always saying yes whenever the active
-## slot happens to be free. Two backpressure checks, both first-pass
-## placeholders since the design doc gives no concrete numbers, just the
-## intent: don't create more work than the very next step can physically
-## absorb (next_station.can_accept_part() - its rack AND active slot both
-## full means genuinely nowhere for a new Part to go but an ever-growing
-## Awaiting Transfer pile), and don't create more work while the player
-## already has GameData.MAX_UNRESOLVED_DEFECTS_BEFORE_PAUSE-or-more flagged
-## Parts sitting unaddressed anywhere in the shop. Used by both
-## queue_new_part() (manual) and _auto_queue_if_possible() (staffed
-## entry stations) - the two only places a Part is ever conjured from
-## nothing rather than received from an upstream station.
+## slot happens to be free: don't create more work than the very next step
+## can physically absorb (next_station.can_accept_part() - its rack AND
+## active slot both full means genuinely nowhere for a new Part to go but an
+## ever-growing Awaiting Transfer pile). Used by both queue_new_part()
+## (manual) and _auto_queue_if_possible() (staffed entry stations) - the two
+## only places a Part is ever conjured from nothing rather than received
+## from an upstream station.
+##
+## There used to be a second check: 3 flagged parts anywhere paused every
+## printer. That predates the NC shelf, when a defective part stayed at its
+## station and clogged the line; now every flagged part leaves the line at
+## once, so it only stopped production silently while parts waited on the
+## shelf (user report, 2026-10-18: "why can i not just continue to queue
+## parts into the system sometimes"). The shelf's own pressure is the risk
+## an undiagnosed part adds (GameData.undiagnosed_risk_multiplier()).
 func can_start_new_work() -> bool:
-	if next_station != null and not next_station.can_accept_part():
-		return false
-	if GameData.count_unresolved_defects() >= GameData.MAX_UNRESOLVED_DEFECTS_BEFORE_PAUSE:
-		return false
-	return true
+	return next_station == null or next_station.can_accept_part()
 
 
 ## Manual action: takes a READY part off the station and into GameData's
@@ -1948,7 +1948,7 @@ func _idle_status_text(compact: bool = false) -> String:
 	if GameData.get_active_contracts().is_empty():
 		return "Idle - no contracts" if compact else "Idle - no active contracts (accept one from Contract Offers)"
 	if not can_start_new_work():
-		return "Idle - backlog" if compact else "Idle - blocked, clear the backlog first"
+		return "Idle - %s full" % next_station.station_name if compact else "Idle - waiting for room at %s" % next_station.station_name
 	if not GameData.has_print_order():
 		return "Idle - no print orders" if compact else "Idle - no print orders (queue parts in Contracts)"
 	return "Idle"

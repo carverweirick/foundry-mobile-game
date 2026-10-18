@@ -783,6 +783,8 @@ Production of a *new* part (the only two places this ever happens: a staffed ent
 - The very next station has no room at all - its rack and active slot are both full.
 - Too many defective parts are already sitting unaddressed shopwide - "too many unanswered prompts for what the user wants to do about defective parts," a shopwide count rather than per-contract or per-station.
 
+*Update 2026-10-18: the second condition is gone. Once the NC shelf existed (28.1), every flagged part left the line immediately, so this rule only meant that three parts waiting on the shelf silently stopped every printer - reported as "why can i not just continue to queue parts into the system sometimes." The shelf's own pressure is the extra defect risk an undiagnosed part adds.*
+
 Either condition clears automatically once the backlog is dealt with; there's no separate unpause action needed. The exact thresholds (how full is "full," how many unaddressed defects is "too many") are first-pass placeholders, same spirit as every other invented number in this project - worth tuning once playtested rather than treated as final balance.
 
 ### 22.4 Manual Collect no longer requires a station to be fully unstaffed

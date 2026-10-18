@@ -1027,19 +1027,10 @@ func in_flight_counts_for_contract(contract_id: int) -> Dictionary:
 	return counts
 
 
-## Bug fix (this session): a staffed entry station (or a player mashing
-## Queue) used to keep creating brand new Parts as fast as its timer allowed,
-## completely regardless of whether anything downstream could actually
-## absorb them - GameData.held_parts has no cap of its own, so a clogged
-## pipeline just meant an ever-growing pile of Awaiting Transfer Parts nobody
-## could route anywhere. Reported as technicians "pumping out parts
-## continuously" with "no stoppage." Every currently-flagged, unresolved
-## defect counts here - first-pass placeholder threshold, same spirit as
-## every other invented number in this file: the doc doesn't specify a
-## number, just the design intent ("too many unanswered prompts for what the
-## user wants to do about defective parts").
-const MAX_UNRESOLVED_DEFECTS_BEFORE_PAUSE: int = 3
-
+## Flagged parts anywhere in the shop (the NC shelf, plus legacy defects
+## still at a station in an old save). Only the offline recap reads it now:
+## it used to pause every printer at 3, a rule from before the NC shelf -
+## see Station.can_start_new_work().
 func count_unresolved_defects() -> int:
 	var count := 0
 	for part in active_parts:
@@ -1305,7 +1296,7 @@ func print_order_blocker(contract: Contract, line_item_index: int, is_trial: boo
 	if not can_run_production(contract.line_items[line_item_index].geometry_name):
 		return "Needs %d%% familiarity" % int(PRODUCTION_FAMILIARITY_PERCENT)
 	if production_still_needed(contract, line_item_index) <= 0:
-		return "Enough already queued"
+		return "All the parts this order still needs are queued or in production - a replacement can be queued if one is scrapped or remelted"
 	return ""
 
 

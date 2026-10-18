@@ -780,6 +780,9 @@ func _update_queue_button(button: Button, contract: Contract, index: int, is_tri
 	if count > 0:
 		var total := GameData.print_orders_cost(contract, index, is_trial, virgin, count)
 		button.text = "%s x%d  %s" % [kind, count, "advanced" if total == 0 else "%dg" % total]
+	elif blocker != "":
+		# Why it can't queue, on the face - a phone never shows tooltips.
+		button.text = "%s - %s" % [kind, _blocker_short(blocker)]
 	elif covered:
 		button.text = "%s  advanced" % kind
 	else:
@@ -788,6 +791,20 @@ func _update_queue_button(button: Button, contract: Contract, index: int, is_tri
 	if not is_trial:
 		button.icon = UiIcons.get_icon("act_lock" if locked else "act_start")
 	button.tooltip_text = UiText.tip(about if blocker == "" else "%s\n%s" % [blocker, about])
+
+
+## A few words for a disabled queue button's face; the full sentence stays
+## in the tooltip. Keyed off GameData.print_order_blocker()'s wording.
+static func _blocker_short(blocker: String) -> String:
+	if blocker.begins_with("Not enough gold"):
+		return "need gold"
+	if blocker.begins_with("No revert"):
+		return "no revert"
+	if blocker.begins_with("Needs"):
+		return "%d%% to unlock" % int(GameData.PRODUCTION_FAMILIARITY_PERCENT)
+	if blocker.begins_with("All the parts"):
+		return "all queued"
+	return blocker
 
 
 func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:

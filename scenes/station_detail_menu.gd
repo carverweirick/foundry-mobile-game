@@ -482,11 +482,16 @@ func _refresh_actions(is_automatic: bool, staffed: bool) -> void:
 		and _station.is_pipeline_entry and _station.current_state == Station.State.IDLE)
 	if _queue_button.visible:
 		# can_start_new_work() blocks a print when the next station has no
-		# room or too many defects are unaddressed - say so, don't just hide.
+		# room - say why on the face (a phone never shows tooltips).
 		_queue_button.disabled = not _station.can_start_new_work() or not GameData.has_print_order()
-		_queue_button.text = "Start print" if not _queue_button.disabled else "Blocked"
+		if not GameData.has_print_order():
+			_queue_button.text = "No orders"
+		elif not _station.can_start_new_work():
+			_queue_button.text = "%s full" % _station.next_station.station_name
+		else:
+			_queue_button.text = "Start print"
 		_queue_button.tooltip_text = UiText.tip("Start the next queued print order here." if not _queue_button.disabled
-			else ("No print orders - queue parts in Contracts." if not GameData.has_print_order() else "Blocked - clear the backlog downstream first."))
+			else ("No print orders - queue parts in Contracts." if not GameData.has_print_order() else "Waiting for room at %s." % _station.next_station.station_name))
 
 	# Collect whenever no technician is HERE to route it - staffed or not.
 	_collect_button.visible = (not is_automatic and _station.current_state == Station.State.READY

@@ -638,10 +638,15 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
 - **Backpressure: staffed entry stations (and manual Queue) don't
   overproduce.** `Station.can_start_new_work()` (used by both auto-queue and
   manual `queue_new_part()`) gates new-Part creation on
-  `next_station.can_accept_part()` and
-  `GameData.count_unresolved_defects() < MAX_UNRESOLVED_DEFECTS_BEFORE_PAUSE`
-  (3, placeholder). The Queue button shows "Blocked - clear the backlog
-  first" when gated.
+  `next_station.can_accept_part()` only. A second gate - 3 flagged parts
+  anywhere paused every printer - was removed 2026-10-18: it predated the
+  NC shelf, so parts merely waiting on the shelf silently stopped all
+  production ("why can i not just continue to queue parts"). When gated,
+  the printer reads "Idle - Clean full" and its Start button "Clean full".
+  Blocked buttons say why on their face (a phone never shows tooltips) -
+  the Contracts Trial/Production buttons too: "need gold", "no revert",
+  "60% to unlock", "all queued" (production is capped at what the order
+  still needs: required minus shipped, in production and queued).
 - `Station.get_overview_status()` appends a current-part suffix
   (`" - Part #N (Customer)"`, or a bracketed list for parallel-tier
   Shelling) - used by the Board's status lines and the Station Detail Menu's status
