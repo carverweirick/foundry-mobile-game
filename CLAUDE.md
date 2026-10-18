@@ -1500,7 +1500,13 @@ autoload)
   cover them), and accepting every starting offer is a free +754g. Plus
   contracts that net ~+20g per 35 min against 100g+ purchases, and defects
   that vanish after one part. Section 29.5 lists proposed changes; none
-  applied yet.
+  applied yet. **Section 31 lays out four economy options** (A re-anchored
+  numbers, B capacity-sized contracts, C materials cost-plus, D operating
+  costs) plus fixes needed under any of them (a familiarity gate that
+  doesn't average in idle staff, quality aligned with the 85% gate - today
+  ~58% of castings made at the gate are remelted - Reputation-gated offers,
+  a material advance instead of the 20% up-front). Waiting on the user's
+  pick; A + the 31.4 fixes recommended first.
 - **Minimum viable audio** - there is no audio at all, not one `AudioStream`.
 - **The returning-player recap UI** - `SaveManager.offline_catchup_finished`
   fires with a real summary, but nothing displays it.
