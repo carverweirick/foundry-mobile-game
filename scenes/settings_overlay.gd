@@ -15,6 +15,7 @@ class_name SettingsOverlay
 var hud: Hud = null
 var _cutout_button: Button
 var _art_button: Button
+var _text_button: Button
 
 
 func _on_ready() -> void:
@@ -43,6 +44,15 @@ func _on_ready() -> void:
 	_art_button.pressed.connect(_on_art_pressed)
 	content.add_child(_art_button)
 	ThemeManager.station_art_changed.connect(func(_style): _refresh())
+	# Classic m5x7, or the HD font (more pixel detail, same widths).
+	content.add_child(HSeparator.new())
+	var text_header := Label.new()
+	text_header.text = "Text"
+	content.add_child(text_header)
+	_text_button = Button.new()
+	_text_button.pressed.connect(_on_text_pressed)
+	content.add_child(_text_button)
+	ThemeManager.text_style_changed.connect(func(_style): _refresh())
 
 
 func _on_open() -> void:
@@ -59,11 +69,18 @@ func _refresh() -> void:
 		side_text += " (detected: %s)" % hud.detected_camera_side_name()
 	_cutout_button.text = "Cutout: %s - tap to change" % side_text
 	_art_button.text = "Station art: %s - tap to change" % ThemeManager.STATION_ART_DISPLAY_NAMES[ThemeManager.station_art]
+	_text_button.text = "Text: %s - tap to change" % ThemeManager.TEXT_STYLE_DISPLAY_NAMES[ThemeManager.text_style]
 
 
 func _on_art_pressed() -> void:
 	var next: int = (ThemeManager.station_art + 1) % ThemeManager.STATION_ART_DISPLAY_NAMES.size()
 	ThemeManager.set_station_art(next as ThemeManager.StationArtStyle)
+	_refresh.call_deferred()
+
+
+func _on_text_pressed() -> void:
+	var next: int = (ThemeManager.text_style + 1) % ThemeManager.TEXT_STYLE_DISPLAY_NAMES.size()
+	ThemeManager.set_text_style(next as ThemeManager.TextStyle)
 	_refresh.call_deferred()
 
 

@@ -64,6 +64,21 @@ const STATION_ART_DISPLAY_NAMES := {
 	StationArtStyle.AI: "Painted (AI)",
 }
 
+## Which font all UI text uses (user request 2026-10-17: more detail in the
+## text). HD is VT323, re-em'd by tools/make_text_font.py to exactly m5x7's
+## width at every size, so no size or layout changes with it; it has about
+## twice the vertical pixel detail. Appended - settings.cfg stores the int.
+enum TextStyle { CLASSIC, HD }
+
+const TEXT_STYLE_DISPLAY_NAMES := {
+	TextStyle.CLASSIC: "Classic",
+	TextStyle.HD: "HD",
+}
+const TEXT_FONT_PATHS := {
+	TextStyle.CLASSIC: "res://assets/fonts/m5x7.ttf",
+	TextStyle.HD: "res://assets/fonts/vt323_hd.ttf",
+}
+
 const CUTOUT_SIDE_DISPLAY_NAMES := {
 	CutoutSide.AUTO: "Auto",
 	CutoutSide.LEFT: "Left",
@@ -76,16 +91,19 @@ const SETTINGS_PATH := "user://settings.cfg"
 signal theme_changed(theme_choice: ThemeChoice)
 signal cutout_side_changed(side: CutoutSide)
 signal station_art_changed(style: StationArtStyle)
+signal text_style_changed(style: TextStyle)
 
 var current_theme: ThemeChoice = ThemeChoice.DARK
 var cutout_side: CutoutSide = CutoutSide.AUTO
 var station_art: StationArtStyle = StationArtStyle.PIXEL_HD
+var text_style: TextStyle = TextStyle.HD
 
 
 func _ready() -> void:
 	_load_settings()
 	for choice in THEME_PATHS:
 		_install_bevel_buttons(load(THEME_PATHS[choice]), choice)
+	_apply_text_font()
 	_apply_theme()
 
 
@@ -137,6 +155,24 @@ func set_station_art(style: StationArtStyle) -> void:
 	station_art_changed.emit(station_art)
 
 
+func set_text_style(style: TextStyle) -> void:
+	if style == text_style:
+		return
+	text_style = style
+	_apply_text_font()
+	_save_settings()
+	text_style_changed.emit(text_style)
+
+
+## Both Themes are the cached instances every Control resolves through
+## (including the project default theme), so swapping their default_font
+## re-fonts everything that doesn't override it - nothing in this project does.
+func _apply_text_font() -> void:
+	var font: Font = load(TEXT_FONT_PATHS[text_style])
+	for choice in THEME_PATHS:
+		(load(THEME_PATHS[choice]) as Theme).default_font = font
+
+
 func set_cutout_side(side: CutoutSide) -> void:
 	if side == cutout_side:
 		return
@@ -179,6 +215,9 @@ func _load_settings() -> void:
 	var saved_art: int = config.get_value("ui", "station_art", StationArtStyle.PIXEL_HD)
 	if STATION_ART_DISPLAY_NAMES.has(saved_art):
 		station_art = saved_art
+	var saved_text: int = config.get_value("ui", "text_style", text_style)
+	if TEXT_STYLE_DISPLAY_NAMES.has(saved_text):
+		text_style = saved_text
 
 
 func _save_settings() -> void:
@@ -189,4 +228,5 @@ func _save_settings() -> void:
 	config.set_value("ui", "theme", current_theme)
 	config.set_value("ui", "cutout_side", cutout_side)
 	config.set_value("ui", "station_art", station_art)
+	config.set_value("ui", "text_style", text_style)
 	config.save(SETTINGS_PATH)
