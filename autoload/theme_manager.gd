@@ -54,10 +54,12 @@ const THEME_DISPLAY_NAMES := {
 ## saved to the same settings file.
 enum CutoutSide { AUTO, LEFT, RIGHT, BOTH }
 
-## Which station art set the floor and menus use (see StationArt).
-enum StationArtStyle { PIXEL, AI }
+## Which station art set the floor and menus use (see StationArt). New
+## styles are appended - settings.cfg stores the int.
+enum StationArtStyle { PIXEL, AI, PIXEL_HD }
 
 const STATION_ART_DISPLAY_NAMES := {
+	StationArtStyle.PIXEL_HD: "Pixel HD",
 	StationArtStyle.PIXEL: "8-bit",
 	StationArtStyle.AI: "Painted (AI)",
 }
@@ -77,7 +79,7 @@ signal station_art_changed(style: StationArtStyle)
 
 var current_theme: ThemeChoice = ThemeChoice.DARK
 var cutout_side: CutoutSide = CutoutSide.AUTO
-var station_art: StationArtStyle = StationArtStyle.PIXEL
+var station_art: StationArtStyle = StationArtStyle.PIXEL_HD
 
 
 func _ready() -> void:
@@ -174,7 +176,7 @@ func _load_settings() -> void:
 	var saved_side: int = config.get_value("ui", "cutout_side", CutoutSide.AUTO)
 	if CUTOUT_SIDE_DISPLAY_NAMES.has(saved_side):
 		cutout_side = saved_side
-	var saved_art: int = config.get_value("ui", "station_art", StationArtStyle.PIXEL)
+	var saved_art: int = config.get_value("ui", "station_art", StationArtStyle.PIXEL_HD)
 	if STATION_ART_DISPLAY_NAMES.has(saved_art):
 		station_art = saved_art
 

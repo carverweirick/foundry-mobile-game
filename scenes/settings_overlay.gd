@@ -33,8 +33,8 @@ func _on_ready() -> void:
 	_cutout_button.pressed.connect(_on_cutout_pressed)
 	content.add_child(_cutout_button)
 	ThemeManager.cutout_side_changed.connect(func(_side): _refresh())
-	# Two complete station art sets (see StationArt): hand-built 8-bit
-	# sprites, or the AI-painted set.
+	# Three complete station art sets (see StationArt): 128px pixel art,
+	# the hand-built 8-bit sprites, or the AI-painted set.
 	content.add_child(HSeparator.new())
 	var art_header := Label.new()
 	art_header.text = "Station art"
