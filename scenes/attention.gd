@@ -76,6 +76,19 @@ static func collect() -> Array[Dictionary]:
 		})
 		order += 1
 
+	# The shelf's pickup side with nobody hired to carry parts back.
+	var pickup_stranded := GameData.nc_pickup_stranded()
+	if pickup_stranded > 0:
+		items.append({
+			"key": "nc_pickup",
+			"priority": PRIORITY_AWAITING_TRANSFER,
+			"label": "NC shelf: %d part%s to send back" % [pickup_stranded, "" if pickup_stranded == 1 else "s"],
+			"station": null,
+			"overlay": "nc",
+			"order": order,
+		})
+		order += 1
+
 	# Every contract should have an Engineer (design doc 28.2) - only nagged
 	# once there's an Engineer to assign.
 	if not GameData.engineers().is_empty():

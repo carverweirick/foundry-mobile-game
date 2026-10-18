@@ -1814,6 +1814,9 @@ func simulate(delta: float) -> void:
 
 	for station: Station in station_by_id.values():
 		station.simulate_step(delta)
+	for tech in technicians:
+		if tech.current_station_id == NC_PICKUP_ID and not tech.is_traveling:
+			_nc_pickup_act(tech)
 
 	_process_engineers(delta)
 	_process_contracts(delta)
@@ -1860,6 +1863,20 @@ func _stats_for(station_id: String) -> Dictionary:
 ## Every defective part, the moment it's flagged (Station quarantines it via
 ## quarantine_part()). Saved as part ids, like held_parts.
 var nc_shelf: Array[Part] = []
+## The shelf's other side (user request, 2026-10-18): parts dispositioned
+## for Rework or Scan wait here until a technician walks over, picks them up
+## and carries them to their next station - the intake side above holds
+## everything still waiting on a decision. Saved as part ids.
+var nc_pickup: Array[Part] = []
+## The pickup side as a routing destination: technicians use this id as their
+## current/target "station" while walking to or standing at it (see
+## Technician.pick_next_station()). main.gd sets the position.
+const NC_PICKUP_ID := "nc_shelf"
+var nc_pickup_position: Vector2 = Vector2.ZERO
+## The technician walking to the pickup side right now, if any - the same
+## reservation Station.incoming_technician is, so two don't go for the same
+## parts. Transient.
+var nc_pickup_incoming: Technician = null
 ## Scrapped parts, counted only - the "scrap inventory" itself is a later idea
 ## (design doc 28.3).
 var scrapped_part_count: int = 0
@@ -1900,6 +1917,12 @@ func rework_station_for(part: Part) -> String:
 	if part.defect_station_id.begins_with("printing"):
 		return "patching"
 	return ""
+
+
+## Where a reworked part on its way back gets repaired. rework_station_for()
+## reads the defect, which is cleared once the part leaves the intake side.
+func rework_station_for_origin(part: Part) -> String:
+	return "patching" if part.learning_origin_station_id.begins_with("printing") else "mold_prep"
 
 
 ## Shelf parts waiting on the player: diagnosed (time to choose a
@@ -2014,9 +2037,9 @@ func scrap_nc_part(part: Part) -> void:
 
 
 ## Disposition: rework for learning (design doc 28.3). Back onto the line
-## from the station after the one that flagged it - via Awaiting Transfer,
-## so technicians or the player carry it - repaired on the way at
-## rework_station_for(), but learning-only: it never ships.
+## from the station after the one that flagged it - via the shelf's pickup
+## side, where a technician collects it (or the player sends it) - repaired on
+## the way at rework_station_for(), but learning-only: it never ships.
 func rework_nc_part(part: Part) -> bool:
 	if not part.nc_diagnosed or rework_station_for(part) == "":
 		return false
@@ -2041,8 +2064,121 @@ func _release_for_learning(part: Part) -> void:
 	part.clear_defect()
 	nc_shelf.erase(part)
 	part.status = Part.Status.READY_TO_ROUTE
-	hold_part(part)
+	nc_pickup.append(part)
 	nc_shelf_changed.emit()
+
+
+## Shop-wide familiarity a learning disposition is sure to teach, in the same
+## percent the Contracts menu shows (geometry_familiarity_percent()) - what
+## the player gets for not scrapping the part (user request, 2026-10-18).
+## Rework: one star at every tracked station the part still has to pass
+## (Station._maybe_flag_defect()). Scan: FAMILIARITY_GAIN_LEARNING_SCAN at the
+## station that flagged it. A station already at 5 stars teaches nothing.
+## Whoever runs the part learns too; that depends on who it is, so it isn't
+## counted here.
+func learning_gain_percent(part: Part, scan: bool) -> float:
+	var geometry := geometry_name_for_part(part)
+	var gains := {}
+	if scan:
+		gains[part.defect_station_id] = FAMILIARITY_GAIN_LEARNING_SCAN
+	else:
+		for i in range(part.current_station_index + 1, PIPELINE_ORDER.size()):
+			gains[PIPELINE_ORDER[i]] = 1
+	var stars := 0
+	for station_id in gains:
+		if not FAMILIARITY_TRACKED_STATIONS.has(station_id):
+			continue
+		var now := familiarity_stars_for(geometry, station_id)
+		stars += mini(now + int(gains[station_id]), 5) - now
+	return float(stars) / FAMILIARITY_TRACKED_STATIONS.size() * 0.5 / 5.0 * 100.0
+
+
+## The first pickup-side part tech could carry to a station they work, or
+## null. Doesn't check carrying room - see nc_pickup_worth_visiting().
+func nc_pickup_part_for(tech: Technician) -> Part:
+	var reachable := tech.real_assigned_station_ids()
+	for part in nc_pickup:
+		if reachable.has(next_station_id_for(part)):
+			return part
+	return null
+
+
+## Pickup-side parts no technician will ever collect - nobody to carry them
+## (Engineers don't), so the player has to Send them. Attention and the
+## shelf's floor badge ask for these.
+func nc_pickup_stranded() -> int:
+	for tech in technicians:
+		if not tech.is_engineer:
+			return 0
+	return nc_pickup.size()
+
+
+## The routing predictor for the pickup side - must agree exactly with
+## pick_up_from_nc_shelf(), the actor (see CLAUDE.md on bounce bugs).
+func nc_pickup_worth_visiting(tech: Technician) -> bool:
+	if tech.is_engineer or tech.carried_parts.size() >= Technician.CARRY_CAPACITY:
+		return false
+	if nc_pickup_part_for(tech) == null:
+		return false
+	var reserved := nc_pickup_incoming
+	if reserved != null and reserved != tech and reserved.is_traveling \
+			and reserved.travel_target_station_id == NC_PICKUP_ID:
+		return false
+	return true
+
+
+func pick_up_from_nc_shelf(tech: Technician) -> bool:
+	if tech.carried_parts.size() >= Technician.CARRY_CAPACITY:
+		return false
+	var part := nc_pickup_part_for(tech)
+	if part == null:
+		return false
+	nc_pickup.erase(part)
+	tech.carried_parts.append(part)
+	nc_shelf_changed.emit()
+	return true
+
+
+## The player carrying a pickup-side part over by hand (the NC menu's Send) -
+## the only way it moves with nobody hired. Same receive_part() path a
+## technician's delivery uses.
+func send_nc_pickup_part(part: Part) -> bool:
+	var destination: Station = station_by_id.get(next_station_id_for(part))
+	if destination == null or not nc_pickup.has(part) or not destination.can_accept_part():
+		return false
+	nc_pickup.erase(part)
+	destination.receive_part(part)
+	nc_shelf_changed.emit()
+	return true
+
+
+## A technician standing at the pickup side: takes one part per handling
+## cycle while there's one they can carry, then heads off - usually straight
+## to the part's station, since carried cargo is their top routing priority.
+## If nothing anywhere is worth walking to, they wait here.
+func _nc_pickup_act(tech: Technician) -> void:
+	if tech.is_interacting:
+		return
+	if pick_up_from_nc_shelf(tech):
+		tech.begin_interacting()
+		return
+	var next_id := tech.pick_next_station(station_by_id)
+	if next_id != tech.current_station_id and tech.record_departure():
+		next_id = tech.pick_next_station(station_by_id)
+	if next_id != tech.current_station_id:
+		reserve_destination(tech, next_id)
+		tech.start_traveling_to(next_id)
+
+
+## Claims the place tech just committed to walking to - see
+## Station.incoming_technician and nc_pickup_incoming.
+func reserve_destination(tech: Technician, destination_id: String) -> void:
+	if destination_id == NC_PICKUP_ID:
+		nc_pickup_incoming = tech
+		return
+	var station: Station = station_by_id.get(destination_id)
+	if station != null:
+		station.incoming_technician = tech
 
 
 ## A learning-only part reaching the end of its usefulness (Ship, or Scan
@@ -2765,6 +2901,7 @@ func to_save_dict() -> Dictionary:
 		"stations": stations_data,
 		"station_stats": station_stats.duplicate(true),
 		"nc_shelf_ids": nc_shelf.map(func(p: Part): return p.part_id),
+		"nc_pickup_ids": nc_pickup.map(func(p: Part): return p.part_id),
 		"revert_stock": revert_stock,
 		"crew_routing_strategy": int(crew_routing_strategy),
 		"company_payout_multiplier": company_payout_multiplier.duplicate(),
@@ -2848,6 +2985,12 @@ func load_from_dict(data: Dictionary) -> bool:
 		var part: Part = parts_by_id.get(int(raw_id))
 		if part != null:
 			nc_shelf.append(part)
+	nc_pickup.clear()
+	nc_pickup_incoming = null
+	for raw_id in data.get("nc_pickup_ids", []):
+		var part: Part = parts_by_id.get(int(raw_id))
+		if part != null:
+			nc_pickup.append(part)
 	scrapped_part_count = int(data.get("scrapped_part_count", 0))
 	revert_stock = int(data.get("revert_stock", STARTING_REVERT_STOCK))
 	crew_routing_strategy = int(data.get("crew_routing_strategy", Technician.RoutingStrategy.MAXIMIZE_MACHINES)) as Technician.RoutingStrategy
@@ -2936,6 +3079,7 @@ func load_from_dict(data: Dictionary) -> bool:
 ## load has to announce that effectively everything changed at once.
 func _emit_all_loaded_signals() -> void:
 	currency_changed.emit(currency)
+	nc_shelf_changed.emit()
 	gems_changed.emit(gems)
 	reputation_changed.emit(reputation)
 	factory_progress_changed.emit()

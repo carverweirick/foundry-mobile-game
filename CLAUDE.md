@@ -163,7 +163,11 @@ built on `OverlayBase` gets it for free):
   width - a width change (the first layout pass, when a FlowContainer is
   briefly ~40px wide and every button sits on its own line) drops back to
   the built-in floor - and `MenuLayout.reset(panel)` (on every open) clears
-  all floors, so heights are only locked while the player looks. Rule 3's
+  all floors, so heights are only locked while the player looks. A
+  FlowContainer's ratchet target is counted fresh at its current width
+  (`MenuLayout._flow_height()`, integer math matching FlowContainer) -
+  its own cached minimum can describe an older, narrower layout, and
+  ratcheting to that once locked ~100px gaps under every Admin button row. Rule 3's
   hand-set height floors are still good practice for the first frame.
 - **Rebuilt rows.** `queue_free()` leaves a node in its parent until the end
   of the frame, so "free the old rows, add new rows" briefly holds both and
@@ -382,6 +386,12 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   so the 32px icons shrink cleanly in a 1x desktop window; magnified pixel
   art is unaffected; the per-node settings on `station.tscn`'s labels and
   `main.gd`'s room labels predate it).
+- `ThemeManager._themes` holds strong references to both Theme
+  resources: ResourceLoader's cache is weak, nothing else held the
+  parchment Theme, so it was freed and re-read from disk without the bevel
+  buttons or the HD font (the font "changed between light and dark mode").
+  Always go through `ThemeManager._theme()`/`get_current_theme_resource()`,
+  never `load()` a Theme path directly.
 - **Text font is a setting** (`ThemeManager.text_style`, saved): HD
   (default) is `assets/fonts/vt323_hd.ttf` - VT323 re-em'd by
   `tools/make_text_font.py` to exactly m5x7's widths at every size, so all
@@ -942,16 +952,39 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
 - **Nonconformance (NC) shelf** (design doc Section 28): **every flagged
   part leaves the line immediately** - `Station._on_run_finished()` /
   `_finish_shelling_run()` hand it to `GameData.quarantine_part()` and free
-  the slot (`_take_active_part()`). `GameData.nc_shelf: Array[Part]` (saved
-  as ids). The floor shelf is `NcShelf` (`scenes/nc_shelf.gd`, drawn
-  placeholder rack, red box = undiagnosed, gold = diagnosed) at
+  the slot (`_take_active_part()`). **Two sides:** `GameData.nc_shelf`
+  (intake, waiting on a decision) and `GameData.nc_pickup` (Rework/Scan
+  chosen, waiting for a technician), both saved as ids. The floor shelf is
+  `NcShelf` (`scenes/nc_shelf.gd`, two racks side by side, red sign =
+  intake with red/gold markers, green sign = pickup with green markers) at
   `main.NC_SHELF_POSITION` in VIM Bay's free left strip beside Pour; tapping
   it or the Attention item calls `main._focus_nc_shelf()` -> `NcOverlay`
-  (`scenes/nc_overlay.gd`, nc_UI mockup: a card per part whose border is
+  (`scenes/nc_overlay.gd`, nc_UI mockup: intake cards whose border is
   the state - gold waiting for an Engineer, blue being diagnosed with a
-  progress bar, green diagnosed - and a stacked Scrap / "Rework at X" /
-  Scan to learn column; cards rebuilt on `nc_shelf_changed`, statuses
-  polled in place). While a part sits undiagnosed, its flagging station's
+  progress bar, green diagnosed - with a stacked Scrap / "Rework at X" /
+  Scan to learn column, then a Pickup Side section with "Send to X" (the
+  manual path); cards rebuilt on `nc_shelf_changed`, statuses polled in
+  place). **Each disposition button shows its payoff:** "+1 revert" on a
+  casting's Scrap, "+N% familiarity" on Rework/Scan from
+  `GameData.learning_gain_percent(part, scan)` (shop-wide stars it's sure
+  to add, in `geometry_familiarity_percent()` units; staff learning not
+  counted). The intake card's source line shows the geometry's current %.
+- **The pickup side is a routing destination, not a Station.**
+  `GameData.NC_PICKUP_ID` ("nc_shelf") is used as a technician's
+  `current_station_id`/`travel_target_station_id`; `Technician.tick()`
+  walks to `GameData.nc_pickup_position` (set by `main`) and its
+  reassignment branch exempts the id. `pick_next_station()` adds it as a
+  candidate ranked like a READY station (tier 1 under Push Through, 2
+  under Maximize) when `nc_pickup_worth_visiting()` (predictor) - which
+  must agree with `pick_up_from_nc_shelf()` (actor, called by
+  `GameData._nc_pickup_act()` from `simulate()` for technicians standing
+  there). `GameData.nc_pickup_incoming` is its reservation (like
+  `Station.incoming_technician`; `reserve_destination()` handles both).
+  After pickup, carried cargo (tier 0) takes them to the part's station.
+  Engineers never collect. `nc_pickup_stranded()` (nobody hired) drives an
+  Attention item and the shelf's "!" badge; otherwise the badge is a green
+  check while pickups wait. Pre-pickup saves keep released learning parts
+  in Awaiting Transfer, which still works. While a part sits undiagnosed, its flagging station's
   risk is ×(1 + 0.5 per undiagnosed part), capped ×3 - this replaced the old
   grace-period escalation/contamination (removed; `Part.defect_elapsed`/
   grace fields remain only for save compatibility).
@@ -981,7 +1014,7 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   Scrap button reads "Scrap +1 revert" for castings. Diagnosed + repairable
   (`rework_station_for()`: printer defects -> Patching, Shell Crack -> Mold
   Prep) -> Rework; diagnosed + not repairable -> Scan to learn (index set so
-  the next stop is Scan). Both release the part to Awaiting Transfer as
+  the next stop is Scan). Both move the part to the shelf's pickup side as
   **learning-only** (`Part.learning_only`): it never rolls defects again,
   gives +1 familiarity at each tracked station it passes, isn't counted as
   in flight for its contract (so a replacement gets made), and is retired

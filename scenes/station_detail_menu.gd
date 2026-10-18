@@ -759,6 +759,8 @@ func _part_familiarity_breakdown_text(part: Part) -> String:
 ## Prefers the live Station's own name ("Printing #2") over the shared
 ## StationDef display name.
 func _display_name_for(station_id: String) -> String:
+	if station_id == GameData.NC_PICKUP_ID:
+		return "the NC shelf"
 	var station: Station = GameData.station_by_id.get(station_id)
 	if station != null:
 		return station.station_name

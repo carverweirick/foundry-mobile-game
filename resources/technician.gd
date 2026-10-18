@@ -477,7 +477,9 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 		# but nothing real to snap onto if it ever did.
 		return false
 
-	if not real_ids.has(current_station_id) and not is_traveling:
+	# The NC shelf's pickup side isn't an assigned station, but standing there
+	# is legitimate (GameData._nc_pickup_act() sends them on).
+	if not real_ids.has(current_station_id) and current_station_id != GameData.NC_PICKUP_ID and not is_traveling:
 		# Either a brand new hire who has never stood anywhere, or someone
 		# whose current station just got unassigned out from under them.
 		# These two cases have to be handled DIFFERENTLY, which is the bug
@@ -520,13 +522,20 @@ func tick(delta: float, station_by_id: Dictionary) -> bool:
 
 	if is_traveling:
 		var target: Node2D = station_by_id.get(travel_target_station_id)
-		if target == null:
+		var target_position: Vector2
+		if target != null:
+			target_position = target.position
+		elif travel_target_station_id == GameData.NC_PICKUP_ID:
+			target_position = GameData.nc_pickup_position
+		else:
 			return false
-		var to_target: Vector2 = target.position - current_position
+		var to_target: Vector2 = target_position - current_position
 		var dist := to_target.length()
 		var step: float = walk_speed() * delta
 		if dist <= step:
-			current_position = target.position
+			current_position = target_position
+			if travel_target_station_id == GameData.NC_PICKUP_ID and GameData.nc_pickup_incoming == self:
+				GameData.nc_pickup_incoming = null
 			current_station_id = travel_target_station_id
 			travel_target_station_id = ""
 			is_traveling = false
@@ -668,10 +677,8 @@ func pick_next_station(station_by_id: Dictionary) -> String:
 		# with work that wasn't there (see record_departure()).
 		if id != current_station_id and not is_route_suppressed(id):
 			candidates.append(id)
-	if candidates.is_empty():
-		return current_station_id
 
-	var best_id: String = candidates[0]
+	var best_id: String = current_station_id
 	var best_tier := 99
 	var best_dist := INF
 	for id in candidates:
@@ -682,6 +689,18 @@ func pick_next_station(station_by_id: Dictionary) -> String:
 		var dist := current_position.distance_to(station.position)
 		if tier < best_tier or (tier == best_tier and dist < best_dist):
 			best_id = id
+			best_tier = tier
+			best_dist = dist
+
+	# The NC shelf's pickup side (GameData.nc_pickup): reworked/scanned parts
+	# waiting to be carried back to the line rank like a READY station - a
+	# finished part to move on.
+	var nc := GameData.NC_PICKUP_ID
+	if current_station_id != nc and not is_route_suppressed(nc) and GameData.nc_pickup_worth_visiting(self):
+		var tier := 1 if routing_strategy == RoutingStrategy.PUSH_THROUGH else 2
+		var dist := current_position.distance_to(GameData.nc_pickup_position)
+		if tier < best_tier or (tier == best_tier and dist < best_dist):
+			best_id = nc
 			best_tier = tier
 			best_dist = dist
 

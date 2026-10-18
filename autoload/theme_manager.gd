@@ -98,13 +98,29 @@ var cutout_side: CutoutSide = CutoutSide.AUTO
 var station_art: StationArtStyle = StationArtStyle.PIXEL_HD
 var text_style: TextStyle = TextStyle.HD
 
+## Strong references to both Theme resources. ResourceLoader's cache only
+## holds a resource while something else does: the dark Theme is kept alive
+## by project.godot's gui/theme/custom, but nothing held the parchment one,
+## so it was freed right after startup and the next load() re-read it from
+## disk - without the bevel buttons and the HD font installed below (user
+## report, 2026-10-18: "the font changes between light and dark mode").
+## Every lookup goes through _theme().
+var _themes: Dictionary = {}
+
 
 func _ready() -> void:
 	_load_settings()
 	for choice in THEME_PATHS:
-		_install_bevel_buttons(load(THEME_PATHS[choice]), choice)
+		_themes[choice] = load(THEME_PATHS[choice])
+		_install_bevel_buttons(_themes[choice], choice)
 	_apply_text_font()
 	_apply_theme()
+
+
+func _theme(choice: ThemeChoice) -> Theme:
+	if not _themes.has(choice):
+		_themes[choice] = load(THEME_PATHS[choice])
+	return _themes[choice]
 
 
 ## Hover rim per theme - gold reads on charcoal, burnt orange on tan.
@@ -170,7 +186,7 @@ func set_text_style(style: TextStyle) -> void:
 func _apply_text_font() -> void:
 	var font: Font = load(TEXT_FONT_PATHS[text_style])
 	for choice in THEME_PATHS:
-		(load(THEME_PATHS[choice]) as Theme).default_font = font
+		_theme(choice).default_font = font
 
 
 func set_cutout_side(side: CutoutSide) -> void:
@@ -191,7 +207,7 @@ func _apply_theme() -> void:
 
 
 func get_current_theme_resource() -> Theme:
-	return load(THEME_PATHS[current_theme])
+	return _theme(current_theme)
 
 
 ## Sets the currently-active Theme directly on one Control, making it the

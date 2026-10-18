@@ -1295,6 +1295,13 @@ longer ride along the line with a grace period.*
   coming through the station that flagged it have a raised chance of the
   same defect. (Replaces the old grace-period contamination of parts at the
   flagging station.)
+- **Two sides (user, 2026-10-18 - BUILT).** The intake side holds parts
+  waiting on a decision. Choosing Rework or Scan moves the part to the
+  **pickup side**, where a technician walks over, collects it and carries it
+  to its next station - the same physical handling as any other transfer,
+  instead of the part appearing in Awaiting Transfer. With nobody hired the
+  player sends it by hand from the NC menu (and Attention asks for it).
+  Floor art: two racks side by side, red sign = intake, green = pickup.
 
 ### 28.2 Engineers own contracts, not stations
 - Engineers are **not assigned to stations** the way technicians are.
@@ -1321,6 +1328,13 @@ longer ride along the line with a grace period.*
 - **Non-repairable defects** (Pour's porosity/misrun, and similar) can't be
   reworked; the disposition can instead send the part to **Structured Light
   Scan to learn more about it**.
+- **Every disposition shows what it's worth (user, 2026-10-18 - BUILT):**
+  Scrap shows "+1 revert" on a casting; Rework and Scan show the
+  familiarity they're sure to teach, in the same percent the Contracts menu
+  uses (e.g. "+10% familiarity" for a printer defect, which still has all
+  four tracked stations ahead of it; "+2.5%" for a scan; "+0%" once the
+  geometry is already fully familiar there - then scrap it for the revert).
+  A learning part that gets poured is still remelted to revert at the end.
 
 ### 28.4 Trials and manual production
 - Production should **not start automatically**. The player queues prints

@@ -56,8 +56,9 @@ const ATTENTION_PAN_SECONDS: float = 0.35
 const STATION_MENU_REVEAL_MARGIN: float = 40.0
 ## The nonconformance shelf (design doc 28.1): center VIM Bay, beside Pour.
 ## Pour's sprite covers nearly the whole island, so the shelf takes the free
-## strip down its left edge (VIM Bay spans x 720-1000).
-const NC_SHELF_POSITION := Vector2(762.0, 578.0)
+## strip down its left edge (VIM Bay spans x 720-1000); its two sides
+## (NcShelf.SIZE, 96 wide) end just short of Pour's sprite.
+const NC_SHELF_POSITION := Vector2(770.0, 548.0)
 const ZOOM_STEP: float = 1.1
 
 ## A left click/tap that moves less than this many screen pixels between
@@ -479,7 +480,7 @@ func _update_floor_labels() -> void:
 		return
 
 	_nc_shelf_label.text = _nc_shelf.label_text()
-	var shelf_label_pos := _nc_shelf.position + Vector2(-NcShelf.SIZE.x * 0.5, NcShelf.SIZE.y * 0.5 + 4.0)
+	var shelf_label_pos := _nc_shelf.position + Vector2(-NcShelf.SIZE.x * 0.5, NcShelf.SIZE.y * 0.5 + NcShelf.MARKER_SIZE.y + 6.0)
 	_place_and_maybe_show_label(_nc_shelf_label, canvas_transform * shelf_label_pos, accepted_rects)
 
 	for id: String in _stations_by_id.keys():
@@ -508,8 +509,10 @@ func _update_floor_badges(canvas_transform: Transform2D) -> void:
 		var corner := station.position + Vector2(sprite_rect.end.x, sprite_rect.position.y)
 		_show_badge(badge, station.floor_badge(), canvas_transform * corner, pulse)
 	var shelf_kind := ""
-	if GameData.nc_parts_needing_player() > 0:
+	if GameData.nc_parts_needing_player() > 0 or GameData.nc_pickup_stranded() > 0:
 		shelf_kind = "attention"
+	elif not GameData.nc_pickup.is_empty():
+		shelf_kind = "ready" # a technician will carry them back
 	elif not GameData.nc_shelf.is_empty():
 		shelf_kind = "running" # being diagnosed
 	var shelf_corner := _nc_shelf.position + Vector2(NcShelf.SIZE.x * 0.5, -NcShelf.SIZE.y * 0.5)
@@ -738,6 +741,7 @@ func _spawn_nc_shelf() -> void:
 	_nc_shelf = NcShelf.new()
 	_nc_shelf.position = NC_SHELF_POSITION
 	add_child(_nc_shelf)
+	GameData.nc_pickup_position = NC_SHELF_POSITION + NcShelf.pickup_point()
 	_nc_shelf_label = _make_floor_label("NC Shelf")
 	_nc_shelf_badge = _make_badge()
 

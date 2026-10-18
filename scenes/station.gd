@@ -748,10 +748,9 @@ func _travel_if_worthwhile(tech: Technician) -> bool:
 		# Claim the destination the instant the decision is made, not on
 		# arrival - see incoming_technician's own comment above for why this
 		# specifically is what closes the "two technicians pick the same
-		# open station" race.
-		var next_station: Station = GameData.station_by_id.get(next_id)
-		if next_station != null:
-			next_station.incoming_technician = tech
+		# open station" race. (The destination can also be the NC shelf's
+		# pickup side, which isn't a Station.)
+		GameData.reserve_destination(tech, next_id)
 		tech.start_traveling_to(next_id)
 		return true
 	return false

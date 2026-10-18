@@ -73,9 +73,50 @@ static func _apply(node: Node) -> void:
 			return
 		if absf(control.size.x - float(control.get_meta("_menu_layout_width"))) > 0.5:
 			return
-		var needed := control.get_minimum_size().y
+		var needed := _natural_height(control)
 		if needed > control.custom_minimum_size.y:
 			control.custom_minimum_size.y = needed)
+
+
+## The height this control needs at its CURRENT width. A FlowContainer's own
+## minimum height is a cache from its last sort, which can still describe an
+## older, narrower layout (every button on its own line) when this runs -
+## ratcheting to that locked a ~100px gap under each Admin button row (user
+## report, 2026-10-18). So a flow's lines are counted fresh here, the same
+## way FlowContainer wraps them. Labels reshape at their current width on
+## demand, so their own minimum is already fresh.
+static func _natural_height(control: Control) -> float:
+	if control is FlowContainer and not (control as FlowContainer).vertical:
+		return _flow_height(control)
+	return control.get_minimum_size().y
+
+
+## Integer math on purpose: FlowContainer lays lines out in whole pixels
+## (truncated child sizes), so this matches its own cached height exactly.
+static func _flow_height(flow: FlowContainer) -> float:
+	var h_sep := flow.get_theme_constant("h_separation")
+	var v_sep := flow.get_theme_constant("v_separation")
+	var width := int(flow.size.x)
+	var x := 0
+	var y := 0
+	var line_height := 0
+	var in_line := 0
+	for child in flow.get_children():
+		var c := child as Control
+		if c == null or not c.visible or c.top_level:
+			continue
+		var child_size := Vector2i(c.get_combined_minimum_size())
+		if in_line > 0:
+			x += h_sep
+			if x + child_size.x > width:
+				y += line_height + v_sep
+				x = 0
+				line_height = 0
+				in_line = 0
+		line_height = maxi(line_height, child_size.y)
+		x += child_size.x
+		in_line += 1
+	return float(y + line_height)
 
 
 ## Drops every ratcheted floor under root back to its built-in value -
