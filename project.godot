@@ -39,6 +39,8 @@ theme/custom="res://resources/theme/ui_theme.tres"
 
 [input_devices]
 
+sensors/enable_accelerometer=true
+sensors/enable_gravity=true
 virtual_controller/ios/enable_controller=false
 virtual_controller/ios/enable_left_thumbstick=true
 virtual_controller/ios/enable_right_thumbstick=true
@@ -46,8 +48,6 @@ virtual_controller/ios/enable_button_a=true
 virtual_controller/ios/enable_button_b=true
 virtual_controller/ios/enable_button_x=true
 virtual_controller/ios/enable_button_y=true
-sensors/enable_accelerometer=true
-sensors/enable_gravity=true
 
 [physics]
 

@@ -32,7 +32,9 @@ const DARK := {
 	"neutral_bg": Color(0.20, 0.20, 0.23),
 	"neutral_text": Color(0.92, 0.88, 0.80),
 	"disabled_bg": Color(0.17, 0.17, 0.19),
-	"disabled_text": Color(0.45, 0.44, 0.42),
+	# Disabled buttons still carry useful text (a price, "x0"), so it stays
+	# readable (~4:1) rather than near-invisible.
+	"disabled_text": Color(0.56, 0.54, 0.50),
 }
 const PARCHMENT := {
 	"card_bg": Color(0.95, 0.90, 0.78),
@@ -306,30 +308,148 @@ static func _style_button(b: Button, kind: String) -> void:
 		"primary":
 			bg = GOLD; fg = Color(0.12, 0.08, 0.03)
 		"go":
-			bg = GOOD.darkened(0.1); fg = Color(0.98, 0.98, 0.95)
+			# Dark enough for light text (~5:1); the old GOOD green was ~3:1.
+			bg = Color(0.20, 0.50, 0.22); fg = Color(0.98, 0.98, 0.95)
 		"danger":
 			bg = BAD.darkened(0.1); fg = Color(0.98, 0.95, 0.93)
 		"warn":
 			bg = WARN.darkened(0.05); fg = Color(0.12, 0.08, 0.03)
 		_:
 			bg = c("neutral_bg"); fg = c("neutral_text")
-	var border := bg.darkened(0.55)
+	# Gold rim on neutral buttons; on colored ones gold would vanish into
+	# the fill, so they get a cream rim instead.
+	var accent := GOLD.lightened(0.1) if kind == "neutral" else Color(1.0, 0.96, 0.84)
 	for state in BUTTON_STATES:
-		var fill := bg
-		if state.begins_with("hover") and not state.begins_with("hover_pressed"):
-			fill = bg.lightened(0.12)
-		elif state.begins_with("pressed") or state.begins_with("hover_pressed"):
-			fill = bg.darkened(0.2)
-		elif state.begins_with("disabled"):
-			fill = c("disabled_bg")
-		var box := _box(fill, border if not state.begins_with("disabled") else c("disabled_bg").darkened(0.3), 2, 5, 2)
-		if state == "focus":
-			box.draw_center = false
-		b.add_theme_stylebox_override(state, box)
+		b.add_theme_stylebox_override(state, bevel_box(bg, accent, state, c("disabled_bg"), 5.0, 2.0))
+	# Hover never changes the text color - only the rim lights up - so a
+	# hovered button is exactly as readable as an idle one.
 	for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(color_name, fg)
 	b.add_theme_color_override("font_disabled_color", c("disabled_text"))
 	b.add_theme_color_override("icon_disabled_color", Color(1, 1, 1, 0.4))
+
+
+# --- pixel bevel buttons -----------------------------------------------------
+#
+# Every button is a little pixel-art bevel, like the user's mockups: a dark
+# outline with chamfered corners, a lit top edge, a darker bottom lip. It's
+# drawn from a tiny generated nine-patch at BEVEL_DENSITY texels per logical
+# pixel (the texture reports its logical size via set_size_override), so the
+# highlight and shade lines are half a logical pixel - about 2 device pixels
+# on a phone - instead of one chunky 4-5px line.
+#
+# States: hover keeps the fill (a touch brighter) and the text color, and
+# swaps the outline for an accent rim - the old hover was a solid gold slab
+# that left light text unreadable. Pressed sinks: darker fill, shadow along
+# the top instead of a lip, and the content drops 1px.
+
+const BEVEL_DENSITY: int = 2
+## Texel layout of the nine-patch (texels, not logical px). The outline is a
+## full logical pixel so it survives a 1x desktop window; the inner detail
+## lines are single texels.
+const _BEVEL_W: int = 8
+const _BEVEL_H: int = 12
+const _BEVEL_MARGIN_LEFT: float = 1.5
+const _BEVEL_MARGIN_RIGHT: float = 1.5
+const _BEVEL_MARGIN_TOP: float = 2.0
+const _BEVEL_MARGIN_BOTTOM: float = 2.5
+static var _bevel_cache: Dictionary = {}
+
+
+## A bevel StyleBox for one Button state. `state` is any Button stylebox
+## name ("normal", "hover_pressed_mirrored", "focus", ...). content margins
+## are in logical px, like StyleBoxFlat's.
+static func bevel_box(fill: Color, accent: Color, state: String, disabled_fill: Color, margin_x: float, margin_y: float) -> StyleBox:
+	if state == "focus":
+		return StyleBoxEmpty.new()
+	var look := "normal"
+	if state.begins_with("disabled"):
+		look = "disabled"
+	elif state.begins_with("hover_pressed"):
+		look = "hover_pressed"
+	elif state.begins_with("pressed"):
+		look = "pressed"
+	elif state.begins_with("hover"):
+		look = "hover"
+	var box := StyleBoxTexture.new()
+	box.texture = _bevel_texture(fill, accent, look, disabled_fill)
+	box.texture_margin_left = _BEVEL_MARGIN_LEFT
+	box.texture_margin_right = _BEVEL_MARGIN_RIGHT
+	box.texture_margin_top = _BEVEL_MARGIN_TOP
+	box.texture_margin_bottom = _BEVEL_MARGIN_BOTTOM
+	box.content_margin_left = margin_x
+	box.content_margin_right = margin_x
+	# Pressed: the label sinks 1px with the button.
+	var sink := 1.0 if look.ends_with("pressed") else 0.0
+	box.content_margin_top = margin_y + sink
+	box.content_margin_bottom = margin_y + 0.5 - sink
+	return box
+
+
+static func _bevel_texture(fill: Color, accent: Color, look: String, disabled_fill: Color) -> Texture2D:
+	var key := "%s|%s|%s|%s" % [fill.to_html(), accent.to_html(), look, disabled_fill.to_html()]
+	if _bevel_cache.has(key):
+		return _bevel_cache[key]
+	var w := _BEVEL_W
+	var h := _BEVEL_H
+	var outline := fill.darkened(0.72)
+	var body := fill
+	var top_hi := fill.lightened(0.40)
+	var top_mid := fill.lightened(0.17)
+	var left_tone := fill.lightened(0.08)
+	var right_tone := fill.darkened(0.12)
+	var shade := fill.darkened(0.22)
+	var lip := fill.darkened(0.48)
+	match look:
+		"hover":
+			body = fill.lightened(0.06)
+			top_hi = fill.lightened(0.48)
+			top_mid = fill.lightened(0.24)
+			left_tone = fill.lightened(0.14)
+			outline = accent
+		"pressed", "hover_pressed":
+			body = fill.darkened(0.08)
+			# Sunk: shadow under the top edge, the lip flattens out.
+			top_hi = fill.darkened(0.42)
+			top_mid = fill.darkened(0.28)
+			left_tone = fill.darkened(0.26)
+			right_tone = body
+			shade = body
+			lip = body.darkened(0.12)
+			if look == "hover_pressed":
+				outline = accent
+		"disabled":
+			body = disabled_fill
+			outline = disabled_fill.darkened(0.40)
+			top_hi = disabled_fill
+			top_mid = disabled_fill
+			left_tone = disabled_fill
+			right_tone = disabled_fill
+			shade = disabled_fill.darkened(0.08)
+			lip = disabled_fill.darkened(0.22)
+	var image := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	image.fill(body)
+	for y in h:
+		image.set_pixel(2, y, left_tone)
+		image.set_pixel(w - 3, y, right_tone)
+	for x in range(2, w - 2):
+		image.set_pixel(x, 2, top_hi)
+		image.set_pixel(x, 3, top_mid)
+		image.set_pixel(x, h - 5, shade)
+		image.set_pixel(x, h - 4, lip)
+		image.set_pixel(x, h - 3, lip)
+	# A full-logical-pixel outline (2 texels) all round, corners chamfered.
+	for y in h:
+		for x in w:
+			var edge := x < 2 or y < 2 or x >= w - 2 or y >= h - 2
+			if edge:
+				image.set_pixel(x, y, outline)
+	for corner in [Vector2i(0, 0), Vector2i(w - 1, 0), Vector2i(0, h - 1), Vector2i(w - 1, h - 1)]:
+		image.set_pixelv(corner, Color(0, 0, 0, 0))
+	var texture := ImageTexture.create_from_image(image)
+	texture.set_size_override(Vector2i(w / BEVEL_DENSITY, h / BEVEL_DENSITY))
+	_bevel_cache[key] = texture
+	return texture
 
 
 static func _box(fill: Color, border: Color, border_width: int, margin_x: float, margin_y: float) -> StyleBoxFlat:

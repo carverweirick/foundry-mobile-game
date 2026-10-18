@@ -82,7 +82,38 @@ var station_art: StationArtStyle = StationArtStyle.PIXEL
 
 func _ready() -> void:
 	_load_settings()
+	for choice in THEME_PATHS:
+		_install_bevel_buttons(load(THEME_PATHS[choice]), choice)
 	_apply_theme()
+
+
+## Hover rim per theme - gold reads on charcoal, burnt orange on tan.
+const BEVEL_ACCENT := {
+	ThemeChoice.DARK: Color(0.95, 0.74, 0.25),
+	ThemeChoice.PARCHMENT: Color(0.62, 0.30, 0.05),
+}
+
+
+## Swaps each Theme's flat Button styleboxes for UiKit's pixel bevels (the
+## same look the menus' UiKit buttons use), keeping the .tres colors as the
+## source of truth: normal/pressed/disabled fills come from the flat boxes
+## already in the file. Runs once per Theme at startup on the cached Theme
+## instance, so the project default theme (gui/theme/custom, the same cached
+## resource) picks it up too. Hover keeps the normal text color - only the
+## rim lights up - so hovered text is never harder to read than idle text.
+func _install_bevel_buttons(theme: Theme, choice: ThemeChoice) -> void:
+	var normal: StyleBox = theme.get_stylebox("normal", "Button")
+	var pressed: StyleBox = theme.get_stylebox("pressed", "Button")
+	var disabled: StyleBox = theme.get_stylebox("disabled", "Button")
+	if not (normal is StyleBoxFlat and pressed is StyleBoxFlat and disabled is StyleBoxFlat):
+		return
+	var margin_x: float = normal.content_margin_left
+	var margin_y: float = normal.content_margin_top
+	for state in UiKit.BUTTON_STATES:
+		var fill: Color = pressed.bg_color if state.begins_with("pressed") or state.begins_with("hover_pressed") else normal.bg_color
+		theme.set_stylebox(state, "Button", UiKit.bevel_box(fill, BEVEL_ACCENT[choice], state, disabled.bg_color, margin_x, margin_y))
+	theme.set_color("font_hover_color", "Button", theme.get_color("font_color", "Button"))
+	theme.set_color("font_hover_pressed_color", "Button", theme.get_color("font_pressed_color", "Button"))
 
 
 func set_theme(choice: ThemeChoice) -> void:
