@@ -645,8 +645,9 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   the printer reads "Idle - Clean full" and its Start button "Clean full".
   Blocked buttons say why on their face (a phone never shows tooltips) -
   the Contracts Trial/Production buttons too: "need gold", "no revert",
-  "60% to unlock", "all queued" (production is capped at what the order
-  still needs: required minus shipped, in production and queued).
+  "60% to unlock", "all queued", "max extra", "done" (production is capped
+  at what the order still needs - required minus shipped, in production
+  and queued - unless Extra parts is on).
 - `Station.get_overview_status()` appends a current-part suffix
   (`" - Part #N (Customer)"`, or a bracketed list for parallel-tier
   Shelling) - used by the Board's status lines and the Station Detail Menu's status
@@ -903,13 +904,17 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   ones after, dimmed, with "Rep N" in place of the risk pill. Each card's
   second line is "~N trials to production" (`GameData.trials_to_production()`,
   summed over distinct geometries). **Active tab** (title "Active (n/cap)"):
-  the segmented Queue x1/x5/x10/MAX and Trial metal Revert/Virgin toggles
-  (one fixed HBox row) are pinned in `%ActiveHeader` above `ContractsScroll`
-  so they never scroll away (user request 2026-10-18); inside the scroll,
-  reputation and revert stock, then a card per contract: tier pill, On track / Behind /
+  two fixed toggle rows are pinned in `%ActiveHeader` above
+  `ContractsScroll` so they never scroll away (user requests 2026-10-18):
+  Queue x1/x5/x10/MAX + Extra parts Off/On, then Trial metal Revert/Virgin
+  + the revert in stock (red at 0). Inside the scroll: reputation, then a
+  card per contract: tier pill, On track / Behind /
   Overdue pill (`_contract_status()`: shipped + half of in-production vs
   share of deadline used), time, shipped bar, Engineer button (tap cycles),
-  and per line item a familiarity meter, "~N trials to production", and
+  and per line item a familiarity meter, one clipped line of where its
+  parts are ("On floor 3, queued 2 - trials 1 on floor, 0 queued - 1 in
+  NC - 2 extra", from `GameData.line_item_part_counts()`; trials/NC/extra
+  only when nonzero), "~N trials to production", and
   Trial / Production buttons (Production shows a lock icon below 60% and
   reads "advanced" while the customer's metal covers it).
 - **Sales tab** (third tab of the Contracts menu; user request 2026-10-18,
@@ -1125,10 +1130,20 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   (`advance_left()`, `print_orders_cost()`, `LineItem.advanced_count` up to
   the line item's quantity; replacements beyond that are the shop's cost).
   Orders live in
-  `GameData.print_orders` (saved); printers - staffed (auto-queue) or not
+  `GameData.print_orders` (saved, each with the gold `paid` and `revert`
+  it cost); printers - staffed (auto-queue) or not
   (Queue button) - pop them front to back in `Station._try_create_part()`.
-  Orders for finished contracts are dropped. Attention nags "queue parts to
+  `_drop_stale_print_orders()` drops and refunds (gold and revert) every
+  order of a finished contract and production orders for a line item that
+  has shipped in full. Attention nags "queue parts to
   make" for an active contract with nothing queued or in the line.
+- **Extra parts** (user request 2026-10-18, spares for defects): with the
+  Active tab's Extra parts toggle on (`_allow_extra`, not saved),
+  production can be queued past what the order needs, up to as many again
+  as it still has to ship (`production_queue_room()`,
+  `EXTRA_PARTS_MAX_SHARE` 1.0), at the material price once the advance is
+  used. A production part reaching Ship after its line item filled is
+  surplus (`is_surplus_part()`) and remelted to revert, never credited.
 - **Contract income** (design doc 31.4 #3, replacing 28.9's 20% up front):
   accepting pays nothing. The customer advances the metal
   (`Contract.advance_per_part`, set when the offer is made, saved; 0 on a
@@ -1145,7 +1160,7 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   not saved): a virgin trial costs the production price
   (`GameData.part_cost_for()`), uses no revert, and still returns 1 revert
   when remelted. `print_order_blocker()`/`queueable_count()`/
-  `queue_print_order(s)()` take a `virgin` flag.
+  `queue_print_order(s)()` take `virgin` and `extra` flags.
 - **Tooltips wrap** (`scenes/ui_text.gd`, `UiText.tip()`, 44 chars/line) -
   Godot's tooltip never wraps, so long ones ran off the screen on desktop.
   Use it for any tooltip longer than a few words.
@@ -1154,7 +1169,7 @@ class `SegMeter`, `scenes/portraits.gd` class `Portraits`; the user's mockups in
   (`ContractsOverlay.QUEUE_AMOUNTS`, not saved); each Trial/Production
   button shows how many one tap will really queue and the total price,
   via `GameData.queueable_count()` (capped by revert for trials, by
-  `production_still_needed()` for production, and by gold+gems), and
+  `production_queue_room()` for production, and by gold+gems), and
   `queue_print_orders()` queues them.
 - **Trial parts** (`Part.is_trial`) are poured in revert: queueing one uses 1
   `GameData.revert_stock` (starts at 10, saved). They roll defects normally,

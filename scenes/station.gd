@@ -1026,6 +1026,12 @@ func _ship_part(part: Part) -> void:
 			contract.customer_name if contract != null else "no contract",
 		]
 		return
+	# An extra part (Contracts "Extra parts") whose line item already shipped
+	# in full isn't sold - its metal comes back as revert.
+	if GameData.is_surplus_part(part):
+		GameData.remelt_to_revert(part)
+		status_label.text = "Spare part #%d not needed - remelted to revert" % part.part_id
+		return
 	GameData.credit_contract_shipment(contract, part)
 	GameData.unregister_part(part)
 	status_label.text = "Shipped part #%d (%s)" % [

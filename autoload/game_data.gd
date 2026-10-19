@@ -1258,6 +1258,62 @@ func production_still_needed(contract: Contract, line_item_index: int) -> int:
 	return item.quantity_required - item.quantity_shipped - in_flight - queued_order_count(contract.contract_id, line_item_index, false)
 
 
+## Extra parts (user request 2026-10-18: "queue over the amount of needed
+## parts to anticipate some will come out as defective"): with the Contracts
+## menu's Extra parts toggle on, production can be queued past what the
+## order needs - up to as many again as it still has to ship, so MAX can't
+## sink every coin into spares. A spare still queued when its line item
+## fills is refunded (_drop_stale_print_orders()); one already made is
+## remelted to revert at Ship (is_surplus_part()).
+const EXTRA_PARTS_MAX_SHARE: float = 1.0
+
+
+## How many more production parts this line item can be queued right now -
+## what it still needs, plus the spare allowance when `extra` is on.
+func production_queue_room(contract: Contract, line_item_index: int, extra: bool) -> int:
+	var needed := production_still_needed(contract, line_item_index)
+	if not extra:
+		return needed
+	var item: Contract.LineItem = contract.line_items[line_item_index]
+	var left_to_ship := maxi(item.quantity_required - item.quantity_shipped, 0)
+	return needed + ceili(left_to_ship * EXTRA_PARTS_MAX_SHARE)
+
+
+## A production part whose line item has already shipped in full - a spare
+## that wasn't needed. Ship remelts it to revert instead of crediting it.
+func is_surplus_part(part: Part) -> bool:
+	if not part.counts_toward_contract:
+		return false
+	var contract := get_contract(part.contract_id)
+	if contract == null or contract.is_complete:
+		return true
+	var item := contract.line_item_at(part.line_item_index)
+	return item == null or item.is_complete
+
+
+## Where one line item's parts are right now, for the Contracts menu (user
+## request 2026-10-18: "see how much of each item i have on the shop floor
+## from the contracts menu"): production parts on the line, trials on the
+## line, parts tied up in nonconformance (on the NC shelf, or back on the
+## line as learning parts), orders not yet printed, and how many production
+## parts are extras beyond what the order still has to ship.
+func line_item_part_counts(contract: Contract, line_item_index: int) -> Dictionary:
+	var counts := {"floor": 0, "trials": 0, "nc": 0}
+	for p in active_parts:
+		if p.contract_id != contract.contract_id or p.line_item_index != line_item_index:
+			continue
+		if p.is_defective or p.learning_only:
+			counts.nc += 1
+		elif p.is_trial:
+			counts.trials += 1
+		else:
+			counts.floor += 1
+	counts["queued"] = queued_order_count(contract.contract_id, line_item_index, false)
+	counts["queued_trials"] = queued_order_count(contract.contract_id, line_item_index, true)
+	counts["extra"] = maxi(-production_still_needed(contract, line_item_index), 0)
+	return counts
+
+
 ## Pouring a trial in virgin metal instead of revert (user decision,
 ## 2026-10-03): costs the production price but uses no revert, and the trial
 ## still becomes revert when it's remelted - the player's way to build up a
@@ -1285,7 +1341,8 @@ func print_orders_cost(contract: Contract, line_item_index: int, is_trial: bool,
 
 
 ## "" if this part can be queued now, otherwise the reason it can't.
-func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> String:
+## `extra` lets production run past what the order needs (Extra parts).
+func print_order_blocker(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false, extra: bool = false) -> String:
 	var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, 1)
 	if cost > 0 and not can_afford_with_gems(cost):
 		return "Not enough gold"
@@ -1293,15 +1350,20 @@ func print_order_blocker(contract: Contract, line_item_index: int, is_trial: boo
 		if not virgin and revert_stock <= 0:
 			return "No revert metal left - switch Trial metal to Virgin"
 		return ""
-	if not can_run_production(contract.line_items[line_item_index].geometry_name):
+	var item: Contract.LineItem = contract.line_items[line_item_index]
+	if item.is_complete:
+		return "Shipped in full - this part type needs nothing more"
+	if not can_run_production(item.geometry_name):
 		return "Needs %d%% familiarity" % int(PRODUCTION_FAMILIARITY_PERCENT)
-	if production_still_needed(contract, line_item_index) <= 0:
-		return "All the parts this order still needs are queued or in production - a replacement can be queued if one is scrapped or remelted"
+	if production_queue_room(contract, line_item_index, extra) <= 0:
+		if extra:
+			return "Extra parts top out at as many again as this order still has to ship"
+		return "All the parts this order still needs are queued or in production - turn on Extra parts to queue spares for defects, or queue a replacement once one is scrapped or remelted"
 	return ""
 
 
-func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false) -> bool:
-	if print_order_blocker(contract, line_item_index, is_trial, virgin) != "":
+func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool, virgin: bool = false, extra: bool = false) -> bool:
+	if print_order_blocker(contract, line_item_index, is_trial, virgin, extra) != "":
 		return false
 	var covered := not is_trial and advance_left(contract, line_item_index) > 0
 	var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, 1)
@@ -1315,6 +1377,9 @@ func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool,
 		"is_trial": is_trial,
 		"fix_station_id": "",
 		"fix_risk_mult": 1.0,
+		# What the order cost, refunded if it's dropped unprinted.
+		"paid": cost,
+		"revert": 1 if is_trial and not virgin else 0,
 	}
 	if is_trial:
 		if not virgin:
@@ -1332,18 +1397,19 @@ func queue_print_order(contract: Contract, line_item_index: int, is_trial: bool,
 
 
 ## How many of `wanted` parts could be queued right now - capped by revert
-## stock (trial), by what the contract still needs (production), and by
-## what the player can afford (gold, then gems). Drives the Contracts menu's
-## AdVenture-Capitalist-style "Queue: x1 / x5 / x10 / MAX" multiplier.
-func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false) -> int:
-	if print_order_blocker(contract, line_item_index, is_trial, virgin) != "":
+## stock (trial), by what the contract still needs plus any Extra parts
+## allowance (production), and by what the player can afford (gold, then
+## gems). Drives the Contracts menu's AdVenture-Capitalist-style
+## "Queue: x1 / x5 / x10 / MAX" multiplier.
+func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false, extra: bool = false) -> int:
+	if print_order_blocker(contract, line_item_index, is_trial, virgin, extra) != "":
 		return 0
 	var limit := wanted
 	if is_trial:
 		if not virgin:
 			limit = mini(limit, revert_stock)
 	else:
-		limit = mini(limit, production_still_needed(contract, line_item_index))
+		limit = mini(limit, production_queue_room(contract, line_item_index, extra))
 	while limit > 0:
 		var cost := print_orders_cost(contract, line_item_index, is_trial, virgin, limit)
 		if cost <= 0 or can_afford_with_gems(cost):
@@ -1353,10 +1419,10 @@ func queueable_count(contract: Contract, line_item_index: int, is_trial: bool, w
 
 
 ## Queues up to `wanted` parts in one go; returns how many were queued.
-func queue_print_orders(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false) -> int:
+func queue_print_orders(contract: Contract, line_item_index: int, is_trial: bool, wanted: int, virgin: bool = false, extra: bool = false) -> int:
 	var queued := 0
-	for i in queueable_count(contract, line_item_index, is_trial, wanted, virgin):
-		if not queue_print_order(contract, line_item_index, is_trial, virgin):
+	for i in queueable_count(contract, line_item_index, is_trial, wanted, virgin, extra):
+		if not queue_print_order(contract, line_item_index, is_trial, virgin, extra):
 			break
 		queued += 1
 	return queued
@@ -1380,15 +1446,33 @@ func pop_print_order() -> Dictionary:
 	return order
 
 
-## Orders whose contract has finished or gone are dropped (already paid -
-## a finished contract simply doesn't need them).
+## Orders nothing needs any more are dropped and refunded: every order of a
+## finished (or vanished) contract, and production orders for a line item
+## that has shipped in full - with Extra parts on, the spares that turned
+## out not to be needed. The gold and revert they cost come back (an order
+## on the customer's advance cost nothing; orders saved before this have no
+## record of their cost and refund nothing).
 func _drop_stale_print_orders() -> void:
-	var before := print_orders.size()
-	print_orders = print_orders.filter(func(order: Dictionary) -> bool:
-		var contract := get_contract(int(order.contract_id))
-		return contract != null and not contract.is_complete)
-	if print_orders.size() != before:
+	var kept: Array[Dictionary] = []
+	for order in print_orders:
+		if _print_order_still_needed(order):
+			kept.append(order)
+		else:
+			_pay(int(order.get("paid", 0)))
+			revert_stock += int(order.get("revert", 0))
+	if kept.size() != print_orders.size():
+		print_orders = kept
 		print_orders_changed.emit()
+
+
+func _print_order_still_needed(order: Dictionary) -> bool:
+	var contract := get_contract(int(order.contract_id))
+	if contract == null or contract.is_complete:
+		return false
+	if bool(order.is_trial):
+		return true
+	var item := contract.line_item_at(int(order.line_item_index))
+	return item != null and not item.is_complete
 
 
 ## Rolled once, when the part is poured (Station, at Pour).
@@ -1481,6 +1565,8 @@ func credit_contract_shipment(contract: Contract, part: Part) -> void:
 				gems_changed.emit(gems)
 			_record_sale("bonus", contract, null, contract_early_bonus(contract), gem_reward)
 
+	# Spares still queued for a line item that just filled come back now.
+	_drop_stale_print_orders()
 	contract_updated.emit(contract)
 
 
@@ -3409,6 +3495,8 @@ func load_from_dict(data: Dictionary) -> bool:
 			"is_trial": bool(raw.get("is_trial", false)),
 			"fix_station_id": str(raw.get("fix_station_id", "")),
 			"fix_risk_mult": float(raw.get("fix_risk_mult", 1.0)),
+			"paid": int(raw.get("paid", 0)),
+			"revert": int(raw.get("revert", 0)),
 		})
 	pending_trial_fixes.clear()
 	for raw in data.get("pending_trial_fixes", []):

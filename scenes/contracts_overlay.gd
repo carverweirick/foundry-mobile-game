@@ -18,12 +18,16 @@ class_name ContractsOverlay
 ## (GameData.offer_blocker()). Each card says roughly how many trials stand
 ## between it and production (GameData.trials_to_production()).
 ##
-## Active tab - the Queue amount (x1/x5/x10/MAX, AdVenture Capitalist style)
-## and Trial metal (Revert/Virgin) toggles pinned above the list, then,
-## scrolling, reputation and revert metal and a card per active contract: an On track / Behind / Overdue pill, progress
-## bar, its Engineer (tap to cycle), and per line item a familiarity meter,
-## trials still needed, and Trial / Production queue buttons (Production
-## locked below the 60% gate; free while the customer's material advance covers it).
+## Active tab - pinned above the list so they never scroll away: the Queue
+## amount (x1/x5/x10/MAX, AdVenture Capitalist style) and Extra parts
+## (Off/On - production may be queued past what the order needs, as spares
+## for defects) toggles, then Trial metal (Revert/Virgin) beside the revert
+## in stock. Scrolling: reputation, then a card per active contract: an On
+## track / Behind / Overdue pill, progress bar, its Engineer (tap to cycle),
+## and per line item a familiarity meter, where its parts are (on the floor,
+## in NC, queued, extras), trials still needed, and Trial / Production queue
+## buttons (Production locked below the 60% gate; free while the customer's
+## material advance covers it).
 ##
 ## Sales tab - the transaction log (GameData.sales_log): one line per good
 ## part sold and per on-time bonus, newest first, with last-hour and
@@ -489,7 +493,7 @@ class ContractRow:
 	var progress_bar: ProgressBar
 	var engineer_button: Button
 	var contract_id: int = -1
-	## Per line item: {name, progress, percent, meter, alloy, trial, production}.
+	## Per line item: {shipped, percent, meter, parts, trials_left, trial, production}.
 	var items: Array[Dictionary] = []
 
 var _contract_rows: Dictionary = {} # contract_id -> ContractRow
@@ -497,8 +501,13 @@ var _contracts_empty_label: Label = null
 var _reputation_label: Label
 var _revert_label: Label
 var _amount_buttons: Array[Button] = []
+var _extra_buttons: Array[Button] = []
 var _metal_buttons: Array[Button] = []
 var _queue_amount_index: int = 0
+## Production may be queued past what the order needs - spares for parts
+## lost to defects (GameData.production_queue_room()). Off by default and
+## not saved, like the other toggles.
+var _allow_extra: bool = false
 ## Pour trials in revert (cheap, uses revert stock) or virgin metal
 ## (production price, uses none - and each becomes revert when remelted).
 var _trial_in_virgin: bool = false
@@ -519,54 +528,87 @@ func _build_active_header() -> void:
 	_reputation_label.clip_text = true
 	_reputation_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	top.add_child(_reputation_label)
-	top.add_child(UiKit.icon("room_vim"))
-	_revert_label = UiKit.label("", UiKit.FONT_BODY)
-	_revert_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_revert_label.tooltip_text = UiText.tip("Revert is remelted metal. Trial parts are poured in it; every trial and every casting under 90% quality is remelted back into it.")
-	_revert_label.mouse_filter = Control.MOUSE_FILTER_PASS
-	top.add_child(_revert_label)
 
-	# Segmented toggles - one fixed row (~290px at 12px text, inside the
-	# ~356px list on every supported screen), so it never re-wraps. Pinned
-	# above the scroll list (user request 2026-10-18: "the quantity I want
-	# to buy should always remain visible when im scrolling").
-	var toggles := HBoxContainer.new()
-	toggles.add_theme_constant_override("separation", 2)
-	active_header.add_child(toggles)
-	var queue_caption := UiKit.label("Queue:", UiKit.FONT_SMALL, "text_dim")
-	queue_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	toggles.add_child(queue_caption)
+	# Segmented toggles, two fixed rows (~250px each at 12px text, inside
+	# the ~356px list on every supported screen), so they never re-wrap.
+	# Pinned above the scroll list (user requests 2026-10-18: "the quantity
+	# I want to buy should always remain visible when im scrolling", and
+	# "see how much revert you have when queuing").
+	active_header.add_theme_constant_override("separation", 3)
+	var amounts := _toggle_row("Queue:")
 	for i in QUEUE_AMOUNTS.size():
 		var amount := QUEUE_AMOUNTS[i]
-		var b := UiKit.button("MAX" if amount == 0 else "x%d" % amount)
+		var b := _toggle_button(amounts, "MAX" if amount == 0 else "x%d" % amount,
+			"How many parts each Trial/Production button queues per tap")
 		b.custom_minimum_size = Vector2(26, 0)
-		b.tooltip_text = UiText.tip("How many parts each Trial/Production button queues per tap")
 		b.pressed.connect(func():
 			_queue_amount_index = i
 			_refresh_contracts_tab.call_deferred())
-		toggles.add_child(b)
 		_amount_buttons.append(b)
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(6, 0)
-	toggles.add_child(gap)
-	var metal_caption := UiKit.label("Trial metal:", UiKit.FONT_SMALL, "text_dim")
-	metal_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	toggles.add_child(metal_caption)
+	_toggle_gap(amounts)
+	amounts.add_child(_toggle_caption("Extra parts:"))
+	for allow in [false, true]:
+		var b := _toggle_button(amounts, "On" if allow else "Off",
+			("On: Production can be queued past what the order needs - up to as many again as it still has to ship - as spares for parts lost to defects. Spares still queued when the order fills are refunded; one already made is remelted to revert at Ship." if allow
+			else "Off: Production queues only what the order still needs."))
+		b.custom_minimum_size = Vector2(26, 0)
+		b.pressed.connect(func():
+			_allow_extra = allow
+			_refresh_contracts_tab.call_deferred())
+		_extra_buttons.append(b)
+
+	var metal := _toggle_row("Trial metal:")
 	for virgin in [false, true]:
-		var b := UiKit.button("Virgin" if virgin else "Revert")
-		b.tooltip_text = UiText.tip("Virgin: production price, uses no revert, and each trial becomes revert when remelted - a way to build revert up." if virgin else "Revert: cheap, uses one revert per trial part.")
+		var b := _toggle_button(metal, "Virgin" if virgin else "Revert",
+			"Virgin: production price, uses no revert, and each trial becomes revert when remelted - a way to build revert up." if virgin else "Revert: cheap, uses one revert per trial part.")
 		b.pressed.connect(func():
 			_trial_in_virgin = virgin
 			_refresh_contracts_tab.call_deferred())
-		toggles.add_child(b)
 		_metal_buttons.append(b)
+	_toggle_gap(metal)
+	metal.add_child(UiKit.icon("room_vim"))
+	_revert_label = UiKit.label("", UiKit.FONT_BODY)
+	_revert_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_revert_label.tooltip_text = UiText.tip("Revert is remelted metal. Trial parts are poured in it; every trial, every casting under 90% quality and every spare part nobody needed is remelted back into it.")
+	_revert_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	metal.add_child(_revert_label)
+
+
+func _toggle_row(caption: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 2)
+	active_header.add_child(row)
+	row.add_child(_toggle_caption(caption))
+	return row
+
+
+func _toggle_caption(text: String) -> Label:
+	var caption := UiKit.label(text, UiKit.FONT_SMALL, "text_dim")
+	caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return caption
+
+
+func _toggle_button(row: HBoxContainer, text: String, tip: String) -> Button:
+	var b := UiKit.button(text)
+	b.tooltip_text = UiText.tip(tip)
+	row.add_child(b)
+	return b
+
+
+func _toggle_gap(row: HBoxContainer) -> void:
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(6, 0)
+	row.add_child(gap)
 
 
 func _refresh_contracts_tab() -> void:
 	_reputation_label.text = _reputation_summary_text()
 	_revert_label.text = "Revert: %d" % GameData.revert_stock
+	UiKit.set_label_color(_revert_label, "bad" if GameData.revert_stock <= 0 else "text")
 	for i in _amount_buttons.size():
 		UiKit.set_button_kind(_amount_buttons[i], "primary" if i == _queue_amount_index else "neutral")
+	for i in _extra_buttons.size():
+		UiKit.set_button_kind(_extra_buttons[i], "primary" if (i == 1) == _allow_extra else "neutral")
 	for i in _metal_buttons.size():
 		UiKit.set_button_kind(_metal_buttons[i], "primary" if (i == 1) == _trial_in_virgin else "neutral")
 
@@ -694,6 +736,12 @@ func _create_contract_row(contract: Contract) -> ContractRow:
 		alloy.custom_minimum_size = Vector2(60, 0)
 		alloy.clip_text = true
 		line.add_child(alloy)
+		# Where this part type's parts are - one clipped line, never wraps.
+		var parts := UiKit.label("", UiKit.FONT_SMALL, "text_dim")
+		parts.clip_text = true
+		parts.mouse_filter = Control.MOUSE_FILTER_PASS
+		parts.tooltip_text = UiText.tip("On floor: production parts somewhere in the shop. NC: parts on the nonconformance shelf or back on the line as learning parts. Queued: orders not printed yet. Extra: production parts beyond what the order still has to ship.")
+		body.add_child(parts)
 		# Button widths change with price/count - HFlowContainer (UI rule 2).
 		var actions := HFlowContainer.new()
 		actions.add_theme_constant_override("h_separation", 3)
@@ -708,7 +756,7 @@ func _create_contract_row(contract: Contract) -> ContractRow:
 		var production := UiKit.button("", "act_lock", "primary")
 		production.pressed.connect(_on_queue_pressed.bind(row, i, false))
 		actions.add_child(production)
-		row.items.append({"shipped": shipped, "percent": percent, "meter": meter, "trials_left": trials_left, "trial": trial, "production": production})
+		row.items.append({"shipped": shipped, "percent": percent, "meter": meter, "parts": parts, "trials_left": trials_left, "trial": trial, "production": production})
 	return row
 
 
@@ -744,6 +792,7 @@ func _update_contract_row(row: ContractRow, contract: Contract) -> void:
 		w.percent.text = "%d%%" % roundi(percent)
 		w.meter.value = percent / 100.0
 		w.meter.color_key = _familiarity_color(percent)
+		w.parts.text = _parts_text(GameData.line_item_part_counts(contract, i))
 		var trials := GameData.trials_to_production(li.geometry_name, contract)
 		w.trials_left.text = _trials_text(trials)
 		UiKit.set_label_color(w.trials_left, "good" if trials == 0 else "text_dim")
@@ -758,6 +807,19 @@ func _update_contract_row(row: ContractRow, contract: Contract) -> void:
 		_update_queue_button(w.production, contract, i, false, "Production",
 			"Poured in virgin metal for the customer. Unlocks at %d%% familiarity; ships only at %d%%+ quality.%s" % [
 				int(GameData.PRODUCTION_FAMILIARITY_PERCENT), int(GameData.SHIP_QUALITY_THRESHOLD), advance_note])
+
+
+## "On floor 3, queued 2" always, then trials, NC and extras only when there
+## are any - a line item's parts at a glance.
+static func _parts_text(counts: Dictionary) -> String:
+	var text := "On floor %d, queued %d" % [counts.floor, counts.queued]
+	if counts.trials > 0 or counts.queued_trials > 0:
+		text += "  -  trials %d on floor, %d queued" % [counts.trials, counts.queued_trials]
+	if counts.nc > 0:
+		text += "  -  %d in NC" % counts.nc
+	if counts.extra > 0:
+		text += "  -  %d extra" % counts.extra
+	return text
 
 
 ## "On track" compares shipped-plus-half-of-in-production against the share
@@ -776,8 +838,9 @@ func _contract_status(contract: Contract) -> Array:
 ## the total price; a locked Production button keeps its lock icon.
 func _update_queue_button(button: Button, contract: Contract, index: int, is_trial: bool, kind: String, about: String) -> void:
 	var virgin := is_trial and _trial_in_virgin
-	var blocker := GameData.print_order_blocker(contract, index, is_trial, virgin)
-	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted(), virgin)
+	var extra := not is_trial and _allow_extra
+	var blocker := GameData.print_order_blocker(contract, index, is_trial, virgin, extra)
+	var count := GameData.queueable_count(contract, index, is_trial, _queue_wanted(), virgin, extra)
 	var unit := GameData.part_cost_for(contract, is_trial, virgin)
 	var locked := not is_trial and not GameData.can_run_production(contract.line_items[index].geometry_name)
 	var covered := not is_trial and GameData.advance_left(contract, index) > 0
@@ -808,13 +871,17 @@ static func _blocker_short(blocker: String) -> String:
 		return "%d%% to unlock" % int(GameData.PRODUCTION_FAMILIARITY_PERCENT)
 	if blocker.begins_with("All the parts"):
 		return "all queued"
+	if blocker.begins_with("Extra parts top out"):
+		return "max extra"
+	if blocker.begins_with("Shipped in full"):
+		return "done"
 	return blocker
 
 
 func _on_queue_pressed(row: ContractRow, index: int, is_trial: bool) -> void:
 	var contract := GameData.get_contract(row.contract_id)
 	if contract != null:
-		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted(), is_trial and _trial_in_virgin)
+		GameData.queue_print_orders(contract, index, is_trial, _queue_wanted(), is_trial and _trial_in_virgin, not is_trial and _allow_extra)
 	_refresh_contracts_tab.call_deferred()
 
 
