@@ -1577,6 +1577,10 @@ autoload)
   the phone. Settings can switch each back.
 - The 2026-10-18 changes: the two-sided NC shelf and the Admin menu gaps,
   and how the rebalanced economy (design doc 31.6) feels in real play.
+- The Contracts Active tab on the phone: the two pinned toggle rows
+  (Queue + Extra parts, Trial metal + revert), the per-item parts line,
+  and whether the Extra parts cap (as many again as still to ship) feels
+  right. Checked only in offscreen renders.
 
 **Blocking the MVP** (design doc Section 26.4, in dependency order):
 - **UI visual/feel rework** - mostly done, pending the user's on-device
